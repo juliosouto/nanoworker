@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Chat{% endblock %}
+
+{% block content %}
+<style>
+    .msg-content img {
+        max-width: 100%;
+        border-radius: 8px;
+    }
+</style>
+<div
+    style="display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: stretch; height: calc(100vh - 120px);">
+    <!-- History Sidebar -->
+    <div class="glass-panel" style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <h3 style="margin: 0; font-size: 1.1rem;">Chat History</h3>
+        </div>
+        <div style="margin-bottom: 12px; position: relative;">
+            <input type="text" id="chatSearch" placeholder="Search chats..."
+                style="width: 100%; padding: 8px 12px 8px 32px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.3); color: white; font-size: 0.9rem; box-sizing: border-box; outline: none; transition: border-color 0.2s;"
+                onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-color)'">
+            <svg style="position: absolute; left: 9px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; pointer-events: none; opacity: 0.5;"
+                fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+        </div>
+        <ul id="chatSessionList"
+            style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow-y: auto;">
+            {% for s in sessions %}
+            {% set s_id = s['channel_id'].replace('web-chat-', '') if s['channel_id'].startswith('web-chat-') else
+            'default' %}
+            <li id="sidebar-item-{{ s_id }}">
+                <a href="/?chat_id={{ s_id }}"
+                    style="text-decoration: none; color: inherit; display: block; padding: 10px; border-radius: 8px; background: {% if chat_id == s_id %}rgba(255,255,255,0.1){% else %}rgba(255,255,255,0.02){% endif %}; transition: background 0.2s; {% if chat_id == s_id %}border-left: 3px solid var(--accent);{% endif %}"
+                    onmouseover="this.style.background='rgba(255,255,255,0.1)'"
+                    onmouseout="this.style.background='{% if chat_id == s_id %}rgba(255,255,255,0.1){% else %}rgba(255,255,255,0.02){% endif %}'">
+                    <strong>Chat: {{ s_id }}</strong>
+                    <div class="sidebar-time" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">{{
+                        s['last_message_at'][:16] if s['last_message_at'] else s['created_at'][:16] }}</div>
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <!-- Main Message Stream -->
+    <div class="glass-panel" style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+            <h3>Message Stream {% if chat_id != 'default' %}(Chat: {{ chat_id }}){% endif %}</h3>
+            <div style="display: flex; gap: 10px;">
+                {% if chat_id %}
+                <button class="btn danger" onclick="showDeleteModal('{{ chat_id }}')"
+                    style="width: auto; background: rgba(255, 68, 68, 0.2); color: #ff4444; border: 1px solid rgba(255, 68, 68, 0.5); padding: 8px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s;"
+                    onmouseover="this.style.background='#ff4444'; this.style.color='white'"
+                    onmouseout="this.style.background='rgba(255, 68, 68, 0.2)'; this.style.color='#ff4444'">Delete
+                    Chat</button>
+                {% endif %}
+                <button class="btn primary" onclick="startNewChat()" style="width: auto;">New Chat</button>
+            </div>
+        </div>
+        <div class="message-list" style="flex: 1; overflow-y: auto;">
+            {% for msg in messages %}
+            <div class="message-item {{ msg['type'] }}">
+                <div class="msg-header">
+                    <span class="msg-type">{{ 'User' if msg['type'] == 'in' else 'Agent' }}</span>
+                    <span class="msg-time">{{ msg['created_at'] }}</span>
+                </div>
+                <div class="msg-content">
+                    {% if msg['image_base64'] %}
+                    {% if not msg['file_mime_type'] or msg['file_mime_type'].startswith('image/') %}
+                    {% if msg['image_base64'].startswith('path:temp/') %}
+                    <div style="margin-bottom: 8px;"><img src="/api/temp/{{ msg['image_base64'][10:] }}"
+                            style="max-width: 100%; border-radius: 8px; max-height: 300px;"></div>
+                    {% elif msg['image_base64'].startswith('path:') %}
+                    <div
+                        style="margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; display: inline-block;">
+                        🖼️ {{ msg['file_name'] or 'Image Attachment' }}</div>
+                    {% elif msg['image_base64'].startswith('uri:') %}
+                    <div
+                        style="margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; display: inline-block;">
+                        🖼️ {{ msg['file_name'] or 'Attachment' }}</div>
+                    {% else %}
+                    <div style="margin-bottom: 8px;"><img src="data:image/jpeg;base64,{{ msg['image_base64'] }}"
+                            style="max-width: 100%; border-radius: 8px; max-height: 300px;"></div>
+                    {% endif %}
+                    {% else %}
+                    <div
+                        style="margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; display: inline-block;">
+                        📎 {{ msg['file_name'] or 'Attachment' }}</div>
+                    {% endif %}
+                    {% endif %}
+                    <div class="{% if msg['type'] == 'out' %}markdown-text{% else %}plain-text{% endif %}">{{
+                        msg['content'] }}</div>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>No messages yet. Send a message to start.</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div id="filePreviewContainer"
+            style="display: none; margin-top: 10px; position: relative; width: fit-content; align-items: center; gap: 10px;">
+            <img id="imagePreview"
+                style="max-height: 100px; border-radius: 8px; border: 1px solid var(--border-color); display: none;">
+            <div id="filePreview"
+                style="display: none; padding: 10px 15px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: white;">
+                <span id="filePreviewName"></span>
+            </div>
+            <button onclick="clearFile()"
+                style="position: absolute; top: -5px; right: -5px; background: #ff4444; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px;">&times;</button>
+        </div>
+        <div class="chat-input-area" style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+            <button onclick="document.getElementById('fileInput').click()"
+                style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 5px; display: flex; align-items: center; justify-content: center;"
+                title="Attach File">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path
+                        d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+            </button>
+            <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)">
+            <input type="text" id="chatInput" placeholder="Type your message to NanoWorker..." autocomplete="nope"
+                spellcheck="false" data-1p-ignore="true" data-lpignore="true"
+                style="flex: 1; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.3); color: white; font-size: 1.1rem;"
+                onkeypress="handleKeyPress(event)">
+            <button class="btn primary" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal"
+    style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(2px);">
+    <div
+        style="background: var(--bg-color); padding: 25px; border-radius: 12px; border: 1px solid var(--border-color); width: 350px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <h3 style="margin-top: 0; color: white;">Delete Chat</h3>
+        <p style="color: var(--text-muted); line-height: 1.5;">Are you sure you want to delete this chat? This action
+            cannot be undone.</p>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px;">
+            <button onclick="closeDeleteModal()"
+                style="padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border-color); background: transparent; color: white; cursor: pointer; transition: background 0.2s;"
+                onmouseover="this.style.background='rgba(255,255,255,0.1)'"
+                onmouseout="this.style.background='transparent'">Cancel</button>
+            <button id="confirmDeleteBtn"
+                style="padding: 8px 16px; border-radius: 8px; border: none; background: #ff4444; color: white; cursor: pointer; transition: opacity 0.2s;"
+                onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">Delete</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    function startNewChat() {
+        const newId = Math.random().toString(36).substring(2, 9);
+        window.location.href = '/?chat_id=' + newId + '&focus=true';
+    }
+
+    function handleKeyPress(event) {
+        if (event.key === 'Enter') {
+            sendMessage();
+        }
+    }
+
+    let currentImageBase64 = null;
+    let currentFileName = null;
+    let currentFileMimeType = null;
+
+    function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        currentFileName = file.name;
+        currentFileMimeType = file.type;
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            currentImageBase64 = e.target.result;
+            document.getElementById('filePreviewContainer').style.display = 'flex';
+            if (currentFileMimeType.startsWith('image/')) {
+                document.getElementById('imagePreview').src = currentImageBase64;
+                document.getElementById('imagePreview').style.display = 'block';
+                document.getElementById('filePreview').style.display = 'none';
+            } else {
+                document.getElementById('filePreviewName').innerText = currentFileName;
+                document.getElementById('imagePreview').style.display = 'none';
+                document.getElementById('filePreview').style.display = 'block';
+            }
+        };
+        reader.readAsDataURL(file);
+        
+        // Focus the chat input after selecting a file
+        document.getElementById('chatInput').focus();
+    }
+
+    function clearFile() {
+        currentImageBase64 = null;
+        currentFileName = null;
+        currentFileMimeType = null;
+        document.getElementById('fileInput').value = '';
+        document.getElementById('filePreviewContainer').style.display = 'none';
+        document.getElementById('imagePreview').src = '';
+    }
+
+    function appendMessage(type, content, sessionId, msgId, timeStr, imageBase64 = null, fileMimeType = null, fileName = null) {
+        const list = document.querySelector('.message-list');
+        // Remove empty state if present
+        const emptyState = document.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+
+        const typeLabel = type === 'in' ? 'User' : 'Agent';
+
+        const div = document.createElement('div');
+        div.className = `message-item ${type}`;
+        const renderedContent = type === 'out' && typeof marked !== 'undefined' ? marked.parse(content) : content;
+
+        let imgHtml = '';
+        if (imageBase64) {
+            if (!fileMimeType || fileMimeType.startsWith('image/')) {
+                if (imageBase64.startsWith('path:temp/')) {
+                    imgHtml = `<div style="margin-bottom: 8px;"><img src="/api/temp/${imageBase64.substring(10)}" style="max-width: 100%; border-radius: 8px; max-height: 300px;"></div>`;
+                } else if (imageBase64.startsWith('path:')) {
+                    imgHtml = `<div style="margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; display: inline-block;">🖼️ ${fileName || 'Image Attachment'}</div>`;
+                } else if (imageBase64.startsWith('uri:')) {
+                    imgHtml = `<div style="margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; display: inline-block;">🖼️ ${fileName || 'Attachment'}</div>`;
+                } else {
+                    const src = imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
+                    imgHtml = `<div style="margin-bottom: 8px;"><img src="${src}" style="max-width: 100%; border-radius: 8px; max-height: 300px;"></div>`;
+                }
+            } else {
+                imgHtml = `<div style="margin-bottom: 8px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; display: inline-block;">📎 ${fileName || 'Attachment'}</div>`;
+            }
+        }
+
+        div.innerHTML = `
+            <div class="msg-header">
+                <span class="msg-type">${typeLabel}</span>
+                <span class="msg-time">${timeStr}</span>
+            </div>
+            <div class="msg-content">${imgHtml}<div class="${type === 'out' ? 'markdown-text' : 'plain-text'}">${renderedContent}</div></div>
+        `;
+        list.appendChild(div);
+
+        // Scroll to bottom
+        list.scrollTop = list.scrollHeight;
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if (!text) return;
+
+        const chatId = "{{ chat_id }}";
+        const channelId = chatId !== 'default' ? 'web-chat-' + chatId : 'web-chat';
+        const senderId = chatId !== 'default' ? 'user-web-' + chatId : 'user-web';
+
+        // Extract base64 without data URI prefix for the backend
+        let b64Payload = null;
+        let payloadMimeType = currentFileMimeType;
+        let payloadFileName = currentFileName;
+
+        if (currentImageBase64) {
+            b64Payload = currentImageBase64.split(',')[1];
+        }
+
+        // Optimistically render user message
+        appendMessage('in', text, channelId, 'msg-in-pend', 'Just now', currentImageBase64, currentFileMimeType, currentFileName);
+
+        // Clear input and image
+        clearFile();
+
+        // Move chat to top of sidebar
+        const sidebarUl = document.querySelector('.glass-panel ul');
+        let activeLi = document.getElementById('sidebar-item-' + chatId);
+        if (activeLi) {
+            sidebarUl.prepend(activeLi);
+            const timeDiv = activeLi.querySelector('.sidebar-time');
+            if (timeDiv) timeDiv.innerText = 'Just now';
+        } else if (sidebarUl) {
+            const newLi = document.createElement('li');
+            newLi.id = 'sidebar-item-' + chatId;
+            newLi.innerHTML = `
+                <a href="/?chat_id=${chatId}" style="text-decoration: none; color: inherit; display: block; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.1); border-left: 3px solid var(--accent);">
+                    <strong>Chat: ${chatId}</strong>
+                    <div class="sidebar-time" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Just now</div>
+                </a>
+            `;
+            sidebarUl.prepend(newLi);
+        }
+
+        input.value = '';
+        input.disabled = true;
+
+        // Show typing indicator
+        const typingDiv = document.createElement('div');
+        typingDiv.className = 'message-item out typing-indicator';
+        typingDiv.innerHTML = `
+            <div class="msg-header">
+                <span class="msg-type">Agent</span>
+                <span class="msg-time">...</span>
+            </div>
+            <div class="msg-content">
+                <span class="typing-dots">
+                    <span>●</span><span>●</span><span>●</span>
+                </span>
+            </div>
+        `;
+        const list = document.querySelector('.message-list');
+        list.appendChild(typingDiv);
+        list.scrollTop = list.scrollHeight;
+
+
+        fetch('/api/webhook', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                channel_id: channelId,
+                content: text,
+                sender_id: senderId,
+                image_base64: b64Payload,
+                file_mime_type: payloadMimeType,
+                file_name: payloadFileName
+            })
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'received') {
+                // Synchronous response (e.g. /new command)
+                typingDiv.remove();
+                input.disabled = false;
+                input.focus();
+                if (data.response_text) {
+                    appendMessage('out', data.response_text, data.session_id || channelId, 'msg-out-sync', data.created_at || 'Just now');
+                }
+                return;
+            }
+
+            if (data.status === 'processing') {
+                // Start polling for the response
+                const sessionId = data.session_id;
+                const pollInterval = 1500;
+                const pollTimeout = 1200000;
+                const startTime = Date.now();
+                const appendedMsgIds = new Set();
+
+                const poller = setInterval(() => {
+                    if (Date.now() - startTime > pollTimeout) {
+                        clearInterval(poller);
+                        typingDiv.remove();
+                        input.disabled = false;
+                        input.focus();
+                        appendMessage('out', '⏱️ Timeout: the agent took too long to respond.', sessionId, 'msg-out-timeout', 'Just now');
+                        return;
+                    }
+
+                    fetch(`/api/messages/poll?message_in_id=${encodeURIComponent(data.message_in_id)}&type=chat`)
+                        .then(res => res.json())
+                        .then(pollData => {
+                            if (pollData.messages) {
+                                pollData.messages.forEach(msg => {
+                                    if (!appendedMsgIds.has(msg.id)) {
+                                        appendedMsgIds.add(msg.id);
+                                        appendMessage('out', msg.content, msg.session_id, msg.id, msg.created_at);
+                                    }
+                                });
+                            }
+
+                            if (pollData.is_done) {
+                                clearInterval(poller);
+                                typingDiv.remove();
+                                input.disabled = false;
+                                input.focus();
+                            }
+                        })
+                        .catch(err => console.error('Poll error:', err));
+                }, pollInterval);
+            }
+        }).catch(err => {
+            console.error(err);
+            typingDiv.remove();
+            input.disabled = false;
+            input.focus();
+        });
+    }
+
+    // Render markdown and scroll to bottom on load
+    window.onload = function () {
+        if (typeof marked !== 'undefined') {
+            document.querySelectorAll('.markdown-text').forEach(el => {
+                el.innerHTML = marked.parse(el.textContent);
+            });
+        }
+        const list = document.querySelector('.message-list');
+        if (list) list.scrollTop = list.scrollHeight;
+
+        // Focus input if requested
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('focus') === 'true') {
+            document.getElementById('chatInput').focus();
+        }
+
+        // Live search setup
+        const searchInput = document.getElementById('chatSearch');
+        let searchTimer = null;
+
+        searchInput.addEventListener('input', function () {
+            clearTimeout(searchTimer);
+            const query = this.value.trim();
+            const items = document.querySelectorAll('#chatSessionList > li');
+
+            if (!query) {
+                // Show all sessions when search is cleared
+                items.forEach(li => li.style.display = '');
+                return;
+            }
+
+            searchTimer = setTimeout(() => {
+                fetch('/api/chat/search?q=' + encodeURIComponent(query))
+                    .then(res => res.json())
+                    .then(data => {
+                        const matchSet = new Set(data.matching_channels || []);
+                        items.forEach(li => {
+                            // Extract channel_id from the sidebar item id
+                            const itemId = li.id.replace('sidebar-item-', '');
+                            const channelId = itemId !== 'default' ? 'web-chat-' + itemId : 'web-chat';
+                            li.style.display = matchSet.has(channelId) ? '' : 'none';
+                        });
+                    })
+                    .catch(err => console.error('Search error:', err));
+            }, 300);
+        });
+    }
+
+    let chatToDelete = null;
+
+    function showDeleteModal(chatId) {
+        chatToDelete = chatId;
+        document.getElementById('deleteModal').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        chatToDelete = null;
+        document.getElementById('deleteModal').style.display = 'none';
+    }
+
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function () {
+        if (!chatToDelete) return;
+
+        fetch('/api/chat/' + encodeURIComponent(chatToDelete), {
+            method: 'DELETE'
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    window.location.href = '/';
+                } else {
+                    alert('Failed to delete chat.');
+                }
+            })
+            .catch(err => console.error('Error deleting chat:', err))
+            .finally(() => {
+                closeDeleteModal();
+            });
+    });
+</script>
+{% endblock %}

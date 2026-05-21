@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - LLM Configuration{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto;">
+    <div style="display: flex; align-items: center; margin-bottom: 24px;">
+        <a href="/settings"
+            style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+            &larr;
+        </a>
+        <h2 style="font-weight: 600; margin: 0;">LLM Configuration</h2>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
+        <div class="glass-panel" style="display: flex; flex-direction: column; grid-column: 1 / -1;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">LLM Preference Order
+            </h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0; margin-bottom: 16px;">
+                Set the order of preference for the LLM providers.
+            </p>
+            <div class="settings-form"
+                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px;">
+                <div>
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">1st
+                        Preference</label>
+                    <select id="llmPref1"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                        <option value="">None</option>
+                        <optgroup label="Google">
+                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        </optgroup>
+                        <!--<optgroup label="Qwen">
+                            <option value="qwen-plus">qwen-plus</option>
+                            <option value="qwen-max">qwen-max</option>
+                            <option value="qwen-turbo">qwen-turbo</option>
+                        </optgroup>
+                        <optgroup label="DeepSeek">
+                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner</option>
+                        </optgroup>
+                        <optgroup label="OpenAI">
+                            <option value="gpt-4o">gpt-4o</option>
+                            <option value="gpt-4o-mini">gpt-4o-mini</option>
+                            <option value="o1-mini">o1-mini</option>
+                            <option value="o3-mini">o3-mini</option>
+                        </optgroup>
+                        <optgroup label="Anthropic">
+                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
+                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
+                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                        </optgroup>-->
+                    </select>
+                </div>
+                <div>
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">2nd
+                        Preference</label>
+                    <select id="llmPref2"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                        <option value="">None</option>
+                        <optgroup label="Google">
+                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        </optgroup>
+                        <optgroup label="Qwen">
+                            <option value="qwen-plus">qwen-plus</option>
+                            <option value="qwen-max">qwen-max</option>
+                            <option value="qwen-turbo">qwen-turbo</option>
+                        </optgroup>
+                        <optgroup label="DeepSeek">
+                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner</option>
+                        </optgroup>
+                        <optgroup label="OpenAI">
+                            <option value="gpt-4o">gpt-4o</option>
+                            <option value="gpt-4o-mini">gpt-4o-mini</option>
+                            <option value="o1-mini">o1-mini</option>
+                            <option value="o3-mini">o3-mini</option>
+                        </optgroup>
+                        <optgroup label="Anthropic">
+                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
+                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
+                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div>
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">3rd
+                        Preference</label>
+                    <select id="llmPref3"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                        <option value="">None</option>
+                        <optgroup label="Google">
+                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        </optgroup>
+                        <optgroup label="Qwen">
+                            <option value="qwen-plus">qwen-plus</option>
+                            <option value="qwen-max">qwen-max</option>
+                            <option value="qwen-turbo">qwen-turbo</option>
+                        </optgroup>
+                        <optgroup label="DeepSeek">
+                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner</option>
+                        </optgroup>
+                        <optgroup label="OpenAI">
+                            <option value="gpt-4o">gpt-4o</option>
+                            <option value="gpt-4o-mini">gpt-4o-mini</option>
+                            <option value="o1-mini">o1-mini</option>
+                            <option value="o3-mini">o3-mini</option>
+                        </optgroup>
+                        <optgroup label="Anthropic">
+                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
+                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
+                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div>
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">4th
+                        Preference</label>
+                    <select id="llmPref4"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                        <option value="">None</option>
+                        <optgroup label="Google">
+                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        </optgroup>
+                        <optgroup label="Qwen">
+                            <option value="qwen-plus">qwen-plus</option>
+                            <option value="qwen-max">qwen-max</option>
+                            <option value="qwen-turbo">qwen-turbo</option>
+                        </optgroup>
+                        <optgroup label="DeepSeek">
+                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner</option>
+                        </optgroup>
+                        <optgroup label="OpenAI">
+                            <option value="gpt-4o">gpt-4o</option>
+                            <option value="gpt-4o-mini">gpt-4o-mini</option>
+                            <option value="o1-mini">o1-mini</option>
+                            <option value="o3-mini">o3-mini</option>
+                        </optgroup>
+                        <optgroup label="Anthropic">
+                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
+                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
+                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div>
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">5th
+                        Preference</label>
+                    <select id="llmPref5"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                        <option value="">None</option>
+                        <optgroup label="Google">
+                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        </optgroup>
+                        <optgroup label="Qwen">
+                            <option value="qwen-plus">qwen-plus</option>
+                            <option value="qwen-max">qwen-max</option>
+                            <option value="qwen-turbo">qwen-turbo</option>
+                        </optgroup>
+                        <optgroup label="DeepSeek">
+                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner</option>
+                        </optgroup>
+                        <optgroup label="OpenAI">
+                            <option value="gpt-4o">gpt-4o</option>
+                            <option value="gpt-4o-mini">gpt-4o-mini</option>
+                            <option value="o1-mini">o1-mini</option>
+                            <option value="o3-mini">o3-mini</option>
+                        </optgroup>
+                        <optgroup label="Anthropic">
+                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
+                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
+                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                        </optgroup>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">Gemini Configuration
+            </h3>
+            <div class="settings-form" style="margin-top: 8px; flex: 1;">
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Gemini
+                        API Key</label>
+                    <input type="password" id="apiKeyInput"
+                        placeholder="{% if has_api_key %}•••••••••••• (Key is already set){% else %}Paste your Gemini API Key here...{% endif %}"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
+                        API key is stored
+                        securely in the .env file.</small>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">LLM
+                        Model Name</label>
+                    <input type="text" id="modelInput" value="{{ current_model }}" placeholder="gemini-2.0-flash"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
+                        Gemini model to use
+                        for inference.</small>
+                </div>
+            </div>
+        </div>
+
+        <!--<div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">Qwen Configuration</h3>
+            <div class="settings-form" style="margin-top: 8px; flex: 1;">
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Qwen
+                        API Key</label>
+                    <input type="password" id="qwenApiKeyInput"
+                        placeholder="{% if has_qwen_key %}•••••••••••• (Key is already set){% else %}Paste your Qwen API Key here...{% endif %}"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
+                        API key is stored
+                        securely in the .env file.</small>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Qwen
+                        Model Name</label>
+                    <input type="text" id="qwenModelInput" value="{{ qwen_model }}" placeholder="qwen-plus"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
+                        Qwen model to use
+                        for inference.</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">DeepSeek Configuration
+            </h3>
+            <div class="settings-form" style="margin-top: 8px; flex: 1;">
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">DeepSeek
+                        API Key</label>
+                    <input type="password" id="deepseekApiKeyInput"
+                        placeholder="{% if has_deepseek_key %}•••••••••••• (Key is already set){% else %}Paste your DeepSeek API Key here...{% endif %}"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
+                        API key is stored
+                        securely in the .env file.</small>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">DeepSeek
+                        Model Name</label>
+                    <input type="text" id="deepseekModelInput" value="{{ deepseek_model }}" placeholder="deepseek-chat"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
+                        DeepSeek model to use
+                        for inference.</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">OpenAI Configuration
+            </h3>
+            <div class="settings-form" style="margin-top: 8px; flex: 1;">
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">OpenAI
+                        API Key</label>
+                    <input type="password" id="openaiApiKeyInput"
+                        placeholder="{% if has_openai_key %}•••••••••••• (Key is already set){% else %}Paste your OpenAI API Key here...{% endif %}"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
+                        API key is stored
+                        securely in the .env file.</small>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">OpenAI
+                        Model Name</label>
+                    <input type="text" id="openaiModelInput" value="{{ openai_model }}" placeholder="gpt-4o"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
+                        OpenAI model to use
+                        for inference.</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">Anthropic Configuration
+            </h3>
+            <div class="settings-form" style="margin-top: 8px; flex: 1;">
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Anthropic
+                        API Key</label>
+                    <input type="password" id="anthropicApiKeyInput"
+                        placeholder="{% if has_anthropic_key %}•••••••••••• (Key is already set){% else %}Paste your Anthropic API Key here...{% endif %}"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
+                        API key is stored
+                        securely in the .env file.</small>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label
+                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Anthropic
+                        Model Name</label>
+                    <input type="text" id="anthropicModelInput" value="{{ anthropic_model }}"
+                        placeholder="claude-3-5-sonnet-20241022"
+                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
+                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
+                        Anthropic model to use
+                        for inference.</small>
+                </div>
+            </div>
+        </div>-->
+
+    </div>
+    <button class="btn primary" style="width: 100%; padding: 12px; font-size: 1rem; margin-top: 24px;"
+        onclick="saveSettings()">Save LLM Config</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('llmPref1').value = '{{ llm_pref_1 }}';
+        document.getElementById('llmPref2').value = '{{ llm_pref_2 }}';
+        document.getElementById('llmPref3').value = '{{ llm_pref_3 }}';
+        document.getElementById('llmPref4').value = '{{ llm_pref_4 }}';
+        document.getElementById('llmPref5').value = '{{ llm_pref_5 }}';
+    });
+
+    function saveSettings() {
+        const key = document.getElementById('apiKeyInput').value;
+        const model = document.getElementById('modelInput').value;
+        const qwenKey = document.getElementById('qwenApiKeyInput').value;
+        const qwenModel = document.getElementById('qwenModelInput').value;
+        const deepseekKey = document.getElementById('deepseekApiKeyInput').value;
+        const deepseekModel = document.getElementById('deepseekModelInput').value;
+        const openaiKey = document.getElementById('openaiApiKeyInput').value;
+        const openaiModel = document.getElementById('openaiModelInput').value;
+        const anthropicKey = document.getElementById('anthropicApiKeyInput').value;
+        const anthropicModel = document.getElementById('anthropicModelInput').value;
+
+        const llmPref1 = document.getElementById('llmPref1').value;
+        const llmPref2 = document.getElementById('llmPref2').value;
+        const llmPref3 = document.getElementById('llmPref3').value;
+        const llmPref4 = document.getElementById('llmPref4').value;
+        const llmPref5 = document.getElementById('llmPref5').value;
+
+        const payload = {};
+        if (key) payload.gemini_api_key = key;
+        if (model) payload.llm_model = model;
+        if (qwenKey) payload.qwen_api_key = qwenKey;
+        if (qwenModel) payload.qwen_model = qwenModel;
+        if (deepseekKey) payload.deepseek_api_key = deepseekKey;
+        if (deepseekModel) payload.deepseek_model = deepseekModel;
+        if (openaiKey) payload.openai_api_key = openaiKey;
+        if (openaiModel) payload.openai_model = openaiModel;
+        if (anthropicKey) payload.anthropic_api_key = anthropicKey;
+        if (anthropicModel) payload.anthropic_model = anthropicModel;
+
+        if (llmPref1 !== undefined) payload.llm_pref_1 = llmPref1;
+        if (llmPref2 !== undefined) payload.llm_pref_2 = llmPref2;
+        if (llmPref3 !== undefined) payload.llm_pref_3 = llmPref3;
+        if (llmPref4 !== undefined) payload.llm_pref_4 = llmPref4;
+        if (llmPref5 !== undefined) payload.llm_pref_5 = llmPref5;
+
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast('Settings saved successfully!');
+                if (key) {
+                    document.getElementById('apiKeyInput').placeholder = '•••••••••••• (Key is already set)';
+                    document.getElementById('apiKeyInput').value = '';
+                }
+                if (qwenKey) {
+                    document.getElementById('qwenApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
+                    document.getElementById('qwenApiKeyInput').value = '';
+                }
+                if (deepseekKey) {
+                    document.getElementById('deepseekApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
+                    document.getElementById('deepseekApiKeyInput').value = '';
+                }
+                if (openaiKey) {
+                    document.getElementById('openaiApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
+                    document.getElementById('openaiApiKeyInput').value = '';
+                }
+                if (anthropicKey) {
+                    document.getElementById('anthropicApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
+                    document.getElementById('anthropicApiKeyInput').value = '';
+                }
+            } else {
+                showToast('Error saving settings.');
+            }
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Cron Jobs{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto;">
+    <h2 style="margin-bottom: 24px; font-weight: 600;">Manage Cron Jobs</h2>
+    
+    <div style="background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--border-color); overflow: hidden;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="background: rgba(255,255,255,0.05); border-bottom: 1px solid var(--border-color);">
+                    <th style="padding: 16px; font-weight: 500; color: var(--text-muted);">Description</th>
+                    <th style="padding: 16px; font-weight: 500; color: var(--text-muted);">Cron Expression</th>
+                    <th style="padding: 16px; font-weight: 500; color: var(--text-muted);">Next Run</th>
+                    <th style="padding: 16px; font-weight: 500; color: var(--text-muted);">Status</th>
+                    <th style="padding: 16px; font-weight: 500; color: var(--text-muted); text-align: center;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if jobs %}
+                    {% for job in jobs %}
+                    <tr style="border-bottom: 1px solid var(--border-color); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background=''">
+                        <td style="padding: 16px;">
+                            <div style="font-weight: 500;">{{ job['description'] }}</div>
+                            <small style="color: var(--text-muted); display: block; margin-top: 4px;">Session: {{ job['channel_id'] }}</small>
+                        </td>
+                        <td style="padding: 16px; font-family: monospace; color: var(--accent-color);">
+                            {{ job['cron_expression'] }}
+                        </td>
+                        <td style="padding: 16px;">
+                            {{ job['next_run'] }}
+                        </td>
+                        <td style="padding: 16px;">
+                            <label style="position: relative; display: inline-block; width: 48px; height: 24px; cursor: pointer;">
+                                <input type="checkbox" onchange="toggleJobStatus('{{ job['id'] }}', this)" {% if job['is_active'] %}checked{% endif %} style="opacity: 0; width: 0; height: 0;">
+                                <span class="toggle-bg" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: {% if job['is_active'] %}rgba(16, 185, 129, 0.6){% else %}rgba(255,255,255,0.15){% endif %}; border-radius: 24px; transition: 0.3s;"></span>
+                                <span class="toggle-knob" style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s; transform: {% if job['is_active'] %}translateX(24px){% else %}translateX(0){% endif %};"></span>
+                            </label>
+                        </td>
+                        <td style="padding: 16px; text-align: center;">
+                            <button onclick="deleteJob('{{ job['id'] }}')" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.3)'" onmouseout="this.style.background='rgba(239, 68, 68, 0.2)'">
+                                Delete
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="5" style="padding: 32px; text-align: center; color: var(--text-muted);">
+                            No cron jobs scheduled.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function toggleJobStatus(jobId, checkbox) {
+        const toggleBg = checkbox.nextElementSibling;
+        const toggleKnob = toggleBg.nextElementSibling;
+        
+        fetch(`/api/cron/${jobId}/toggle`, {
+            method: 'POST'
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                if (data.is_active) {
+                    toggleBg.style.backgroundColor = 'rgba(16, 185, 129, 0.6)';
+                    toggleKnob.style.transform = 'translateX(24px)';
+                } else {
+                    toggleBg.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                    toggleKnob.style.transform = 'translateX(0)';
+                }
+                showToast('Cron job status updated!');
+            } else {
+                showToast('Error updating job status.');
+                // Revert visual state
+                checkbox.checked = !checkbox.checked;
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            showToast('Error communicating with server.');
+            checkbox.checked = !checkbox.checked;
+        });
+    }
+
+    function deleteJob(jobId) {
+        if (!confirm('Are you sure you want to delete this cron job?')) {
+            return;
+        }
+
+        fetch(`/api/cron/${jobId}`, {
+            method: 'DELETE'
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                showToast('Cron job deleted successfully!');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast('Error deleting job.');
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            showToast('Error communicating with server.');
+        });
+    }
+</script>
+{% endblock %}

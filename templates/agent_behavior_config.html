@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Agent Behavior Configuration{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto;">
+    <div style="display: flex; align-items: center; margin-bottom: 24px;">
+        <a href="/settings" style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+            &larr;
+        </a>
+        <h2 style="font-weight: 600; margin: 0;">Agent Behavior Configuration</h2>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
+
+        <!-- General Behavior Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3>General Behavior</h3>
+            <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
+                Configure how the AI agent behaves during conversations.
+            </small>
+            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-bottom: 20px;">
+                    <label
+                        style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">System
+                        Prompt</label>
+                    <textarea id="systemPromptInput" rows="6" placeholder="Enter the system prompt for the agent..."
+                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ system_prompt }}</textarea>
+                </div>
+
+                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Thinking</label>
+                        <small style="display: block; margin-top: 4px; color: var(--text-muted);">Allow the LLM to
+                            reason step-by-step before responding.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="thinkingToggle" {% if thinking_enabled %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="toggleKnob"></span>
+                    </label>
+                </div>
+
+                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Add current datetime</label>
+                        <small style="display: block; margin-top: 4px; color: var(--text-muted);">Automatically prepend the current date and time to the system prompt.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="datetimeToggle" {% if add_datetime_enabled %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="datetimeToggleKnob"></span>
+                    </label>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- IDE Behavior Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3>IDE Behavior</h3>
+            <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
+                Configure how the agent interacts with the IDE and codebase.
+            </small>
+            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-bottom: 20px;">
+                    <label
+                        style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">IDE
+                        Prompt</label>
+                    <textarea id="idePromptInput" rows="6" placeholder="Enter IDE specific prompt..."
+                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ ide_prompt }}</textarea>
+                    <small style="display: block; margin-top: 6px; color: var(--text-muted);">Instructions for IDE tasks.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Extra Settings Card -->
+        <div class="glass-panel" style="display: none; flex-direction: column;">
+            <h3>Extra Settings</h3>
+            <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
+                Additional configuration for agent behavior.
+            </small>
+            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
+                <div style="padding: 40px; text-align: center; color: var(--text-muted);">
+                    No extra settings available at the moment.
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div style="margin-top: 32px; display: flex; justify-content: flex-end;">
+        <button class="btn primary" style="padding: 12px 32px; font-size: 1rem;"
+            onclick="saveAgentSettings()">Save Agent Config</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Toggle visual logic
+    function setupToggle(toggleId, knobId) {
+        const toggle = document.getElementById(toggleId);
+        const knob = document.getElementById(knobId);
+        function updateVisual() {
+            if (toggle && knob) {
+                if (toggle.checked) {
+                    knob.style.transform = 'translateX(32px)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(59, 130, 246, 0.6)';
+                } else {
+                    knob.style.transform = 'translateX(0)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                }
+            }
+        }
+        if (toggle) {
+            updateVisual();
+            toggle.addEventListener('change', updateVisual);
+        }
+    }
+
+    setupToggle('thinkingToggle', 'toggleKnob');
+    setupToggle('datetimeToggle', 'datetimeToggleKnob');
+
+    function saveAgentSettings() {
+        const systemPrompt = document.getElementById('systemPromptInput').value;
+        const thinkingEnabled = document.getElementById('thinkingToggle').checked;
+        const addDatetimeEnabled = document.getElementById('datetimeToggle').checked;
+        const idePrompt = document.getElementById('idePromptInput').value;
+
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                system_prompt: systemPrompt,
+                thinking_enabled: thinkingEnabled,
+                add_datetime_enabled: addDatetimeEnabled,
+                ide_prompt: idePrompt
+            })
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast('Agent settings saved successfully!');
+            } else {
+                showToast('Error saving agent settings.');
+            }
+        });
+    }
+</script>
+{% endblock %}

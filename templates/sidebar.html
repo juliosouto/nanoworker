@@ -1,0 +1,43 @@
+<aside class="sidebar">
+    <div class="logo-container" style="max-height: 73px;">
+        <div class="logo-icon"></div>
+        <h1>NanoWorker</h1>
+    </div>
+
+    <nav class="nav-menu">
+        <!--<div class="nav-section">
+            <h3>Agents</h3>
+            <ul>
+                {% for agent in agents %}
+                <li class="active">
+                    <span class="status-dot"></span>
+                    {{ agent['name'] }}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>-->
+
+        <!--<div class="nav-section">
+            <h3>Active Sessions</h3>
+            <ul>
+                {% for session in sessions %}
+                <li>{{ session['channel_id'] }} <span class="badge">{{ session['id'][:8] }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>-->
+
+        <div class="nav-section">
+            <h3>System</h3>
+            <ul>
+                <li {% if request.endpoint=='dashboard' %}class="active" {% endif %}><a href="/">Chat</a></li>
+                <li {% if request.endpoint=='ide_page' %}class="active" {% endif %}><a href="/ide"
+                        target="_blank">IDE</a></li>
+                <li {% if request.endpoint=='cron_jobs_page' %}class="active" {% endif %}><a href="/cron">Cron Jobs</a>
+                </li>
+                <br>
+                <li {% if request.endpoint=='settings_page' %}class="active" {% endif %}><a
+                        href="/settings">Settings</a></li>
+            </ul>
+        </div>
+    </nav>
+</aside>

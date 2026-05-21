@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Permissions{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto;">
+    <div style="display: flex; align-items: center; margin-bottom: 24px;">
+        <a href="/settings"
+            style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+            &larr;
+        </a>
+        <h2 style="font-weight: 600; margin: 0;">Permissions Configuration</h2>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;">
+
+        <!-- Terminal Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Terminal Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to execute commands in the terminal.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Terminal</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="terminalToggle" {% if perm_terminal %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="terminalToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Browser Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Browser Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to control the browser and scrape websites.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Browser</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="browserToggle" {% if perm_browser %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="browserToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- File System Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">File System Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to read and write files on the host machine.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            File System</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="fsToggle" {% if perm_fs %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="fsToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Calendar Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Calendar Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to read and modify calendar events.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Calendar</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="calendarToggle" {% if perm_calendar %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="calendarToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Photos Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Photos Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to view and modify your photos.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Photos</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="photosToggle" {% if perm_photos %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="photosToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- iCloud Drive Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">iCloud Drive Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to access files in iCloud Drive.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            iCloud Drive</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="icloudToggle" {% if perm_icloud %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="icloudToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notes Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Notes Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to read and write Apple Notes.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Notes</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="notesToggle" {% if perm_notes %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="notesToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reminders Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Reminders Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to manage your Reminders.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Reminders</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="remindersToggle" {% if perm_reminders %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="remindersToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mail Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Mail Access</h3>
+            <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                Allow the agent to read and send emails via Apple Mail.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Mail</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="mailToggle" {% if perm_mail %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="mailToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Messages Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Messages Access</h3>
+            <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                Allow the agent to send and read your Messages (iMessage).
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Messages</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="messagesToggle" {% if perm_messages %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="messagesToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Data Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">System Data and Documents</h3>
+            <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                Allow the agent to access system data and document folders. This is necessary for the IDE and advanced
+                features to work properly.
+            </small>
+            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            System Data</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="systemDataToggle" {% if perm_system_data %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="systemDataToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Toggle visual logic
+    function setupToggle(toggleId, knobId, permType) {
+        const toggle = document.getElementById(toggleId);
+        const knob = document.getElementById(knobId);
+
+        function updateVisual() {
+            if (toggle && knob) {
+                if (toggle.checked) {
+                    knob.style.transform = 'translateX(32px)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(59, 130, 246, 0.6)';
+                } else {
+                    knob.style.transform = 'translateX(0)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                }
+            }
+        }
+
+        if (toggle) {
+            updateVisual();
+            toggle.addEventListener('change', (e) => {
+                updateVisual();
+                savePermissionState(permType, e.target.checked);
+
+                if (e.target.checked) {
+                    requestOsPermission(permType);
+                }
+            });
+        }
+    }
+
+    function savePermissionState(permType, isEnabled) {
+        const payload = {};
+        payload[`perm_${permType}`] = isEnabled;
+
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                console.log(`Saved ${permType}: ${isEnabled}`);
+                showToast(`${permType} permission ${isEnabled ? 'enabled' : 'disabled'}`);
+            } else {
+                showToast(`Error saving ${permType} permission`);
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast(`Error saving ${permType} permission`);
+        });
+    }
+
+    function requestOsPermission(permType) {
+        fetch('/api/permissions/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ permission: permType })
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                console.log(`OS prompt triggered for ${permType}`);
+            } else {
+                console.error(`Error requesting OS permission: ${data.error}`);
+            }
+        }).catch(err => console.error(err));
+    }
+
+    setupToggle('terminalToggle', 'terminalToggleKnob', 'terminal');
+    setupToggle('browserToggle', 'browserToggleKnob', 'browser');
+    setupToggle('fsToggle', 'fsToggleKnob', 'fs');
+    setupToggle('calendarToggle', 'calendarToggleKnob', 'calendar');
+    setupToggle('photosToggle', 'photosToggleKnob', 'photos');
+    setupToggle('icloudToggle', 'icloudToggleKnob', 'icloud');
+    setupToggle('notesToggle', 'notesToggleKnob', 'notes');
+    setupToggle('remindersToggle', 'remindersToggleKnob', 'reminders');
+    setupToggle('mailToggle', 'mailToggleKnob', 'mail');
+    setupToggle('messagesToggle', 'messagesToggleKnob', 'messages');
+    setupToggle('systemDataToggle', 'systemDataToggleKnob', 'system_data');
+</script>
+{% endblock %}

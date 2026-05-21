@@ -1,0 +1,13 @@
+Flask
+google-genai
+python-dotenv
+requests
+whatsapp-web-py
+pillow
+qrcode
+playwright
+croniter
+faster-whisper
+kokoro-onnx
+soundfile
+cryptography
