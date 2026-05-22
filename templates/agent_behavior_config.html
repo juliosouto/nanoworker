@@ -21,6 +21,12 @@
             </small>
             <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
                 <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Agent Name</label>
+                    <input type="text" id="agentNameInput" value="{{ agent_name }}" placeholder="Agent-000000"
+                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.9rem;">
+                </div>
+
+                <div style="margin-bottom: 20px;">
                     <label
                         style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">System
                         Prompt</label>
@@ -136,6 +142,7 @@
     setupToggle('datetimeToggle', 'datetimeToggleKnob');
 
     function saveAgentSettings() {
+        const agentName = document.getElementById('agentNameInput').value;
         const systemPrompt = document.getElementById('systemPromptInput').value;
         const thinkingEnabled = document.getElementById('thinkingToggle').checked;
         const addDatetimeEnabled = document.getElementById('datetimeToggle').checked;
@@ -145,6 +152,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                agent_name: agentName,
                 system_prompt: systemPrompt,
                 thinking_enabled: thinkingEnabled,
                 add_datetime_enabled: addDatetimeEnabled,

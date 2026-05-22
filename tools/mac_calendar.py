@@ -1,6 +1,8 @@
 import subprocess
 from datetime import datetime
+from utils.security_utils import require_permission
 
+@require_permission('PERM_CALENDAR')
 def get_mac_calendar_events(days_ahead: int = 1) -> str:
     """
     Retrieves events from the macOS Calendar app for today and the given number of days ahead.
@@ -54,6 +56,7 @@ def get_mac_calendar_events(days_ahead: int = 1) -> str:
         return f"Error executing AppleScript: {str(e)}"
 
 
+@require_permission('PERM_CALENDAR')
 def create_mac_calendar_event(calendar_name: str, summary: str, start_time: str, end_time: str) -> str:
     """
     Creates a new event in a specified macOS Calendar.

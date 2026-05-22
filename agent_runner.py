@@ -60,7 +60,33 @@ def invoke_llm_with_fallback(client, history, config_kwargs, content, models_to_
                 response = chat.send_message(content)
                 response_text = response.text
                 if not response_text:
-                    response_text = "Executed tool calls successfully."
+                    tools_used = []
+                    tool_results = []
+                    if hasattr(response, 'automatic_function_calling_history') and response.automatic_function_calling_history:
+                        for h in response.automatic_function_calling_history:
+                            for p in getattr(h, 'parts', []):
+                                if getattr(p, 'function_call', None):
+                                    tool_name = p.function_call.name
+                                    if tool_name not in tools_used:
+                                        tools_used.append(tool_name)
+                                if getattr(p, 'function_response', None):
+                                    resp_val = str(getattr(p.function_response, 'response', ''))
+                                    # If it's a dict containing 'result', extract it cleanly
+                                    if isinstance(getattr(p.function_response, 'response', None), dict):
+                                        resp_dict = p.function_response.response
+                                        if 'result' in resp_dict:
+                                            resp_val = str(resp_dict['result'])
+                                    if resp_val:
+                                        tool_results.append(resp_val)
+                    
+                    if tools_used:
+                        tools_str = ", ".join(tools_used)
+                        results_str = ""
+                        if tool_results:
+                            results_str = "\n\nResultados internos:\n- " + "\n- ".join(tool_results)
+                        response_text = f"⚙️ Tarefa concluída.\nFerramentas utilizadas: {tools_str}{results_str}"
+                    else:
+                        response_text = "Executed tool calls successfully."
                 success = True
                 break
             except Exception as e:
@@ -215,6 +241,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             client = genai.Client(api_key=api_key)
             
             system_prompt = get_config("SYSTEM_PROMPT", "")
+            
+            cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
+            session_row = cursor.fetchone()
+            if session_row:
+                channel_id = session_row['channel_id']
+                if channel_id.startswith('whatsapp:') or channel_id.startswith('wa_web:'):
+                    system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat.\n\n{system_prompt}"
+                elif channel_id.startswith('web-chat'):
+                    system_prompt = f"This message comes from the web chat (HTML). You must reply via the web chat.\n\n{system_prompt}"
             thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
             add_datetime_enabled = get_config("ADD_DATETIME_ENABLED", "false").lower() == "true"
             

@@ -1,6 +1,8 @@
 import subprocess
 import os
+from utils.security_utils import require_permission
 
+@require_permission('PERM_TERMINAL')
 def run_bash_command(command: str) -> str:
     """
     Executes a bash command on the local machine and returns its output.

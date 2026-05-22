@@ -20,7 +20,7 @@
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to execute commands in the terminal.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -41,28 +41,55 @@
             </div>
         </div>
 
-        <!-- Browser Access Card -->
+        <!-- Playwright Access Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
-            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Browser Access</h3>
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Playwright Access</h3>
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
-                Allow the agent to control the browser and scrape websites.
+                Allow the agent to control the default browser (Playwright) and scrape websites.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
-                            Browser</label>
+                            Playwright</label>
                     </div>
                     <label
                         style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
-                        <input type="checkbox" id="browserToggle" {% if perm_browser %}checked{% endif %}
+                        <input type="checkbox" id="playwrightToggle" {% if perm_playwright %}checked{% endif %}
                             style="opacity: 0; width: 0; height: 0;">
                         <span
                             style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
                         <span
                             style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
-                            id="browserToggleKnob"></span>
+                            id="playwrightToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Safari Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Safari Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to control your local Safari browser.
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Safari</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="safariToggle" {% if perm_safari %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="safariToggleKnob"></span>
                     </label>
                 </div>
             </div>
@@ -74,7 +101,7 @@
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to read and write files on the host machine.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -101,7 +128,7 @@
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to read and modify calendar events.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -122,13 +149,40 @@
             </div>
         </div>
 
+        <!-- Contacts Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Contacts Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to read, search and modify contacts.
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Contacts</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="contactsToggle" {% if perm_contacts %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="contactsToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <!-- Photos Access Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
             <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Photos Access</h3>
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to view and modify your photos.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -155,7 +209,7 @@
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to access files in iCloud Drive.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -182,7 +236,7 @@
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to read and write Apple Notes.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -209,7 +263,7 @@
             <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
                 Allow the agent to manage your Reminders.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -236,7 +290,7 @@
             <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
                 Allow the agent to read and send emails via Apple Mail.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -263,7 +317,7 @@
             <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
                 Allow the agent to send and read your Messages (iMessage).
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -291,7 +345,7 @@
                 Allow the agent to access system data and document folders. This is necessary for the IDE and advanced
                 features to work properly.
             </small>
-            <div class="settings-form" style="margin-top: auto; flex: 1; display: flex; flex-direction: column;">
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
                 <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
@@ -307,6 +361,33 @@
                         <span
                             style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
                             id="systemDataToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screenshot Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Screenshot Access</h3>
+            <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                Allow the agent to take screenshots of your macOS screen.
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Screenshot</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="screenshotToggle" {% if perm_screenshot %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="screenshotToggleKnob"></span>
                     </label>
                 </div>
             </div>
@@ -384,9 +465,11 @@
     }
 
     setupToggle('terminalToggle', 'terminalToggleKnob', 'terminal');
-    setupToggle('browserToggle', 'browserToggleKnob', 'browser');
+    setupToggle('playwrightToggle', 'playwrightToggleKnob', 'playwright');
+    setupToggle('safariToggle', 'safariToggleKnob', 'safari');
     setupToggle('fsToggle', 'fsToggleKnob', 'fs');
     setupToggle('calendarToggle', 'calendarToggleKnob', 'calendar');
+    setupToggle('contactsToggle', 'contactsToggleKnob', 'contacts');
     setupToggle('photosToggle', 'photosToggleKnob', 'photos');
     setupToggle('icloudToggle', 'icloudToggleKnob', 'icloud');
     setupToggle('notesToggle', 'notesToggleKnob', 'notes');
@@ -394,5 +477,6 @@
     setupToggle('mailToggle', 'mailToggleKnob', 'mail');
     setupToggle('messagesToggle', 'messagesToggleKnob', 'messages');
     setupToggle('systemDataToggle', 'systemDataToggleKnob', 'system_data');
+    setupToggle('screenshotToggle', 'screenshotToggleKnob', 'screenshot');
 </script>
 {% endblock %}

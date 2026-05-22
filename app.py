@@ -309,6 +309,71 @@ def settings_page():
         system_prompt=get_config('SYSTEM_PROMPT', ''),
         thinking_enabled=get_config('THINKING_ENABLED', 'false').lower() == 'true')
 
+@app.route('/settings/whatsapp')
+def whatsapp_settings_page():
+    auth_path = os.path.join(os.path.dirname(__file__), '.store', 'auth', 'creds.json')
+    has_wa_web_session = os.path.exists(auth_path)
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions FROM whatsapp_config WHERE id = 1')
+    config = cursor.fetchone()
+    conn.close()
+    
+    allowed_from = config['allowed_from'] if config else ''
+    allowed_to = config['allowed_to'] if config else ''
+    bot_enabled = bool(config['bot_enabled']) if config else True
+    
+    # Safely handle missing column before migration runs
+    try:
+        allow_mentions = bool(config['allow_mentions']) if config else True
+    except (IndexError, KeyError):
+        allow_mentions = True
+    
+    return render_template('whatsapp_settings.html', 
+                           has_wa_web_session=has_wa_web_session,
+                           allowed_from=allowed_from,
+                           allowed_to=allowed_to,
+                           bot_enabled=bot_enabled,
+                           allow_mentions=allow_mentions)
+
+@app.route('/api/whatsapp/config', methods=['POST'])
+def save_whatsapp_config():
+    data = request.json
+    allowed_from = data.get('allowed_from', '')
+    allowed_to = data.get('allowed_to', '')
+    bot_enabled = 1 if data.get('bot_enabled') else 0
+    allow_mentions = 1 if data.get('allow_mentions') else 0
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE whatsapp_config 
+        SET allowed_from = ?, allowed_to = ?, bot_enabled = ?, allow_mentions = ?
+        WHERE id = 1
+    ''', (allowed_from, allowed_to, bot_enabled, allow_mentions))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "success"})
+
+@app.route('/api/config/agent_name', methods=['GET'])
+def get_agent_name_api():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT allow_mentions FROM whatsapp_config WHERE id = 1')
+    config = cursor.fetchone()
+    conn.close()
+    
+    try:
+        allow_mentions = bool(config['allow_mentions']) if config else True
+    except (IndexError, KeyError):
+        allow_mentions = True
+        
+    return jsonify({
+        "agent_name": get_config('agent_name', ''),
+        "allow_mentions": allow_mentions
+    })
+
 @app.route('/settings/general')
 def general_config_page():
     return render_template('general_config.html')
@@ -316,6 +381,7 @@ def general_config_page():
 @app.route('/settings/agent_behavior')
 def agent_behavior_config_page():
     return render_template('agent_behavior_config.html',
+        agent_name=get_config('agent_name', ''),
         system_prompt=get_config('SYSTEM_PROMPT', ''),
         thinking_enabled=get_config('THINKING_ENABLED', 'false').lower() == 'true',
         add_datetime_enabled=get_config('ADD_DATETIME_ENABLED', 'false').lower() == 'true',
@@ -325,16 +391,19 @@ def agent_behavior_config_page():
 def permissions_config_page():
     return render_template('permissions_config.html',
         perm_terminal=get_config('PERM_TERMINAL', 'false').lower() == 'true',
-        perm_browser=get_config('PERM_BROWSER', 'false').lower() == 'true',
+        perm_playwright=get_config('PERM_PLAYWRIGHT', 'false').lower() == 'true',
+        perm_safari=get_config('PERM_SAFARI', 'false').lower() == 'true',
         perm_fs=get_config('PERM_FS', 'false').lower() == 'true',
         perm_calendar=get_config('PERM_CALENDAR', 'false').lower() == 'true',
+        perm_contacts=get_config('PERM_CONTACTS', 'false').lower() == 'true',
         perm_photos=get_config('PERM_PHOTOS', 'false').lower() == 'true',
         perm_icloud=get_config('PERM_ICLOUD', 'false').lower() == 'true',
         perm_notes=get_config('PERM_NOTES', 'false').lower() == 'true',
         perm_reminders=get_config('PERM_REMINDERS', 'false').lower() == 'true',
         perm_mail=get_config('PERM_MAIL', 'false').lower() == 'true',
         perm_messages=get_config('PERM_MESSAGES', 'false').lower() == 'true',
-        perm_system_data=get_config('PERM_SYSTEM_DATA', 'false').lower() == 'true'
+        perm_system_data=get_config('PERM_SYSTEM_DATA', 'false').lower() == 'true',
+        perm_screenshot=get_config('PERM_SCREENSHOT', 'false').lower() == 'true'
     )
 
 @app.route('/api/permissions/request', methods=['POST'])
@@ -346,10 +415,12 @@ def request_os_permission():
         if perm_type == 'calendar':
             # Trigger Calendar permission prompt
             subprocess.run(['osascript', '-e', 'tell application "Calendar" to get calendars'], capture_output=True, timeout=5)
+        elif perm_type == 'contacts':
+            subprocess.run(['osascript', '-e', 'tell application "Contacts" to get name of people'], capture_output=True, timeout=5)
         elif perm_type == 'terminal':
             # Trigger Terminal/Automation permission prompt
             subprocess.run(['osascript', '-e', 'tell application "Terminal" to get windows'], capture_output=True, timeout=5)
-        elif perm_type == 'browser':
+        elif perm_type == 'safari':
             # Trigger Safari Automation permission prompt
             subprocess.run(['osascript', '-e', 'tell application "Safari" to get properties of front document'], capture_output=True, timeout=5)
         elif perm_type == 'fs':
@@ -481,12 +552,68 @@ def whatsapp_logout():
         shutil.rmtree(auth_dir)
     return jsonify({"status": "success"})
 
+def should_process_wa_message(sender_id, content=""):
+    from database import get_db, get_config
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT allowed_from, bot_enabled, allow_mentions FROM whatsapp_config WHERE id = 1')
+    config = cursor.fetchone()
+    conn.close()
+    
+    if not config:
+        return True
+        
+    if not config['bot_enabled']:
+        return False
+
+    try:
+        allow_mentions = bool(config['allow_mentions'])
+    except (IndexError, KeyError):
+        allow_mentions = True
+
+    if allow_mentions:
+        agent_name = get_config('agent_name', '')
+        if agent_name and content and content.lower().startswith(f"@{agent_name.lower()}"):
+            return True
+
+    clean_sender = str(sender_id).split('@')[0] if sender_id else ''
+
+    import requests
+    try:
+        resp = requests.get('http://127.0.0.1:3000/me', timeout=2)
+        if resp.status_code == 200:
+            data = resp.json()
+            own_number = data.get('number')
+            lid_number = data.get('lid_number')
+            if own_number and clean_sender == str(own_number):
+                return True
+            if lid_number and clean_sender == str(lid_number):
+                return True
+    except Exception:
+        pass
+        
+    allowed_from = config['allowed_from']
+    if not allowed_from or not allowed_from.strip():
+        return False
+        
+    allowed_list = [num.strip() for num in allowed_from.split(',') if num.strip()]
+    clean_sender = str(sender_id).split('@')[0] if sender_id else ''
+    if clean_sender not in allowed_list:
+        return False
+            
+    return True
+
 @app.route('/api/webhook', methods=['POST'])
 def webhook():
     data = request.json
     if not data or 'content' not in data or 'channel_id' not in data:
         return jsonify({"error": "Missing required fields"}), 400
     
+    if data['channel_id'].startswith('wa_web:'):
+        if not should_process_wa_message(data.get('sender_id'), data.get('content', '')):
+            logging.info(f"Ignored message from {data.get('sender_id')} due to WhatsApp config permissions.")
+            return jsonify({"status": "ignored", "reason": "permissions_or_disabled"}), 200
+
     content = data['content']
     
     # Process audio if present
@@ -521,33 +648,35 @@ def webhook():
         # Trigger typing indicator
         try:
             import requests as req
-            target_jid = f"{data.get('sender_id')}@s.whatsapp.net"
+            target_jid = data.get('sender_jid')
+            if not target_jid:
+                target_jid = f"{data.get('sender_id')}@s.whatsapp.net"
             req.post('http://127.0.0.1:3000/presence', json={"jid": target_jid, "state": "composing"}, timeout=1)
         except Exception as e:
             logging.error(f"Failed to send composing presence: {e}")
 
         def on_complete(out_text):
             import requests as req
-            import re
+            from utils.audio_utils import extract_and_generate_audio
+            target_jid = data.get('sender_jid')
+            if not target_jid:
+                target_jid = f"{data.get('sender_id')}@s.whatsapp.net"
             
             try:
-                # Find <audio> tags
-                match = re.search(r'<audio>(.*?)</audio>', out_text, re.DOTALL)
-                if match:
-                    audio_text = match.group(1).strip()
-                    text_to_send = out_text.replace(match.group(0), '').strip()
+                logging.info(f"on_complete triggered for {target_jid} with text length {len(out_text)}")
+                text_to_send, audio_path = extract_and_generate_audio(out_text)
+                
+                if text_to_send:
+                    resp = req.post('http://127.0.0.1:3000/send', json={"text": text_to_send, "jid": target_jid}, timeout=5)
+                    logging.info(f"Text send response: {resp.status_code} {resp.text}")
                     
-                    if text_to_send:
-                        req.post('http://127.0.0.1:3000/send', json={"text": text_to_send}, timeout=5)
-                    
-                    from utils.tts import generate_audio
-                    audio_path = generate_audio(audio_text)
-                    if audio_path:
-                        req.post('http://127.0.0.1:3000/send_audio', json={"file_path": audio_path}, timeout=5)
-                    else:
-                        req.post('http://127.0.0.1:3000/send', json={"text": "[Erro ao gerar áudio]"}, timeout=5)
-                else:
-                    req.post('http://127.0.0.1:3000/send', json={"text": out_text}, timeout=5)
+                if audio_path:
+                    resp = req.post('http://127.0.0.1:3000/send_audio', json={"file_path": audio_path, "jid": target_jid}, timeout=5)
+                    logging.info(f"Audio send response: {resp.status_code} {resp.text}")
+                elif '<audio>' in out_text and not audio_path:
+                    resp = req.post('http://127.0.0.1:3000/send', json={"text": "[Erro ao gerar áudio]", "jid": target_jid}, timeout=5)
+                    logging.info(f"Audio error send response: {resp.status_code} {resp.text}")
+
             except Exception as e:
                 logging.error(f"Failed to send reply to Baileys Worker: {e}")
 
@@ -746,8 +875,13 @@ def whatsapp_inbound():
     messages = wa_parse(payload)
 
     for msg in messages:
-        channel_id = f"whatsapp:{msg['sender']}"
         sender_id = msg["sender"]
+        
+        if not should_process_wa_message(sender_id):
+            logging.info(f"Ignored Cloud API message from {sender_id} due to WhatsApp config permissions.")
+            continue
+
+        channel_id = f"whatsapp:{sender_id}"
         content = msg["content"]
         wa_mark_read(msg["message_id"])
         
@@ -790,7 +924,8 @@ def save_settings():
         'whatsapp_phone_number_id': 'WHATSAPP_PHONE_NUMBER_ID',
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'system_prompt': 'SYSTEM_PROMPT',
-        'ide_prompt': 'IDE_PROMPT'
+        'ide_prompt': 'IDE_PROMPT',
+        'agent_name': 'agent_name'
     }
     
     for json_key, db_key in mapping.items():
@@ -801,16 +936,19 @@ def save_settings():
         'thinking_enabled': 'THINKING_ENABLED',
         'add_datetime_enabled': 'ADD_DATETIME_ENABLED',
         'perm_terminal': 'PERM_TERMINAL',
-        'perm_browser': 'PERM_BROWSER',
+        'perm_playwright': 'PERM_PLAYWRIGHT',
+        'perm_safari': 'PERM_SAFARI',
         'perm_fs': 'PERM_FS',
         'perm_calendar': 'PERM_CALENDAR',
+        'perm_contacts': 'PERM_CONTACTS',
         'perm_photos': 'PERM_PHOTOS',
         'perm_icloud': 'PERM_ICLOUD',
         'perm_notes': 'PERM_NOTES',
         'perm_reminders': 'PERM_REMINDERS',
         'perm_mail': 'PERM_MAIL',
         'perm_messages': 'PERM_MESSAGES',
-        'perm_system_data': 'PERM_SYSTEM_DATA'
+        'perm_system_data': 'PERM_SYSTEM_DATA',
+        'perm_screenshot': 'PERM_SCREENSHOT'
     }
     
     for json_key, db_key in bool_mapping.items():

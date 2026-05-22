@@ -1,5 +1,7 @@
 import os
+from utils.security_utils import require_permission
 
+@require_permission('PERM_FS')
 def read_file(path: str) -> str:
     """
     Reads the content of a file from the filesystem.
@@ -16,6 +18,7 @@ def read_file(path: str) -> str:
     except Exception as e:
         return f"Error reading file {path}: {str(e)}"
 
+@require_permission('PERM_FS')
 def write_file(path: str, content: str) -> str:
     """
     Writes content to a file in the filesystem.

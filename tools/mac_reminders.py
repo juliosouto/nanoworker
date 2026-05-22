@@ -1,5 +1,7 @@
 import subprocess
+from utils.security_utils import require_permission
 
+@require_permission('PERM_REMINDERS')
 def list_mac_reminders(list_name: str = None) -> str:
     """
     Lists active reminders from the macOS Reminders app.
@@ -59,6 +61,7 @@ def list_mac_reminders(list_name: str = None) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_REMINDERS')
 def create_mac_reminder(name: str, notes: str = None, list_name: str = None) -> str:
     """
     Creates a new reminder in the macOS Reminders app.
@@ -101,6 +104,7 @@ def create_mac_reminder(name: str, notes: str = None, list_name: str = None) -> 
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_REMINDERS')
 def complete_mac_reminder(name: str, list_name: str = None) -> str:
     """
     Marks a reminder as completed in the macOS Reminders app.
@@ -144,6 +148,7 @@ def complete_mac_reminder(name: str, list_name: str = None) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_REMINDERS')
 def delete_mac_reminder(name: str, list_name: str = None) -> str:
     """
     Deletes a reminder from the macOS Reminders app.
