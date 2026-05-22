@@ -1,5 +1,6 @@
 import os
 import shutil
+from utils.security_utils import require_permission
 
 ICLOUD_DRIVE_PATH = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs")
 
@@ -18,18 +19,19 @@ def _get_absolute_icloud_path(path_relative: str) -> str:
     
     return abs_path
 
+@require_permission('PERM_ICLOUD')
 def list_icloud_files(path_relative: str = "") -> list:
     """
-    Lista arquivos e diretórios dentro de uma pasta no iCloud Drive.
+    Lists files and directories within a folder in iCloud Drive.
     
     Args:
-        path_relative: Caminho relativo da pasta (ex: 'Documentos' ou ''). 
-                       Vazio para a raiz do iCloud Drive.
+        path_relative: Relative path of the folder (e.g. 'Documents' or ''). 
+                       Empty for the root of iCloud Drive.
     """
     target_path = _get_absolute_icloud_path(path_relative)
     
     if not os.path.isdir(target_path):
-        raise NotADirectoryError(f"O caminho não é um diretório ou não existe: {target_path}")
+        raise NotADirectoryError(f"The path is not a directory or does not exist: {target_path}")
         
     try:
         items = []
@@ -42,36 +44,38 @@ def list_icloud_files(path_relative: str = "") -> list:
             })
         return items
     except PermissionError as e:
-        raise PermissionError(f"Permissão negada ao acessar {target_path}. Verifique se o processo tem Full Disk Access.") from e
+        raise PermissionError(f"Permission denied when accessing {target_path}. Check if the process has Full Disk Access.") from e
 
+@require_permission('PERM_ICLOUD')
 def read_icloud_file(file_path_relative: str) -> str:
     """
-    Lê o conteúdo de um arquivo de texto no iCloud Drive.
+    Reads the content of a text file in iCloud Drive.
     
     Args:
-        file_path_relative: Caminho do arquivo relativo à raiz do iCloud Drive (ex: 'Notas/texto.txt').
+        file_path_relative: File path relative to the root of iCloud Drive (e.g. 'Notes/text.txt').
     """
     target_path = _get_absolute_icloud_path(file_path_relative)
     
     if not os.path.isfile(target_path):
-        raise FileNotFoundError(f"Arquivo não encontrado: {target_path}")
+        raise FileNotFoundError(f"File not found: {target_path}")
         
     try:
         with open(target_path, 'r', encoding='utf-8') as f:
             return f.read()
     except PermissionError as e:
-        raise PermissionError(f"Permissão negada ao ler {target_path}. Verifique as permissões do macOS.") from e
+        raise PermissionError(f"Permission denied when reading {target_path}. Check macOS permissions.") from e
     except UnicodeDecodeError as e:
-        raise ValueError(f"O arquivo parece ser binário ou não está codificado em UTF-8: {target_path}") from e
+        raise ValueError(f"The file appears to be binary or is not UTF-8 encoded: {target_path}") from e
 
+@require_permission('PERM_ICLOUD')
 def write_icloud_file(file_path_relative: str, content: str) -> str:
     """
-    Escreve conteúdo (texto) em um arquivo no iCloud Drive. 
-    Se a pasta pai não existir, ela será criada.
+    Writes content (text) to a file in iCloud Drive. 
+    If the parent folder does not exist, it will be created.
     
     Args:
-        file_path_relative: Caminho relativo do arquivo (ex: 'Notas/novo_texto.txt').
-        content: O conteúdo de texto a ser escrito no arquivo.
+        file_path_relative: Relative path of the file (e.g. 'Notes/new_text.txt').
+        content: The text content to be written to the file.
     """
     target_path = _get_absolute_icloud_path(file_path_relative)
     parent_dir = os.path.dirname(target_path)
@@ -82,6 +86,6 @@ def write_icloud_file(file_path_relative: str, content: str) -> str:
             
         with open(target_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        return f"Arquivo salvo com sucesso em: {target_path}"
+        return f"File saved successfully at: {target_path}"
     except PermissionError as e:
-        raise PermissionError(f"Permissão negada ao escrever em {target_path}. Verifique as permissões do macOS.") from e
+        raise PermissionError(f"Permission denied when writing to {target_path}. Check macOS permissions.") from e

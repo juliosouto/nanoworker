@@ -158,6 +158,15 @@ def init_db():
                 encrypted_v = encrypt_value(v)
                 cursor.execute('UPDATE app_config SET value = ? WHERE key = ?', (encrypted_v, k))
 
+    # Default Agent Name Config
+    cursor.execute("SELECT value FROM app_config WHERE key = 'agent_name'")
+    row = cursor.fetchone()
+    if not row or not row['value']:
+        import random
+        random_id = str(random.randint(0, 999999)).zfill(6)
+        default_name = f"Agent-{random_id}"
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('agent_name', ?)", (default_name,))
+
     # Agents Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS agents (
@@ -307,6 +316,24 @@ def init_db():
     cursor.execute('SELECT COUNT(*) FROM agents')
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO agents (id, name, description) VALUES ('agent-1', 'Default NanoWorker Agent', 'A simple agent for MVP testing')")
+
+    # WhatsApp Config Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS whatsapp_config (
+        id INTEGER PRIMARY KEY,
+        allowed_from TEXT,
+        allowed_to TEXT,
+        bot_enabled BOOLEAN DEFAULT 1
+    )
+    ''')
+    cursor.execute('SELECT COUNT(*) FROM whatsapp_config')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO whatsapp_config (id, allowed_from, allowed_to, bot_enabled) VALUES (1, '', '', 1)")
+
+    try:
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_mentions BOOLEAN DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
     conn.close()

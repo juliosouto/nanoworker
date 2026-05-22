@@ -1,11 +1,104 @@
 from playwright.sync_api import sync_playwright
 
 class BrowserManager:
-    def __init__(self, storage_state=None):
+    def __init__(self):
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.relaunch_custom_config()
+
+    def start_browser(self, storage_state=None, headless=True, proxy=None, user_agent=None, browser_args=None, launch_kwargs=None, **context_kwargs):
+        """
+        Configura e inicializa o browser com os parâmetros especificados.
+        Se já houver um browser aberto, ele será fechado e reiniciado.
+        """
+        if self.playwright:
+            self.close()
+
         self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=True)
-        self.context = self.browser.new_context(storage_state=storage_state)
+        
+        # Parâmetros de inicialização do browser (launch)
+        launch_options = {"headless": headless}
+        if launch_kwargs:
+            launch_options.update(launch_kwargs)
+        if proxy:
+            launch_options["proxy"] = proxy
+        if browser_args:
+            launch_options["args"] = browser_args
+
+        self.browser = self.playwright.chromium.launch(**launch_options)
+        
+        # Parâmetros do contexto (context)
+        context_options = context_kwargs
+        if storage_state:
+            context_options["storage_state"] = storage_state
+        if user_agent:
+            context_options["user_agent"] = user_agent
+            
+        self.context = self.browser.new_context(**context_options)
         self.page = self.context.new_page()
+
+    def relaunch_custom_config(self):
+        """
+        Método dedicado para configurar todos os parâmetros do Playwright.
+        Basta descomentar/comentar a linha do que você deseja (ou não) alterar.
+        """
+        self.start_browser(
+            # === Configurações de Launch (Browser) ===
+            headless=True,
+            browser_args=[
+                "--disable-blink-features=AutomationControlled", 
+                "--disable-extensions",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "--viewport=1920x1080",
+                #"--locale=pt-BR",
+                #"--timezone-id=America/Sao_Paulo",
+                "--permissions=geolocation,notifications",
+                "--geolocation",
+                "--notifications",
+                "--color-scheme=dark",
+                "--ignore-https-errors",
+                "--java-script-enabled",
+                "--bypass-csp",
+                #"--extra-http-headers=Custom-Header:xxxxxxx",
+                "--disable-remote-fonts",
+            ]
+            # browser_args=[
+            #     "--no-sandbox",
+            #     "--disable-setuid-sandbox",
+            #     "--disable-dev-shm-usage",
+            #     "--disable-gpu",
+            #     "--disable-blink-features=AutomationControlled"
+            # ],
+            # proxy={
+            #     "server": "http://meu-proxy:3128",
+            #     "username": "usuario",
+            #     "password": "senha"
+            # },
+            # launch_kwargs={
+            #     "executable_path": "/caminho/para/chrome",
+            #     "timeout": 30000,
+            #     "slow_mo": 50,
+            # },
+            
+            # === Configurações de Contexto (Context / Page) ===
+            # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            # storage_state="auth.json",
+            # viewport={"width": 1920, "height": 1080},
+            # locale="pt-BR",
+            # timezone_id="America/Sao_Paulo",
+            # permissions=["geolocation", "notifications"],
+            # geolocation={"latitude": -23.5505, "longitude": -46.6333},
+            # color_scheme="dark",
+            # ignore_https_errors=True,
+            # java_script_enabled=True,
+            # bypass_csp=True,
+            # extra_http_headers={"Custom-Header": "Valor-Aqui"}
+        )
 
     def navigate(self, url):
         try:

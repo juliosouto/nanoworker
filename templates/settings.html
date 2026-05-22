@@ -37,47 +37,19 @@
         </a>
 
         <!-- WhatsApp Web (QR Code) Card -->
-        <div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3>WhatsApp Web (QR)</h3>
-            <small style="display: block; margin-top: 8px; color: var(--text-muted); margin-bottom: 16px;">
-                Connect your agent to WhatsApp by scanning a QR code with your phone (Baileys bridge).
-            </small>
-
-            <div style="margin-top: auto; display: flex; justify-content: space-between; align-items: center;">
-                <div id="status-container">
-                    {% if has_wa_web_session %}
-                    <span id="status-badge"
-                        style="padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; background: rgba(0, 255, 0, 0.2); color: #4ade80;">
-                        Connected
-                    </span>
-                    {% else %}
-                    <span id="status-badge"
-                        style="padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; background: rgba(255,255,255,0.1);">
-                        Disconnected
-                    </span>
-                    {% endif %}
+        <a href="/settings/whatsapp" style="text-decoration: none; color: inherit; display: flex;">
+            <div class="glass-panel"
+                style="display: flex; flex-direction: column; width: 100%; transition: transform 0.2s, background 0.2s; cursor: pointer;"
+                onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background=''">
+                <h3>WhatsApp Web</h3>
+                <small style="display: block; margin-top: 8px; color: var(--text-muted); margin-bottom: 16px;">
+                    Connect your agent to WhatsApp by scanning a QR code with your phone (Baileys bridge).
+                </small>
+                <div style="margin-top: auto; display: flex; justify-content: flex-end; color: var(--accent-color);">
+                    Manage &rarr;
                 </div>
-
-                {% if has_wa_web_session %}
-                <button id="logout-wa-btn" class="btn danger"
-                    style="padding: 6px 12px; font-size: 0.85rem; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; cursor: pointer;"
-                    onclick="logoutWhatsApp()">
-                    Logout
-                </button>
-                {% else %}
-                <button id="connect-wa-btn" class="btn primary"
-                    style="padding: 6px 12px; font-size: 0.85rem; cursor: pointer;">
-                    Login (QR)
-                </button>
-                {% endif %}
             </div>
-
-            <div id="qr-container" class="d-none"
-                style="background: white; padding: 16px; border-radius: 12px; align-self: center; margin-top: 20px;">
-                <!-- QR Code will be rendered here via qrcode.js -->
-                <div id="qrcode"></div>
-            </div>
-        </div>
+        </a>
 
         <!-- Agent Behavior Card -->
         <a href="/settings/agent_behavior" style="text-decoration: none; color: inherit; display: flex;">
@@ -114,75 +86,4 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script>
-    let qrcode = null;
-
-    function setWaStatus(text, color) {
-        const badge = document.getElementById('status-badge');
-        badge.innerText = text;
-        badge.style.backgroundColor = color;
-    }
-
-    function logoutWhatsApp() {
-        if (confirm("Are you sure you want to disconnect WhatsApp?")) {
-            fetch('/api/whatsapp/logout', { method: 'POST' })
-                .then(() => window.location.reload());
-        }
-    }
-
-    const connectWaBtn = document.getElementById('connect-wa-btn');
-    if (connectWaBtn) {
-        connectWaBtn.onclick = () => {
-            connectWaBtn.style.display = 'none';
-            setWaStatus('Generating QR Code...', 'rgba(245, 158, 11, 0.2)'); // Amber
-
-            const eventSource = new EventSource('/api/whatsapp/auth-stream');
-
-            eventSource.onmessage = function (event) {
-                const data = JSON.parse(event.data);
-
-                if (data.type === 'WHATSAPP_AUTH_QR') {
-                    setWaStatus('Waiting for scan...', 'rgba(59, 130, 246, 0.2)'); // Blue
-                    document.getElementById('qr-container').classList.remove('d-none');
-
-                    if (!qrcode) {
-                        qrcode = new QRCode(document.getElementById("qrcode"), {
-                            text: data.qr,
-                            width: 256,
-                            height: 256,
-                            colorDark: "#000000",
-                            colorLight: "#ffffff",
-                            correctLevel: QRCode.CorrectLevel.L
-                        });
-                    } else {
-                        qrcode.clear();
-                        qrcode.makeCode(data.qr);
-                    }
-                } else if (data.type === 'WHATSAPP_AUTH') {
-                    if (data.status === 'success') {
-                        setWaStatus('Connected Successfully!', 'rgba(16, 185, 129, 0.2)'); // Green
-                        document.getElementById('qr-container').classList.add('d-none');
-                        eventSource.close();
-                        setTimeout(() => window.location.reload(), 1500);
-                    } else {
-                        setWaStatus('Connection Failed: ' + data.error, 'rgba(239, 68, 68, 0.2)'); // Red
-                        if (connectWaBtn) connectWaBtn.style.display = 'inline-block';
-                        document.getElementById('qr-container').classList.add('d-none');
-                        eventSource.close();
-                    }
-                }
-            };
-
-            eventSource.onerror = function (err) {
-                console.error("SSE Error:", err);
-                setWaStatus('Connection Error', 'rgba(239, 68, 68, 0.2)');
-                if (connectWaBtn) connectWaBtn.style.display = 'inline-block';
-                eventSource.close();
-            };
-        };
-    }
-
-
-</script>
 {% endblock %}

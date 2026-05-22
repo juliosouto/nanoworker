@@ -1,6 +1,8 @@
 import subprocess
 import os
+from utils.security_utils import require_permission
 
+@require_permission('PERM_PHOTOS')
 def get_recent_photos(limit: int = 5) -> str:
     """
     Retrieves the metadata (ID, filename, date) of the most recent photos from the macOS Photos app.
@@ -55,6 +57,7 @@ def get_recent_photos(limit: int = 5) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_PHOTOS')
 def list_albums() -> str:
     """
     Lists all albums in the macOS Photos app.
@@ -96,6 +99,7 @@ def list_albums() -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_PHOTOS')
 def export_photos(photo_ids: list[str], destination_path: str) -> str:
     """
     Exports photos from the macOS Photos app to a specific local directory.
@@ -160,6 +164,7 @@ def export_photos(photo_ids: list[str], destination_path: str) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_PHOTOS')
 def delete_photos(photo_ids: list[str]) -> str:
     """
     Deletes photos from the macOS Photos app.

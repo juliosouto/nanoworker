@@ -1,5 +1,7 @@
 import subprocess
+from utils.security_utils import require_permission
 
+@require_permission('PERM_NOTES')
 def list_mac_notes(folder_name: str = None) -> str:
     """
     Lists notes from the macOS Notes app.
@@ -58,6 +60,7 @@ def list_mac_notes(folder_name: str = None) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_NOTES')
 def read_mac_note(note_name: str) -> str:
     """
     Reads the content of a specific note from the macOS Notes app.
@@ -83,6 +86,7 @@ def read_mac_note(note_name: str) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_NOTES')
 def create_mac_note(note_name: str, body: str, folder_name: str = None) -> str:
     """
     Creates a new note in the macOS Notes app.
@@ -121,6 +125,7 @@ def create_mac_note(note_name: str, body: str, folder_name: str = None) -> str:
     except Exception as e:
         return f"Error executing AppleScript: {str(e)}"
 
+@require_permission('PERM_NOTES')
 def append_to_mac_note(note_name: str, text_to_append: str) -> str:
     """
     Appends text to an existing note in the macOS Notes app.

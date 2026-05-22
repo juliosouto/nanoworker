@@ -13,6 +13,40 @@ let sock = null;
 let ownJid = null;
 let ownLid = null;
 const botSentMsgIds = new Set();
+const typingIntervals = {};
+const typingTimeouts = {};
+
+function clearTyping(jid) {
+    if (typingIntervals[jid]) {
+        clearInterval(typingIntervals[jid]);
+        delete typingIntervals[jid];
+    }
+    if (typingTimeouts[jid]) {
+        clearTimeout(typingTimeouts[jid]);
+        delete typingTimeouts[jid];
+    }
+}
+
+let currentAgentName = null;
+let allowMentions = true;
+let lastAgentNameFetch = 0;
+
+async function getAgentName() {
+    const now = Date.now();
+    if (now - lastAgentNameFetch > 60000) {
+        try {
+            const res = await axios.get('http://127.0.0.1:5000/api/config/agent_name');
+            if (res.data) {
+                currentAgentName = res.data.agent_name ? res.data.agent_name.toLowerCase() : null;
+                allowMentions = res.data.allow_mentions !== false;
+            }
+        } catch (e) {
+            // ignore
+        }
+        lastAgentNameFetch = now;
+    }
+    return { name: currentAgentName, allowMentions: allowMentions };
+}
 
 async function connectToWhatsApp() {
     const logger = pino({ level: 'silent' });
@@ -64,13 +98,26 @@ async function connectToWhatsApp() {
             const remoteJid = msg.key.remoteJid;
             console.log(`[DEBUG] Received message from remoteJid: ${remoteJid}, type: ${m.type}, fromMe: ${msg.key.fromMe}`);
             
-            // Only process messages sent in the chat with oneself
-            if (remoteJid !== ownJid && remoteJid !== ownLid) {
+            // Prevent infinite loop by ignoring messages we just sent via the bot
+            if (msg.key.id && botSentMsgIds.has(msg.key.id)) {
                 continue;
             }
 
-            // Prevent infinite loop by ignoring messages we just sent via the bot
-            if (msg.key.id && botSentMsgIds.has(msg.key.id)) {
+            // Extract text early to check for @agent_name mentions
+            let earlyText = '';
+            if (msg.message.conversation) {
+                earlyText = msg.message.conversation;
+            } else if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) {
+                earlyText = msg.message.extendedTextMessage.text;
+            } else if (msg.message.imageMessage && msg.message.imageMessage.caption) {
+                earlyText = msg.message.imageMessage.caption;
+            }
+
+            const agentConfig = await getAgentName();
+            const isMention = agentConfig.allowMentions && agentConfig.name && earlyText.toLowerCase().startsWith(`@${agentConfig.name}`);
+
+            // Only process messages sent in the chat with oneself, OR if it's a mention
+            if (remoteJid !== ownJid && remoteJid !== ownLid && !isMention) {
                 continue;
             }
 
@@ -138,6 +185,7 @@ async function connectToWhatsApp() {
                 const payload = {
                     channel_id: `wa_web:${senderId}`,
                     sender_id: senderId,
+                    sender_jid: remoteJid,
                     content: text
                 };
                 if (audioBase64) {
@@ -160,6 +208,15 @@ async function connectToWhatsApp() {
 const app = express();
 app.use(express.json());
 
+app.get('/me', (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+    const number = ownJid.split('@')[0];
+    const lid_number = ownLid ? ownLid.split('@')[0] : null;
+    res.json({ number: number, jid: ownJid, lid_number: lid_number, lid: ownLid });
+});
+
 app.post('/send', async (req, res) => {
     if (!sock || !ownJid) {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
@@ -172,6 +229,8 @@ app.post('/send', async (req, res) => {
 
     // Use provided jid or fallback to ownJid
     const targetJid = jid || ownJid;
+
+    clearTyping(targetJid);
 
     try {
         console.log(`[Baileys Outbound] to ${targetJid}: ${text}`);
@@ -200,13 +259,32 @@ app.post('/send_file', async (req, res) => {
 
     const targetJid = jid || ownJid;
 
+    clearTyping(targetJid);
+
     try {
         console.log(`[Baileys Outbound File] to ${targetJid}: ${file_path}`);
-        const messagePayload = {
-            document: { url: file_path },
-            mimetype: mimetype || 'application/octet-stream',
-            fileName: file_name || 'file'
-        };
+        let messagePayload = {};
+        
+        if (mimetype && mimetype.startsWith('image/')) {
+            messagePayload = {
+                image: { url: file_path },
+                mimetype: mimetype,
+                fileName: file_name || 'image'
+            };
+        } else if (mimetype && mimetype.startsWith('video/')) {
+            messagePayload = {
+                video: { url: file_path },
+                mimetype: mimetype,
+                fileName: file_name || 'video'
+            };
+        } else {
+            messagePayload = {
+                document: { url: file_path },
+                mimetype: mimetype || 'application/octet-stream',
+                fileName: file_name || 'file'
+            };
+        }
+
         if (caption) {
             messagePayload.caption = caption;
         }
@@ -234,6 +312,8 @@ app.post('/send_audio', async (req, res) => {
     }
 
     const targetJid = jid || ownJid;
+
+    clearTyping(targetJid);
 
     try {
         console.log(`[Baileys Outbound Audio] to ${targetJid}: ${file_path}`);
@@ -276,8 +356,30 @@ app.post('/presence', async (req, res) => {
 
     try {
         console.log(`[Baileys Presence] Sending ${state} to ${targetJid}`);
-        await sock.presenceSubscribe(targetJid);
-        await sock.sendPresenceUpdate(state, targetJid);
+        
+        if (state === 'composing' || state === 'recording') {
+            clearTyping(targetJid);
+            
+            const sendUpdate = async () => {
+                try {
+                    await sock.presenceSubscribe(targetJid);
+                    await sock.sendPresenceUpdate(state, targetJid);
+                } catch (e) {
+                    console.error('Interval presence error:', e.message);
+                }
+            };
+            
+            await sendUpdate();
+            typingIntervals[targetJid] = setInterval(sendUpdate, 10000);
+            typingTimeouts[targetJid] = setTimeout(() => {
+                clearTyping(targetJid);
+            }, 3 * 60 * 1000);
+        } else {
+            clearTyping(targetJid);
+            await sock.presenceSubscribe(targetJid);
+            await sock.sendPresenceUpdate(state, targetJid);
+        }
+
         res.json({ status: 'sent', target: targetJid, state: state });
     } catch (err) {
         console.error('Failed to send presence via Baileys:', err);
