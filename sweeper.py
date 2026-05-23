@@ -39,6 +39,9 @@ def make_cloud_callback(sender_id):
 
 def sweep():
     logger.info("Sweeper started. Polling for scheduled tasks...")
+    from concurrent.futures import ThreadPoolExecutor
+    executor = ThreadPoolExecutor(max_workers=5)
+    
     while True:
         try:
             conn = get_db()
@@ -49,7 +52,7 @@ def sweep():
             
             # Fetch due cron jobs with channel_id from sessions
             cursor.execute('''
-                SELECT c.id, c.session_id, c.content, c.cron_expression, s.channel_id
+                SELECT c.id, c.session_id, c.content, c.cron_expression, s.channel_id, c.execution_count, c.max_executions
                 FROM cron_jobs c
                 JOIN sessions s ON c.session_id = s.id
                 WHERE c.is_active = 1 
@@ -64,19 +67,27 @@ def sweep():
                 content = job['content']
                 cron_expression = job['cron_expression']
                 channel_id = job['channel_id']
+                execution_count = job['execution_count'] or 0
+                max_executions = job['max_executions']
+                
+                new_execution_count = execution_count + 1
+                is_active = 1
+                
+                if max_executions is not None and new_execution_count >= max_executions:
+                    is_active = 0
                 
                 # Update job based on recurrence
                 if cron_expression:
                     try:
                         cron = croniter(cron_expression, now)
                         next_run = cron.get_next(datetime).strftime('%Y-%m-%d %H:%M:%S')
-                        cursor.execute('UPDATE cron_jobs SET next_run = ? WHERE id = ?', (next_run, job_id))
+                        cursor.execute('UPDATE cron_jobs SET next_run = ?, execution_count = ?, is_active = ? WHERE id = ?', (next_run, new_execution_count, is_active, job_id))
                     except Exception as e:
                         logger.error(f"Error calculating next run for job {job_id}: {e}")
-                        cursor.execute('UPDATE cron_jobs SET is_active = 0 WHERE id = ?', (job_id,))
+                        cursor.execute('UPDATE cron_jobs SET is_active = 0, execution_count = ? WHERE id = ?', (new_execution_count, job_id))
                 else:
                     # One-shot job, deactivate
-                    cursor.execute('UPDATE cron_jobs SET is_active = 0 WHERE id = ?', (job_id,))
+                    cursor.execute('UPDATE cron_jobs SET is_active = 0, execution_count = ? WHERE id = ?', (new_execution_count, job_id))
                 
                 strict_content = f"[SYSTEM: SCHEDULED TASK TRIGGERED]\nPlease execute ONLY the following task and nothing else. Do not repeat previous tasks:\n{content}"
                 
@@ -106,14 +117,12 @@ def sweep():
                         sender_id = channel_id.replace('whatsapp:', '')
                         on_complete_cb = make_cloud_callback(sender_id)
                 
-                # Dispatch processing in a background thread
-                thread = threading.Thread(
-                    target=process_message,
-                    args=(message_in_id, session_id, strict_content),
-                    kwargs={"on_complete": on_complete_cb},
-                    daemon=True
+                # Dispatch processing in a background thread pool
+                executor.submit(
+                    process_message,
+                    message_in_id, session_id, strict_content,
+                    on_complete=on_complete_cb
                 )
-                thread.start()
                 
             conn.close()
             

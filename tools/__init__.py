@@ -9,7 +9,7 @@ from .browser import (
     browser_extract,
     browser_run_js
 )
-from .scheduling import schedule_task
+from .scheduling import schedule_task, list_scheduled_tasks, delete_scheduled_task
 from .mac_calendar import get_mac_calendar_events, create_mac_calendar_event
 from .mac_contacts import get_mac_contacts, search_mac_contacts, create_mac_contact
 from .mac_photos import get_recent_photos, list_albums, export_photos, delete_photos
@@ -23,7 +23,7 @@ from database import get_config
 
 def get_permitted_tools():
     """Returns a list of tools filtered by the user's permissions."""
-    tools = [send_whatsapp_message, send_whatsapp_file, schedule_task]
+    tools = [send_whatsapp_message, send_whatsapp_file, schedule_task, list_scheduled_tasks, delete_scheduled_task]
     
     if get_config('PERM_FS', 'false').lower() == 'true':
         tools.extend([read_file, write_file])
@@ -70,7 +70,7 @@ def get_permitted_tools():
 AVAILABLE_TOOLS = [
     read_file, write_file, run_bash_command, send_whatsapp_message, send_whatsapp_file,
     browser_navigate, browser_snapshot, browser_click, browser_fill, browser_extract, browser_run_js,
-    schedule_task, get_mac_calendar_events, create_mac_calendar_event, get_mac_contacts, search_mac_contacts,
+    schedule_task, list_scheduled_tasks, delete_scheduled_task, get_mac_calendar_events, create_mac_calendar_event, get_mac_contacts, search_mac_contacts,
     create_mac_contact, get_recent_photos, list_albums, export_photos, delete_photos,
     list_icloud_files, read_icloud_file, write_icloud_file, list_mac_notes, read_mac_note,
     create_mac_note, append_to_mac_note, list_mac_reminders, create_mac_reminder, complete_mac_reminder, delete_mac_reminder,
