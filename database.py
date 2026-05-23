@@ -279,10 +279,24 @@ def init_db():
         cron_expression TEXT,
         next_run TIMESTAMP NOT NULL,
         is_active BOOLEAN DEFAULT 1,
+        execution_count INTEGER DEFAULT 0,
+        max_executions INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions(id)
     )
     ''')
+
+    # Add columns if they don't exist for existing databases
+    try:
+        cursor.execute("ALTER TABLE cron_jobs ADD COLUMN execution_count INTEGER DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
+    try:
+        cursor.execute("ALTER TABLE cron_jobs ADD COLUMN max_executions INTEGER")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
 
     # Messages In Table (Inbound DB equivalent)
     cursor.execute('''
