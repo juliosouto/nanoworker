@@ -123,21 +123,27 @@ def route_llm_call(model_name, history, config_kwargs, content, cursor, session_
     from database import get_db, decrypt_value
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT provider, api_key FROM llm_config WHERE model_name = ?", (model_name,))
+    c.execute("SELECT provider, api_key, thinking FROM llm_config WHERE model_name = ?", (model_name,))
     row = c.fetchone()
     conn.close()
     
     provider = None
     api_key = None
+    model_thinking = False
     if row:
         provider = row['provider'].lower() if row['provider'] else None
         if row['api_key']:
             api_key = decrypt_value(row['api_key'])
+        model_thinking = bool(row['thinking'])
             
+    local_kwargs = config_kwargs.copy()
+    if not model_thinking:
+        local_kwargs.pop('thinking_config', None)
+        
     if provider == "qwen" or model_name.lower().startswith("qwen"):
-        return call_qwen_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+        return call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
     else:
-        return call_gemini_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+        return call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
 
 def invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=False):
     table = "ide_messages_out" if is_ide else "messages_out"
