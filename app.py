@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, send_file, Response
-from database import init_db, get_db, get_config, set_config, get_ide_config, set_ide_config
+from database import init_db, get_db, get_config, set_config, get_ide_config, set_ide_config, encrypt_value
 from router import route_inbound_message, route_ide_message
 import subprocess
 from channels.whatsapp_cloud import (
@@ -465,11 +465,49 @@ def llm_config_page():
     anthropic_model = os.environ.get('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
     has_anthropic_key = bool(get_config('ANTHROPIC_API_KEY'))
     
-    llm_pref_1 = os.environ.get('LLM_PREF_1', '')
+    llm_pref_1 = get_config('LLM_PREF_1', '')
     llm_pref_2 = get_config('LLM_PREF_2', '')
     llm_pref_3 = get_config('LLM_PREF_3', '')
     llm_pref_4 = get_config('LLM_PREF_4', '')
     llm_pref_5 = get_config('LLM_PREF_5', '')
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM llm_config')
+    models = cursor.fetchall()
+    conn.close()
+
+    model_list = []
+    for model in models:
+        m = dict(model)
+        if m.get('api_key'):
+            m['has_key'] = True
+            m['api_key'] = '••••••••••••'
+        else:
+            m['has_key'] = False
+            m['api_key'] = ''
+            
+        def is_true(val):
+            return val in [1, '1', True, 'true', 'True']
+
+        inputs = []
+        if is_true(m.get('text_input')): inputs.append({'label': 'Text', 'bg': 'rgba(255, 255, 255, 0.08)', 'color': 'var(--text-main)'})
+        if is_true(m.get('image_input')): inputs.append({'label': 'Image', 'bg': 'rgba(0, 150, 255, 0.12)', 'color': '#80c0ff'})
+        if is_true(m.get('audio_input')): inputs.append({'label': 'Audio', 'bg': 'rgba(255, 100, 255, 0.12)', 'color': '#ff99ff'})
+        if is_true(m.get('video_input')): inputs.append({'label': 'Video', 'bg': 'rgba(255, 150, 0, 0.12)', 'color': '#ffb84d'})
+        if is_true(m.get('document_input')): inputs.append({'label': 'Doc', 'bg': 'rgba(255, 255, 100, 0.12)', 'color': '#ffff99'})
+        m['inputs'] = inputs
+
+        outputs = []
+        if is_true(m.get('text_output')): outputs.append({'label': 'Text', 'bg': 'rgba(255, 255, 255, 0.08)', 'color': 'var(--text-main)'})
+        if is_true(m.get('image_output')): outputs.append({'label': 'Image', 'bg': 'rgba(0, 150, 255, 0.12)', 'color': '#80c0ff'})
+        if is_true(m.get('audio_output')): outputs.append({'label': 'Audio', 'bg': 'rgba(255, 100, 255, 0.12)', 'color': '#ff99ff'})
+        if is_true(m.get('json_output')): outputs.append({'label': 'JSON', 'bg': 'rgba(150, 150, 255, 0.12)', 'color': '#b3b3ff'})
+        if is_true(m.get('thinking')): outputs.append({'label': 'Thinking', 'bg': 'rgba(100, 255, 100, 0.12)', 'color': '#a3ffa3'})
+        if is_true(m.get('function_calling')): outputs.append({'label': 'Tools', 'bg': 'rgba(255, 100, 100, 0.12)', 'color': '#ff9999'})
+        m['outputs'] = outputs
+        
+        model_list.append(m)
 
     return render_template('llm_config.html', 
         current_model=current_model, has_api_key=has_api_key,
@@ -479,7 +517,8 @@ def llm_config_page():
         anthropic_model=anthropic_model, has_anthropic_key=has_anthropic_key,
         llm_pref_1=llm_pref_1, llm_pref_2=llm_pref_2,
         llm_pref_3=llm_pref_3, llm_pref_4=llm_pref_4,
-        llm_pref_5=llm_pref_5)
+        llm_pref_5=llm_pref_5,
+        models=model_list)
 
 @app.route('/cron')
 def cron_jobs_page():
@@ -552,6 +591,26 @@ def whatsapp_logout():
         shutil.rmtree(auth_dir)
     return jsonify({"status": "success"})
 
+@app.route('/api/whatsapp/restart', methods=['POST'])
+def whatsapp_restart():
+    global worker_process
+    try:
+        if worker_process:
+            logging.info("Terminating existing Baileys worker...")
+            worker_process.terminate()
+            worker_process.wait(timeout=5)
+        
+        worker_script = os.path.join(os.path.dirname(__file__), 'node_scripts', 'wa_worker.js')
+        if os.path.exists(worker_script):
+            logging.info("Restarting Baileys WhatsApp Worker (wa_worker.js)...")
+            worker_process = subprocess.Popen(['node', worker_script])
+            return jsonify({"status": "success", "message": "Worker restarted"})
+        else:
+            return jsonify({"status": "error", "message": "Worker script not found"}), 404
+    except Exception as e:
+        logging.error(f"Failed to restart worker: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 def should_process_wa_message(sender_id, content=""):
     from database import get_db, get_config
     conn = get_db()
@@ -610,8 +669,10 @@ def webhook():
         return jsonify({"error": "Missing required fields"}), 400
     
     if data['channel_id'].startswith('wa_web:'):
-        if not should_process_wa_message(data.get('sender_id'), data.get('content', '')):
-            logging.info(f"Ignored message from {data.get('sender_id')} due to WhatsApp config permissions.")
+        channel_base = data['channel_id'].replace('wa_web:', '')
+        if not should_process_wa_message(channel_base, data.get('content', '')) and \
+           not should_process_wa_message(data.get('sender_id'), data.get('content', '')):
+            logging.info(f"Ignored message from {data.get('sender_id')} in channel {channel_base} due to WhatsApp config permissions.")
             return jsonify({"status": "ignored", "reason": "permissions_or_disabled"}), 200
 
     content = data['content']
@@ -648,7 +709,7 @@ def webhook():
         # Trigger typing indicator
         try:
             import requests as req
-            target_jid = data.get('sender_jid')
+            target_jid = data.get('remote_jid') or data.get('sender_jid')
             if not target_jid:
                 target_jid = f"{data.get('sender_id')}@s.whatsapp.net"
             req.post('http://127.0.0.1:3000/presence', json={"jid": target_jid, "state": "composing"}, timeout=1)
@@ -658,7 +719,7 @@ def webhook():
         def on_complete(out_text):
             import requests as req
             from utils.audio_utils import extract_and_generate_audio
-            target_jid = data.get('sender_jid')
+            target_jid = data.get('remote_jid') or data.get('sender_jid')
             if not target_jid:
                 target_jid = f"{data.get('sender_id')}@s.whatsapp.net"
             
@@ -957,6 +1018,200 @@ def save_settings():
             set_config(db_key, val)
             
     return jsonify({"status": "success", "message": "Settings saved"}), 200
+
+@app.route('/api/llm_models', methods=['POST'])
+def add_llm_model():
+    data = request.json
+    if not data or 'model_name' not in data or 'provider' not in data:
+        return jsonify({"error": "Missing model_name or provider"}), 400
+        
+    api_key_val = data.get('api_key')
+    duplicate_from_id = data.get('duplicate_from_id')
+    
+    if api_key_val == '••••••••••••' and duplicate_from_id:
+        conn = get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT api_key FROM llm_config WHERE id = ?', (duplicate_from_id,))
+            row = cursor.fetchone()
+            if row:
+                api_key_val = row['api_key']
+        except Exception as e:
+            print(f"Error copying duplicated API Key: {e}")
+        finally:
+            conn.close()
+    elif api_key_val:
+        api_key_val = encrypt_value(api_key_val)
+        
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            INSERT INTO llm_config (
+                model_name, provider, api_key, enabled, json_output, thinking, function_calling,
+                context_window, max_output_tokens, text_input, image_input, audio_input,
+                video_input, document_input, rate_tpm, rate_rpm, rate_rpd,
+                text_output, image_output, audio_output, video_output, document_output
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            data.get('model_name'),
+            data.get('provider'),
+            api_key_val,
+            1 if data.get('enabled') else 0,
+            1 if data.get('json_output') else 0,
+            1 if data.get('thinking') else 0,
+            1 if data.get('function_calling') else 0,
+            data.get('context_window') or None,
+            data.get('max_output_tokens') or None,
+            1 if data.get('text_input') else 0,
+            1 if data.get('image_input') else 0,
+            1 if data.get('audio_input') else 0,
+            1 if data.get('video_input') else 0,
+            1 if data.get('document_input') else 0,
+            data.get('rate_tpm') or None,
+            data.get('rate_rpm') or None,
+            data.get('rate_rpd') or None,
+            1 if data.get('text_output') else 0,
+            1 if data.get('image_output') else 0,
+            1 if data.get('audio_output') else 0,
+            1 if data.get('video_output') else 0,
+            1 if data.get('document_output') else 0
+        ))
+        conn.commit()
+        return jsonify({"status": "success", "message": "Model added"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/llm_models/<int:model_id>', methods=['DELETE'])
+def delete_llm_model(model_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('DELETE FROM llm_config WHERE id = ?', (model_id,))
+        conn.commit()
+        if cursor.rowcount > 0:
+            return jsonify({"status": "success", "message": "Model deleted"}), 200
+        else:
+            return jsonify({"error": "Model not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/llm_models/<int:model_id>', methods=['PUT'])
+def update_llm_model(model_id):
+    data = request.json
+    if not data or 'model_name' not in data or 'provider' not in data:
+        return jsonify({"error": "Missing model_name or provider"}), 400
+        
+    api_key_val = data.get('api_key')
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        updates = [
+            ("model_name", data.get('model_name')),
+            ("provider", data.get('provider')),
+            ("enabled", 1 if data.get('enabled') else 0),
+            ("json_output", 1 if data.get('json_output') else 0),
+            ("thinking", 1 if data.get('thinking') else 0),
+            ("function_calling", 1 if data.get('function_calling') else 0),
+            ("context_window", data.get('context_window') or None),
+            ("max_output_tokens", data.get('max_output_tokens') or None),
+            ("text_input", 1 if data.get('text_input') else 0),
+            ("image_input", 1 if data.get('image_input') else 0),
+            ("audio_input", 1 if data.get('audio_input') else 0),
+            ("video_input", 1 if data.get('video_input') else 0),
+            ("document_input", 1 if data.get('document_input') else 0),
+            ("rate_tpm", data.get('rate_tpm') or None),
+            ("rate_rpm", data.get('rate_rpm') or None),
+            ("rate_rpd", data.get('rate_rpd') or None),
+            ("text_output", 1 if data.get('text_output') else 0),
+            ("image_output", 1 if data.get('image_output') else 0),
+            ("audio_output", 1 if data.get('audio_output') else 0),
+            ("video_output", 1 if data.get('video_output') else 0),
+            ("document_output", 1 if data.get('document_output') else 0),
+        ]
+        
+        if api_key_val != '••••••••••••':
+            encrypted_key = encrypt_value(api_key_val) if api_key_val else None
+            updates.append(("api_key", encrypted_key))
+            
+        set_clause = ", ".join([f"{k}=?" for k, v in updates])
+        values = [v for k, v in updates] + [model_id]
+        
+        cursor.execute(f"UPDATE llm_config SET {set_clause} WHERE id=?", values)
+        conn.commit()
+        if cursor.rowcount == 0:
+            return jsonify({"error": "Model not found"}), 404
+        return jsonify({"status": "success", "message": "Model updated"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/api/llm_models/<int:model_id>/toggle', methods=['POST'])
+def toggle_llm_model(model_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT enabled FROM llm_config WHERE id = ?', (model_id,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"error": "Model not found"}), 404
+        new_status = 0 if row['enabled'] else 1
+        cursor.execute('UPDATE llm_config SET enabled = ? WHERE id = ?', (new_status, model_id))
+        conn.commit()
+        return jsonify({"status": "success", "enabled": bool(new_status)}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/user_memory', methods=['GET'])
+def get_user_memory_api():
+    from database import get_all_user_memories
+    memories = get_all_user_memories()
+    return jsonify(memories), 200
+
+@app.route('/api/user_memory', methods=['POST'])
+def add_user_memory_api():
+    data = request.json
+    if not data or 'instruction' not in data:
+        return jsonify({"error": "Missing instruction field"}), 400
+    from database import add_user_memory
+    instruction = data['instruction'].strip()
+    if not instruction:
+        return jsonify({"error": "Instruction cannot be empty"}), 400
+    mem_id = add_user_memory(instruction)
+    return jsonify({"status": "success", "id": mem_id, "instruction": instruction}), 201
+
+@app.route('/api/user_memory/<int:memory_id>', methods=['DELETE'])
+def delete_user_memory_api(memory_id):
+    from database import delete_user_memory
+    success = delete_user_memory(memory_id)
+    if success:
+        return jsonify({"status": "success", "message": "Memory deleted"}), 200
+    else:
+        return jsonify({"error": "Memory not found"}), 404
+
+@app.route('/api/user_memory/<int:memory_id>', methods=['PUT'])
+def update_user_memory_api(memory_id):
+    data = request.json
+    if not data or 'instruction' not in data:
+        return jsonify({"error": "Missing instruction field"}), 400
+    from database import update_user_memory
+    instruction = data['instruction'].strip()
+    if not instruction:
+        return jsonify({"error": "Instruction cannot be empty"}), 400
+    success = update_user_memory(memory_id, instruction)
+    if success:
+        return jsonify({"status": "success", "message": "Memory updated"}), 200
+    else:
+        return jsonify({"error": "Memory not found"}), 404
 
 if __name__ == '__main__':
     app.run(debug=True, host='127.0.0.1', port=5000)

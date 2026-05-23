@@ -11,3 +11,4 @@ faster-whisper
 kokoro-onnx
 soundfile
 cryptography
+openai

@@ -93,15 +93,28 @@
             </div>
         </div>
 
-        <!-- Extra Settings Card -->
-        <div class="glass-panel" style="display: none; flex-direction: column;">
-            <h3>Extra Settings</h3>
+        <!-- User Memory & Persistent Instructions Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3>User Memory</h3>
             <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
-                Additional configuration for agent behavior.
+                Persistent background memories and instructions for the agent.
             </small>
-            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
-                <div style="padding: 40px; text-align: center; color: var(--text-muted);">
-                    No extra settings available at the moment.
+            
+            <div style="flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                <!-- List of existing memories -->
+                <div id="memoryListContainer" style="max-height: 250px; overflow-y: auto; margin-bottom: 20px; padding-right: 4px;">
+                    <div style="text-align: center; color: var(--text-muted); padding: 20px;" id="noMemoryMessage">
+                        No memories stored yet.
+                    </div>
+                </div>
+
+                <!-- Input to add new memory -->
+                <div class="settings-form" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="newMemoryInput" placeholder="Add a persistent instruction..."
+                            style="flex: 1; padding: 10px 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.9rem;">
+                        <button class="btn primary" style="padding: 10px 16px; border-radius: 8px; white-space: nowrap;" onclick="addUserMemory()">Add</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -166,5 +179,201 @@
             }
         });
     }
+
+    // Fetch and render user memories
+    function loadUserMemories() {
+        fetch('/api/user_memory')
+            .then(res => res.json())
+            .then(memories => {
+                const container = document.getElementById('memoryListContainer');
+                if (!container) return;
+                container.innerHTML = '';
+                
+                if (memories.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: var(--text-muted); padding: 20px;" id="noMemoryMessage">
+                            No memories stored yet.
+                        </div>
+                    `;
+                    return;
+                }
+                
+                memories.forEach(mem => {
+                    const item = document.createElement('div');
+                    item.style.display = 'flex';
+                    item.style.alignItems = 'center';
+                    item.style.justifyContent = 'space-between';
+                    item.style.padding = '10px 12px';
+                    item.style.borderRadius = '8px';
+                    item.style.background = 'rgba(255,255,255,0.05)';
+                    item.style.marginBottom = '8px';
+                    item.style.border = '1px solid rgba(255,255,255,0.05)';
+                    item.style.transition = 'all 0.2s ease';
+                    
+                    const span = document.createElement('span');
+                    span.style.fontSize = '0.9rem';
+                    span.style.color = 'var(--text-main)';
+                    span.style.wordBreak = 'break-word';
+                    span.style.marginRight = '12px';
+                    span.style.textAlign = 'left';
+                    span.textContent = mem.instruction;
+                    
+                    const btnContainer = document.createElement('div');
+                    btnContainer.style.display = 'flex';
+                    btnContainer.style.gap = '4px';
+                    btnContainer.style.alignItems = 'center';
+                    btnContainer.style.flexShrink = '0';
+                    
+                    const editBtn = document.createElement('button');
+                    editBtn.style.background = 'rgba(255,255,255,0.08)';
+                    editBtn.style.border = '1px solid rgba(255,255,255,0.1)';
+                    editBtn.style.color = 'var(--text-muted)';
+                    editBtn.style.cursor = 'pointer';
+                    editBtn.style.padding = '4px 8px';
+                    editBtn.style.borderRadius = '4px';
+                    editBtn.style.fontSize = '0.75rem';
+                    editBtn.style.fontWeight = '500';
+                    editBtn.style.transition = 'all 0.2s';
+                    editBtn.textContent = 'Edit';
+                    editBtn.addEventListener('click', () => {
+                        enterEditMode(mem.id, mem.instruction, item);
+                    });
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.style.background = 'none';
+                    deleteBtn.style.border = 'none';
+                    deleteBtn.style.color = '#ef4444';
+                    deleteBtn.style.cursor = 'pointer';
+                    deleteBtn.style.padding = '4px 8px';
+                    deleteBtn.style.borderRadius = '4px';
+                    deleteBtn.style.fontSize = '0.75rem';
+                    deleteBtn.style.fontWeight = '500';
+                    deleteBtn.style.transition = 'all 0.2s';
+                    deleteBtn.textContent = 'Delete';
+                    deleteBtn.addEventListener('click', () => {
+                        deleteUserMemory(mem.id, item);
+                    });
+                    
+                    btnContainer.appendChild(editBtn);
+                    btnContainer.appendChild(deleteBtn);
+                    
+                    item.appendChild(span);
+                    item.appendChild(btnContainer);
+                    container.appendChild(item);
+                });
+            });
+    }
+
+    function enterEditMode(id, currentInstruction, element) {
+        element.innerHTML = `
+            <div style="display: flex; width: 100%; gap: 8px; align-items: center;">
+                <input type="text" id="editInput_${id}" 
+                    style="flex: 1; padding: 6px 10px; border-radius: 6px; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                <button id="saveBtn_${id}" style="background: #22c55e; border: none; color: white; cursor: pointer; padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 500;">
+                    Save
+                </button>
+                <button id="cancelBtn_${id}" style="background: rgba(255,255,255,0.15); border: none; color: white; cursor: pointer; padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 500;">
+                    Cancel
+                </button>
+            </div>
+        `;
+        
+        const input = document.getElementById(`editInput_${id}`);
+        const saveBtn = document.getElementById(`saveBtn_${id}`);
+        const cancelBtn = document.getElementById(`cancelBtn_${id}`);
+        
+        if (input) {
+            input.value = currentInstruction;
+            input.focus();
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') saveUserMemory(id);
+                if (e.key === 'Escape') loadUserMemories();
+            });
+        }
+        
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => saveUserMemory(id));
+        }
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => loadUserMemories());
+        }
+    }
+
+    function saveUserMemory(id) {
+        const input = document.getElementById(`editInput_${id}`);
+        if (!input) return;
+        const newInstruction = input.value.trim();
+        if (!newInstruction) return;
+
+        fetch(`/api/user_memory/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instruction: newInstruction })
+        })
+        .then(res => {
+            if (res.ok) {
+                loadUserMemories();
+                showToast('Memory updated successfully!');
+            } else {
+                showToast('Failed to update memory.');
+            }
+        });
+    }
+
+    function escapeHtml(text) {
+        return text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function addUserMemory() {
+        const input = document.getElementById('newMemoryInput');
+        const instruction = input.value.trim();
+        if (!instruction) return;
+        
+        fetch('/api/user_memory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instruction: instruction })
+        })
+        .then(res => {
+            if (res.ok) {
+                input.value = '';
+                loadUserMemories();
+                showToast('Memory added successfully!');
+            } else {
+                showToast('Failed to add memory.');
+            }
+        });
+    }
+
+    function deleteUserMemory(id, element) {
+        if (!confirm('Are you sure you want to delete this memory?')) return;
+        
+        fetch(`/api/user_memory/${id}`, {
+            method: 'DELETE'
+        })
+        .then(res => {
+            if (res.ok) {
+                element.style.opacity = '0';
+                element.style.transform = 'scale(0.9)';
+                setTimeout(() => {
+                    loadUserMemories();
+                }, 200);
+                showToast('Memory deleted successfully!');
+            } else {
+                showToast('Failed to delete memory.');
+            }
+        });
+    }
+
+    // Call on load
+    document.addEventListener('DOMContentLoaded', () => {
+        loadUserMemories();
+    });
 </script>
 {% endblock %}
