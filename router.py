@@ -1,7 +1,7 @@
 import uuid
 import threading
 import logging
-from database import get_db
+from database import get_db, get_config
 from agent_runner import process_message, process_ide_message
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,15 @@ def route_inbound_message(channel_id, content, sender_id=None, image_base64=None
     ''', (message_id, session_id, content, sender_id, image_base64, file_mime_type, file_name))
     conn.commit()
     
-    # Check for /new command to reset history
-    if content.strip() == "/new":
+    # Check for /new command to reset history (supporting mentions like "@AgentName /new")
+    agent_name = get_config('agent_name', '')
+    cleaned_content = content.strip()
+    if agent_name:
+        mention_prefix = f"@{agent_name.lower()}"
+        if cleaned_content.lower().startswith(mention_prefix):
+            cleaned_content = cleaned_content[len(mention_prefix):].strip()
+
+    if cleaned_content == "/new":
         cursor.execute('DELETE FROM messages_in WHERE session_id = ?', (session_id,))
         cursor.execute('DELETE FROM messages_out WHERE session_id = ?', (session_id,))
         conn.commit()

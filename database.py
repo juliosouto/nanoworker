@@ -113,6 +113,45 @@ def set_ide_config(key, value):
     finally:
         conn.close()
 
+def add_user_memory(instruction):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO user_memory (instruction) VALUES (?)', (instruction,))
+    conn.commit()
+    inserted_id = cursor.lastrowid
+    conn.close()
+    return inserted_id
+
+def get_all_user_memories():
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT id, instruction FROM user_memory')
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+def delete_user_memory(memory_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM user_memory WHERE id = ?', (memory_id,))
+    conn.commit()
+    success = cursor.rowcount > 0
+    conn.close()
+    return success
+
+def update_user_memory(memory_id, instruction):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE user_memory SET instruction = ? WHERE id = ?', (instruction, memory_id))
+    conn.commit()
+    success = cursor.rowcount > 0
+    conn.close()
+    return success
+
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
@@ -166,6 +205,40 @@ def init_db():
         random_id = str(random.randint(0, 999999)).zfill(6)
         default_name = f"Agent-{random_id}"
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('agent_name', ?)", (default_name,))
+
+    # LLM Config Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS llm_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        model_name TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        api_key TEXT,
+        enabled BOOLEAN DEFAULT 1,
+        json_output BOOLEAN DEFAULT 0,
+        thinking BOOLEAN DEFAULT 0,
+        function_calling BOOLEAN DEFAULT 0,
+        context_window INTEGER,
+        max_output_tokens INTEGER,
+        text_input BOOLEAN DEFAULT 1,
+        image_input BOOLEAN DEFAULT 0,
+        audio_input BOOLEAN DEFAULT 0,
+        video_input BOOLEAN DEFAULT 0,
+        document_input BOOLEAN DEFAULT 0,
+        rate_tpm INTEGER,
+        rate_rpm INTEGER,
+        rate_rpd INTEGER,
+        text_output BOOLEAN DEFAULT 1,
+        image_output BOOLEAN DEFAULT 0,
+        audio_output BOOLEAN DEFAULT 0,
+        video_output BOOLEAN DEFAULT 0,
+        document_output BOOLEAN DEFAULT 0
+    )
+    ''')
+
+    try:
+        cursor.execute("ALTER TABLE llm_config ADD COLUMN api_key TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     # Agents Table
     cursor.execute('''
@@ -334,6 +407,14 @@ def init_db():
         cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_mentions BOOLEAN DEFAULT 1")
     except sqlite3.OperationalError:
         pass
+
+    # User Memory Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_memory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instruction TEXT NOT NULL
+    )
+    ''')
 
     conn.commit()
     conn.close()

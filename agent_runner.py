@@ -11,8 +11,135 @@ from tools.browser import current_session_id
 
 load_dotenv(override=True)
 
-def invoke_llm_with_fallback(client, history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=False):
+def call_gemini_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key=None):
     max_retries = 5
+    if not api_key:
+        from database import get_config
+        api_key = get_config("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not set.")
+    client = genai.Client(api_key=api_key)
+    
+    chat = client.chats.create(
+        model=model_name,
+        history=history,
+        config=types.GenerateContentConfig(**config_kwargs)
+    )
+    
+    success = False
+    response_text = None
+    for attempt in range(max_retries):
+        try:
+            response = chat.send_message(content)
+            response_text = response.text
+            if not response_text:
+                tools_used = []
+                tool_results = []
+                if hasattr(response, 'automatic_function_calling_history') and response.automatic_function_calling_history:
+                    for h in response.automatic_function_calling_history:
+                        for p in getattr(h, 'parts', []):
+                            if getattr(p, 'function_call', None):
+                                tool_name = p.function_call.name
+                                if tool_name not in tools_used:
+                                    tools_used.append(tool_name)
+                            if getattr(p, 'function_response', None):
+                                resp_val = str(getattr(p.function_response, 'response', ''))
+                                if isinstance(getattr(p.function_response, 'response', None), dict):
+                                    resp_dict = p.function_response.response
+                                    if 'result' in resp_dict:
+                                        resp_val = str(resp_dict['result'])
+                                if resp_val:
+                                    tool_results.append(resp_val)
+                
+                if tools_used:
+                    tools_str = ", ".join(tools_used)
+                    results_str = ""
+                    if tool_results:
+                        results_str = "\n\nResultados internos:\n- " + "\n- ".join(tool_results)
+                    response_text = f"⚙️ Tarefa concluída.\nFerramentas utilizadas: {tools_str}{results_str}"
+                else:
+                    response_text = "Executed tool calls successfully."
+            success = True
+            break
+        except Exception as e:
+            error_str = str(e)
+            if "503" in error_str:
+                feedback = f"⚠️ Erro 503 na tentativa {attempt + 1}/5. Tentando novamente..."
+                cursor.execute(f'''
+                    INSERT INTO {table} (id, session_id, in_reply_to, content)
+                    VALUES (?, ?, ?, ?)
+                ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback))
+                cursor.connection.commit()
+                time.sleep(2)
+                continue
+            elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
+                raise e
+            else:
+                raise e
+                
+    if success:
+        return response_text
+    return "Error: Gemini model failed."
+
+def call_qwen_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key=None):
+    import openai
+    if not api_key:
+        from database import get_config
+        api_key = get_config("QWEN_API_KEY")
+    if not api_key:
+        raise ValueError("QWEN_API_KEY is not set.")
+    
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    )
+    
+    messages = []
+    if "system_instruction" in config_kwargs:
+        messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
+        
+    for msg in history:
+        role = "user" if msg.role == "user" else "assistant"
+        text_parts = [p.text for p in msg.parts if getattr(p, 'text', None)]
+        messages.append({"role": role, "content": " ".join(text_parts)})
+        
+    if isinstance(content, list):
+        text_parts = [p.text for p in content if getattr(p, 'text', None)]
+        if not text_parts and len(content) > 0 and isinstance(content[0], str):
+            text_parts = [content[0]]
+    else:
+        text_parts = [content]
+    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
+    
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=messages
+    )
+    return response.choices[0].message.content
+
+def route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide):
+    table = "ide_messages_out" if is_ide else "messages_out"
+    
+    from database import get_db, decrypt_value
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT provider, api_key FROM llm_config WHERE model_name = ?", (model_name,))
+    row = c.fetchone()
+    conn.close()
+    
+    provider = None
+    api_key = None
+    if row:
+        provider = row['provider'].lower() if row['provider'] else None
+        if row['api_key']:
+            api_key = decrypt_value(row['api_key'])
+            
+    if provider == "qwen" or model_name.lower().startswith("qwen"):
+        return call_qwen_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+    else:
+        return call_gemini_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+
+def invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=False):
     table = "ide_messages_out" if is_ide else "messages_out"
     
     cursor.execute(f'''
@@ -47,70 +174,16 @@ def invoke_llm_with_fallback(client, history, config_kwargs, content, models_to_
             ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, f"Changing to {model_name}"))
             cursor.connection.commit()
             
-        chat = client.chats.create(
-            model=model_name,
-            history=history,
-            config=types.GenerateContentConfig(**config_kwargs)
-        )
-        
-        success = False
-        response_text = None
-        for attempt in range(max_retries):
-            try:
-                response = chat.send_message(content)
-                response_text = response.text
-                if not response_text:
-                    tools_used = []
-                    tool_results = []
-                    if hasattr(response, 'automatic_function_calling_history') and response.automatic_function_calling_history:
-                        for h in response.automatic_function_calling_history:
-                            for p in getattr(h, 'parts', []):
-                                if getattr(p, 'function_call', None):
-                                    tool_name = p.function_call.name
-                                    if tool_name not in tools_used:
-                                        tools_used.append(tool_name)
-                                if getattr(p, 'function_response', None):
-                                    resp_val = str(getattr(p.function_response, 'response', ''))
-                                    # If it's a dict containing 'result', extract it cleanly
-                                    if isinstance(getattr(p.function_response, 'response', None), dict):
-                                        resp_dict = p.function_response.response
-                                        if 'result' in resp_dict:
-                                            resp_val = str(resp_dict['result'])
-                                    if resp_val:
-                                        tool_results.append(resp_val)
-                    
-                    if tools_used:
-                        tools_str = ", ".join(tools_used)
-                        results_str = ""
-                        if tool_results:
-                            results_str = "\n\nResultados internos:\n- " + "\n- ".join(tool_results)
-                        response_text = f"⚙️ Tarefa concluída.\nFerramentas utilizadas: {tools_str}{results_str}"
-                    else:
-                        response_text = "Executed tool calls successfully."
-                success = True
-                break
-            except Exception as e:
-                error_str = str(e)
-                if "503" in error_str:
-                    feedback = f"⚠️ Erro 503 na tentativa {attempt + 1}/5. Tentando novamente..."
-                    cursor.execute(f'''
-                        INSERT INTO {table} (id, session_id, in_reply_to, content)
-                        VALUES (?, ?, ?, ?)
-                    ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback))
-                    cursor.connection.commit()
-                    time.sleep(2)
-                    continue
-                elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
-                    if i < len(models_to_try) - 1:
-                        break
-                    else:
-                        raise e
-                else:
-                    raise e
-                    
-        if success:
+        try:
+            response_text = route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide)
             return response_text
-            
+        except Exception as e:
+            error_str = str(e)
+            if i < len(models_to_try) - 1:
+                continue
+            else:
+                raise e
+                    
     return "Error: All models failed."
 
 def process_message(message_in_id, session_id, content, on_complete=None):
@@ -126,16 +199,27 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     
     # Set the current session context for tools
     current_session_id.set(session_id)
+
+    # Fetch session's channel_id to determine if it is a WhatsApp group
+    cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
+    session_row = cursor.fetchone()
+    is_wa_group = False
+    if session_row:
+        channel_id = session_row['channel_id']
+        if channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:'):
+            clean_channel = channel_id.replace('wa_web:', '').replace('whatsapp:', '')
+            if '-' in clean_channel or clean_channel.startswith('120363'):
+                is_wa_group = True
     
     # Fetch history
     cursor.execute('''
-        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri 
+        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id 
         FROM messages_in 
         WHERE session_id = ? AND id != ?
         
         UNION ALL
         
-        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri 
+        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id 
         FROM messages_out 
         WHERE session_id = ?
         
@@ -147,6 +231,11 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     for row in rows:
         role = row['role']
         msg_content = row['content']
+        if role == 'user':
+            if is_wa_group and msg_content and len(msg_content) > 1000:
+                msg_content = msg_content[-1000:]
+            if row['sender_id']:
+                msg_content = f"[Message from: {row['sender_id']}]\n{msg_content}"
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
             mime_type = row['file_mime_type'] or "image/jpeg"
@@ -170,11 +259,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             types.Content(role=role, parts=parts)
         )
 
-    # Get current message image
-    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri FROM messages_in WHERE id = ?', (message_in_id,))
+    # Get current message info
+    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id FROM messages_in WHERE id = ?', (message_in_id,))
     current_msg = cursor.fetchone()
     current_image_base64 = current_msg['image_base64'] if current_msg else None
     current_gemini_uri = current_msg['gemini_file_uri'] if current_msg else None
+    current_sender_id = current_msg['sender_id'] if current_msg else None
     
     # Generate response using Gemini API
     api_key = get_config("GEMINI_API_KEY")
@@ -185,6 +275,11 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         except Exception:
             pass
 
+    if is_wa_group and content and len(content) > 1000:
+        content = content[-1000:]
+
+    if current_sender_id:
+        content = f"[Message from: {current_sender_id}]\n{content}"
     send_content = [content]
     if current_image_base64:
         mime_type = current_msg['file_mime_type'] or "image/jpeg"
@@ -229,7 +324,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             img_data = base64.b64decode(current_image_base64)
             send_content.insert(0, types.Part.from_bytes(data=img_data, mime_type=mime_type))
 
-    preferences = [os.environ.get(f"LLM_PREF_{i}") for i in range(1, 6)]
+    preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
     models_to_try = [m for m in preferences if m and m.strip()]
     if not models_to_try:
         models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
@@ -263,6 +358,20 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             if project_path:
                 system_prompt = f"IMPORTANT: You are currently operating in the workspace directory: {project_path}\nYou MUST use this absolute path as the base directory for all file operations (reading, writing, searching) unless the user specifies otherwise.\n\n{system_prompt}"
             
+            # Fetch and inject user memory instructions
+            try:
+                cursor.execute('SELECT instruction FROM user_memory')
+                memories = [r['instruction'] for r in cursor.fetchall()]
+                if memories:
+                    memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
+                    if system_prompt:
+                        system_prompt = f"{memory_block}\n\n{system_prompt}"
+                    else:
+                        system_prompt = memory_block
+            except Exception as e:
+                import logging
+                logging.error(f"Error fetching user memory: {e}")
+
             config_kwargs = {
                 "tools": AVAILABLE_TOOLS,
                 "temperature": 0.0,
@@ -274,7 +383,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             if thinking_enabled:
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
             
-            mock_response = invoke_llm_with_fallback(client, history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False)
+            mock_response = invoke_llm_with_fallback(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False)
             
                 
         except Exception as e:
@@ -340,7 +449,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
 
     api_key = get_config("GEMINI_API_KEY")
 
-    preferences = [os.environ.get(f"LLM_PREF_{i}") for i in range(1, 6)]
+    preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
     models_to_try = [m for m in preferences if m and m.strip()]
     if not models_to_try:
         models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
@@ -360,6 +469,20 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
 
             thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
 
+            # Fetch and inject user memory instructions
+            try:
+                cursor.execute('SELECT instruction FROM user_memory')
+                memories = [r['instruction'] for r in cursor.fetchall()]
+                if memories:
+                    memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
+                    if system_prompt:
+                        system_prompt = f"{memory_block}\n\n{system_prompt}"
+                    else:
+                        system_prompt = memory_block
+            except Exception as e:
+                import logging
+                logging.error(f"Error fetching user memory: {e}")
+
             config_kwargs = {
                 "tools": AVAILABLE_TOOLS,
                 "temperature": 0.0,
@@ -371,7 +494,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             if thinking_enabled:
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
 
-            mock_response = invoke_llm_with_fallback(client, history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
+            mock_response = invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
 
         except Exception as e:
             mock_response = f"Error calling Gemini API: {str(e)}"

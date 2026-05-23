@@ -3,13 +3,128 @@
 {% block title %}NanoWorker - LLM Configuration{% endblock %}
 
 {% block content %}
+
+<style>
+    .premium-select-container {
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.2s ease;
+    }
+    .premium-select-container:hover {
+        transform: translateY(-2px);
+    }
+    .premium-select-label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-muted, #a0a0a0);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        transition: color 0.3s;
+    }
+    .premium-select-container:hover .premium-select-label {
+        color: var(--text-main, #ffffff);
+    }
+    .premium-select-wrapper {
+        position: relative;
+        width: 100%;
+        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+        box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.2);
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+    .premium-select-wrapper::after {
+        content: "";
+        position: absolute;
+        right: 14px;
+        top: 50%;
+        transform: translateY(-30%);
+        border: 5px solid transparent;
+        border-top-color: var(--text-muted, #a0a0a0);
+        pointer-events: none;
+        transition: border-top-color 0.3s, transform 0.3s;
+    }
+    .premium-select-wrapper:hover {
+        box-shadow: inset 0 1px 1px rgba(255,255,255,0.15), 0 8px 20px rgba(0,0,0,0.3);
+    }
+    .premium-select-wrapper:hover::after {
+        border-top-color: #3498db;
+        transform: translateY(-10%);
+    }
+    .premium-select {
+        appearance: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        width: 100%;
+        padding: 12px 36px 12px 16px;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--text-main, #ffffff);
+        font-size: 0.95rem;
+        font-weight: 500;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        cursor: pointer;
+        outline: none;
+        transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .premium-select:focus {
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
+    }
+    .premium-select option, .premium-select optgroup {
+        background: #1e1e24;
+        color: #ffffff;
+        font-size: 0.95rem;
+        padding: 10px;
+    }
+    .premium-select optgroup {
+        font-weight: 600;
+        color: #3498db;
+    }
+    .model-toggle-checkbox {
+        display: none;
+    }
+    .model-toggle-bg {
+        width: 34px; 
+        height: 20px; 
+        background: rgba(255,255,255,0.15); 
+        display: block; 
+        border-radius: 10px; 
+        position: relative; 
+        transition: background 0.3s;
+    }
+    .model-toggle-knob {
+        width: 14px; 
+        height: 14px; 
+        background: white; 
+        display: block; 
+        border-radius: 50%; 
+        position: absolute; 
+        top: 3px; 
+        left: 3px; 
+        transition: left 0.3s; 
+        box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+    .model-toggle-checkbox:checked + .model-toggle-bg {
+        background: #2ecc71;
+    }
+    .model-toggle-checkbox:checked + .model-toggle-bg .model-toggle-knob {
+        left: 17px;
+    }
+</style>
+
 <div style="max-width: 1200px; margin: 0 auto;">
-    <div style="display: flex; align-items: center; margin-bottom: 24px;">
-        <a href="/settings"
-            style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
-            &larr;
-        </a>
-        <h2 style="font-weight: 600; margin: 0;">LLM Configuration</h2>
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center;">
+            <a href="/settings"
+                style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+                &larr;
+            </a>
+            <h2 style="font-weight: 600; margin: 0;">LLM Configuration</h2>
+        </div>
+        <button class="btn primary" onclick="openModelModal()" style="padding: 8px 16px; font-size: 0.9rem;">+ Add
+            Model</button>
     </div>
 
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
@@ -17,351 +132,399 @@
             <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">LLM Preference Order
             </h3>
             <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0; margin-bottom: 16px;">
-                Set the order of preference for the LLM providers.
+                Set the order of preference for the LLM models.
             </p>
             <div class="settings-form"
                 style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px;">
-                <div>
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">1st
+                <div class="premium-select-container">
+                    <label class="premium-select-label">1st
                         Preference</label>
-                    <select id="llmPref1"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                    <div class="premium-select-wrapper">
+                        <select id="llmPref1" onchange="saveSettings()" class="premium-select">
                         <option value="">None</option>
-                        <optgroup label="Google">
-                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
-                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        {% for provider, provider_models in models|groupby('provider') %}
+                        <optgroup label="{{ provider }}">
+                            {% for m in provider_models %}
+                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
+                            {% endfor %}
                         </optgroup>
-                        <!--<optgroup label="Qwen">
-                            <option value="qwen-plus">qwen-plus</option>
-                            <option value="qwen-max">qwen-max</option>
-                            <option value="qwen-turbo">qwen-turbo</option>
-                        </optgroup>
-                        <optgroup label="DeepSeek">
-                            <option value="deepseek-chat">deepseek-chat</option>
-                            <option value="deepseek-reasoner">deepseek-reasoner</option>
-                        </optgroup>
-                        <optgroup label="OpenAI">
-                            <option value="gpt-4o">gpt-4o</option>
-                            <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            <option value="o1-mini">o1-mini</option>
-                            <option value="o3-mini">o3-mini</option>
-                        </optgroup>
-                        <optgroup label="Anthropic">
-                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
-                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
-                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
-                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
-                        </optgroup>-->
+                        {% endfor %}
                     </select>
+                    </div>
                 </div>
-                <div>
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">2nd
+                <div class="premium-select-container">
+                    <label class="premium-select-label">2nd
                         Preference</label>
-                    <select id="llmPref2"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                    <div class="premium-select-wrapper">
+                        <select id="llmPref2" onchange="saveSettings()" class="premium-select">
                         <option value="">None</option>
-                        <optgroup label="Google">
-                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
-                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        {% for provider, provider_models in models|groupby('provider') %}
+                        <optgroup label="{{ provider }}">
+                            {% for m in provider_models %}
+                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
+                            {% endfor %}
                         </optgroup>
-                        <optgroup label="Qwen">
-                            <option value="qwen-plus">qwen-plus</option>
-                            <option value="qwen-max">qwen-max</option>
-                            <option value="qwen-turbo">qwen-turbo</option>
-                        </optgroup>
-                        <optgroup label="DeepSeek">
-                            <option value="deepseek-chat">deepseek-chat</option>
-                            <option value="deepseek-reasoner">deepseek-reasoner</option>
-                        </optgroup>
-                        <optgroup label="OpenAI">
-                            <option value="gpt-4o">gpt-4o</option>
-                            <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            <option value="o1-mini">o1-mini</option>
-                            <option value="o3-mini">o3-mini</option>
-                        </optgroup>
-                        <optgroup label="Anthropic">
-                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
-                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
-                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
-                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
-                        </optgroup>
+                        {% endfor %}
                     </select>
+                    </div>
                 </div>
-                <div>
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">3rd
+                <div class="premium-select-container">
+                    <label class="premium-select-label">3rd
                         Preference</label>
-                    <select id="llmPref3"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                    <div class="premium-select-wrapper">
+                        <select id="llmPref3" onchange="saveSettings()" class="premium-select">
                         <option value="">None</option>
-                        <optgroup label="Google">
-                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
-                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        {% for provider, provider_models in models|groupby('provider') %}
+                        <optgroup label="{{ provider }}">
+                            {% for m in provider_models %}
+                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
+                            {% endfor %}
                         </optgroup>
-                        <optgroup label="Qwen">
-                            <option value="qwen-plus">qwen-plus</option>
-                            <option value="qwen-max">qwen-max</option>
-                            <option value="qwen-turbo">qwen-turbo</option>
-                        </optgroup>
-                        <optgroup label="DeepSeek">
-                            <option value="deepseek-chat">deepseek-chat</option>
-                            <option value="deepseek-reasoner">deepseek-reasoner</option>
-                        </optgroup>
-                        <optgroup label="OpenAI">
-                            <option value="gpt-4o">gpt-4o</option>
-                            <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            <option value="o1-mini">o1-mini</option>
-                            <option value="o3-mini">o3-mini</option>
-                        </optgroup>
-                        <optgroup label="Anthropic">
-                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
-                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
-                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
-                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
-                        </optgroup>
+                        {% endfor %}
                     </select>
+                    </div>
                 </div>
-                <div>
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">4th
+                <div class="premium-select-container">
+                    <label class="premium-select-label">4th
                         Preference</label>
-                    <select id="llmPref4"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                    <div class="premium-select-wrapper">
+                        <select id="llmPref4" onchange="saveSettings()" class="premium-select">
                         <option value="">None</option>
-                        <optgroup label="Google">
-                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
-                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        {% for provider, provider_models in models|groupby('provider') %}
+                        <optgroup label="{{ provider }}">
+                            {% for m in provider_models %}
+                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
+                            {% endfor %}
                         </optgroup>
-                        <optgroup label="Qwen">
-                            <option value="qwen-plus">qwen-plus</option>
-                            <option value="qwen-max">qwen-max</option>
-                            <option value="qwen-turbo">qwen-turbo</option>
-                        </optgroup>
-                        <optgroup label="DeepSeek">
-                            <option value="deepseek-chat">deepseek-chat</option>
-                            <option value="deepseek-reasoner">deepseek-reasoner</option>
-                        </optgroup>
-                        <optgroup label="OpenAI">
-                            <option value="gpt-4o">gpt-4o</option>
-                            <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            <option value="o1-mini">o1-mini</option>
-                            <option value="o3-mini">o3-mini</option>
-                        </optgroup>
-                        <optgroup label="Anthropic">
-                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
-                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
-                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
-                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
-                        </optgroup>
+                        {% endfor %}
                     </select>
+                    </div>
                 </div>
-                <div>
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">5th
+                <div class="premium-select-container">
+                    <label class="premium-select-label">5th
                         Preference</label>
-                    <select id="llmPref5"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); color: inherit; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1);">
+                    <div class="premium-select-wrapper">
+                        <select id="llmPref5" onchange="saveSettings()" class="premium-select">
                         <option value="">None</option>
-                        <optgroup label="Google">
-                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-                            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
-                            <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                        {% for provider, provider_models in models|groupby('provider') %}
+                        <optgroup label="{{ provider }}">
+                            {% for m in provider_models %}
+                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
+                            {% endfor %}
                         </optgroup>
-                        <optgroup label="Qwen">
-                            <option value="qwen-plus">qwen-plus</option>
-                            <option value="qwen-max">qwen-max</option>
-                            <option value="qwen-turbo">qwen-turbo</option>
-                        </optgroup>
-                        <optgroup label="DeepSeek">
-                            <option value="deepseek-chat">deepseek-chat</option>
-                            <option value="deepseek-reasoner">deepseek-reasoner</option>
-                        </optgroup>
-                        <optgroup label="OpenAI">
-                            <option value="gpt-4o">gpt-4o</option>
-                            <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            <option value="o1-mini">o1-mini</option>
-                            <option value="o3-mini">o3-mini</option>
-                        </optgroup>
-                        <optgroup label="Anthropic">
-                            <option value="claude-3-7-sonnet-20250219">claude-3-7-sonnet-20250219</option>
-                            <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
-                            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
-                            <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
-                        </optgroup>
+                        {% endfor %}
                     </select>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">Gemini Configuration
-            </h3>
-            <div class="settings-form" style="margin-top: 8px; flex: 1;">
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Gemini
-                        API Key</label>
-                    <input type="password" id="apiKeyInput"
-                        placeholder="{% if has_api_key %}•••••••••••• (Key is already set){% else %}Paste your Gemini API Key here...{% endif %}"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
-                        API key is stored
-                        securely in the .env file.</small>
-                </div>
+        <div class="glass-panel" style="display: flex; flex-direction: column; grid-column: 1 / -1; margin-top: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-weight: 600; font-size: 1.1rem;">Registered AI Models</h3>
+                <span
+                    style="font-size: 0.85rem; color: var(--text-muted); background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 20px;">{{
+                    models|length }} configured</span>
+            </div>
 
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">LLM
-                        Model Name</label>
-                    <input type="text" id="modelInput" value="{{ current_model }}" placeholder="gemini-2.0-flash"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
-                        Gemini model to use
-                        for inference.</small>
-                </div>
+            <div style="overflow-x: auto; width: 100%;">
+                <table
+                    style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; min-width: 700px;">
+                    <thead>
+                        <tr
+                            style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-weight: 500; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px;">
+                            <th style="padding: 12px 16px;">Provider</th>
+                            <th style="padding: 12px 16px;">Model Name</th>
+                            <th style="padding: 12px 16px;">Inputs</th>
+                            <th style="padding: 12px 16px;">Outputs & Features</th>
+                            <th style="padding: 12px 16px; text-align: center;">Status</th>
+                            <th style="padding: 12px 16px; text-align: right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if models %}
+                        {% for m in models %}
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.2s;"
+                            onmouseover="this.style.background='rgba(255,255,255,0.02)'"
+                            onmouseout="this.style.background='none'">
+                            <td style="padding: 16px; color: var(--text-muted);">{{ m.provider }}</td>
+                            <td style="padding: 16px; font-weight: 500; color: var(--text-main);">{{ m.model_name }}
+                            </td>
+                            <td style="padding: 16px;">
+                                <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                    {% for cap in m.inputs %}
+                                    <span
+                                        style="background: {{ cap.bg }}; color: {{ cap.color }}; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">{{
+                                        cap.label }}</span>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                            <td style="padding: 16px;">
+                                <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                    {% for cap in m.outputs %}
+                                    <span
+                                        style="background: {{ cap.bg }}; color: {{ cap.color }}; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">{{
+                                        cap.label }}</span>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                            <td style="padding: 16px; text-align: center;">
+                                <label style="display: inline-flex; align-items: center; cursor: pointer;">
+                                    <input type="checkbox" class="model-toggle-checkbox" {% if m.enabled %}checked{% endif %}
+                                        onchange="toggleModelEnabled({{ m.id }}, this)">
+                                    <span class="model-toggle-bg">
+                                        <span class="model-toggle-knob"></span>
+                                    </span>
+                                </label>
+                            </td>
+                            <td
+                                style="padding: 16px; text-align: right; display: flex; gap: 8px; justify-content: flex-end; align-items: center;">
+                                <button type="button" onclick="editModelById({{ m.id }})" title="Edit Model"
+                                    style="background: none; border: none; color: #2ecc71; cursor: pointer; padding: 6px; border-radius: 6px; transition: background 0.2s, color 0.2s; display: inline-flex; align-items: center; justify-content: center;"
+                                    onmouseover="this.style.background='rgba(46,204,113,0.1)'"
+                                    onmouseout="this.style.background='none'">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                </button>
+                                <button type="button" onclick="duplicateModelById({{ m.id }})" title="Duplicate Model"
+                                    style="background: none; border: none; color: #3498db; cursor: pointer; padding: 6px; border-radius: 6px; transition: background 0.2s, color 0.2s; display: inline-flex; align-items: center; justify-content: center;"
+                                    onmouseover="this.style.background='rgba(52,152,219,0.1)'"
+                                    onmouseout="this.style.background='none'">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </button>
+                                <button type="button" onclick="deleteModel({{ m.id }}, '{{ m.model_name }}')"
+                                    title="Delete Model"
+                                    style="background: none; border: none; color: #ff4757; cursor: pointer; padding: 6px; border-radius: 6px; transition: background 0.2s, color 0.2s; display: inline-flex; align-items: center; justify-content: center;"
+                                    onmouseover="this.style.background='rgba(255,71,87,0.1)'"
+                                    onmouseout="this.style.background='none'">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path
+                                            d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                        </path>
+                                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="7"
+                                style="padding: 32px; text-align: center; color: var(--text-muted); font-style: italic;">
+                                No custom models registered yet. Click "+ Add Model" at the top to configure one!
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
             </div>
         </div>
-
-        <!--<div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">Qwen Configuration</h3>
-            <div class="settings-form" style="margin-top: 8px; flex: 1;">
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Qwen
-                        API Key</label>
-                    <input type="password" id="qwenApiKeyInput"
-                        placeholder="{% if has_qwen_key %}•••••••••••• (Key is already set){% else %}Paste your Qwen API Key here...{% endif %}"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
-                        API key is stored
-                        securely in the .env file.</small>
-                </div>
-
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Qwen
-                        Model Name</label>
-                    <input type="text" id="qwenModelInput" value="{{ qwen_model }}" placeholder="qwen-plus"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
-                        Qwen model to use
-                        for inference.</small>
-                </div>
-            </div>
-        </div>
-
-        <div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">DeepSeek Configuration
-            </h3>
-            <div class="settings-form" style="margin-top: 8px; flex: 1;">
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">DeepSeek
-                        API Key</label>
-                    <input type="password" id="deepseekApiKeyInput"
-                        placeholder="{% if has_deepseek_key %}•••••••••••• (Key is already set){% else %}Paste your DeepSeek API Key here...{% endif %}"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
-                        API key is stored
-                        securely in the .env file.</small>
-                </div>
-
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">DeepSeek
-                        Model Name</label>
-                    <input type="text" id="deepseekModelInput" value="{{ deepseek_model }}" placeholder="deepseek-chat"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
-                        DeepSeek model to use
-                        for inference.</small>
-                </div>
-            </div>
-        </div>
-
-        <div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">OpenAI Configuration
-            </h3>
-            <div class="settings-form" style="margin-top: 8px; flex: 1;">
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">OpenAI
-                        API Key</label>
-                    <input type="password" id="openaiApiKeyInput"
-                        placeholder="{% if has_openai_key %}•••••••••••• (Key is already set){% else %}Paste your OpenAI API Key here...{% endif %}"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
-                        API key is stored
-                        securely in the .env file.</small>
-                </div>
-
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">OpenAI
-                        Model Name</label>
-                    <input type="text" id="openaiModelInput" value="{{ openai_model }}" placeholder="gpt-4o"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
-                        OpenAI model to use
-                        for inference.</small>
-                </div>
-            </div>
-        </div>
-
-        <div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">Anthropic Configuration
-            </h3>
-            <div class="settings-form" style="margin-top: 8px; flex: 1;">
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Anthropic
-                        API Key</label>
-                    <input type="password" id="anthropicApiKeyInput"
-                        placeholder="{% if has_anthropic_key %}•••••••••••• (Key is already set){% else %}Paste your Anthropic API Key here...{% endif %}"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">Your
-                        API key is stored
-                        securely in the .env file.</small>
-                </div>
-
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 6px; font-size: 0.85rem; font-weight: 500; color: var(--text-main);">Anthropic
-                        Model Name</label>
-                    <input type="text" id="anthropicModelInput" value="{{ anthropic_model }}"
-                        placeholder="claude-3-5-sonnet-20241022"
-                        style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.3); font-size: 0.9rem;">
-                    <small style="display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.8rem;">The
-                        Anthropic model to use
-                        for inference.</small>
-                </div>
-            </div>
-        </div>-->
 
     </div>
-    <button class="btn primary" style="width: 100%; padding: 12px; font-size: 1rem; margin-top: 24px;"
-        onclick="saveSettings()">Save LLM Config</button>
+
+
+    <!-- Modal for Adding Models -->
+    <div id="addModelModal" class="modal"
+        style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+        <div class="modal-content glass-panel"
+            style="background: rgba(20, 20, 20, 0.95); margin: 5% auto; padding: 24px; border-radius: 12px; width: 90%; max-width: 800px; max-height: 90vh; height: auto; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-size: 1.3rem;">Add New Model</h3>
+                <span onclick="closeModelModal()"
+                    style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted);">&times;</span>
+            </div>
+
+            <form id="addModelForm" autocomplete="off">
+                <!-- Grid Layout -->
+                <div
+                    style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                    <!-- General Info -->
+                    <div style="grid-column: 1 / -1;">
+                        <h4
+                            style="margin: 0 0 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                            General Information</h4>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Model Name *</label>
+                        <input type="text" id="new_model_name" required
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;"
+                            placeholder="e.g. gemini-3.5-flash">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Provider *</label>
+                        <input type="text" id="new_provider" required
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;"
+                            placeholder="e.g. Google">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">API Key</label>
+                        <div style="position: relative; display: flex; align-items: center;">
+                            <input type="password" id="new_api_key" autocomplete="new-password"
+                                style="width: 100%; padding: 8px 36px 8px 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;"
+                                placeholder="••••••••••••">
+                            <button type="button" onclick="toggleNewApiKeyVisibility()"
+                                style="position: absolute; right: 8px; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; outline: none;">
+                                <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Context Window</label>
+                        <input type="number" id="new_context_window"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;"
+                            placeholder="e.g. 1000000">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Max Output Tokens</label>
+                        <input type="number" id="new_max_output_tokens"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;"
+                            placeholder="e.g. 8192">
+                    </div>
+
+                    <!-- Features -->
+                    <div style="grid-column: 1 / -1; margin-top: 8px;">
+                        <h4
+                            style="margin: 0 0 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                            Features</h4>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_enabled" checked> <label
+                            style="font-size: 0.85rem;">Enabled</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_json_output"> <label style="font-size: 0.85rem;">JSON
+                            Output</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_thinking"> <label style="font-size: 0.85rem;">Thinking</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_function_calling"> <label style="font-size: 0.85rem;">Function
+                            Calling</label>
+                    </div>
+
+                    <!-- Inputs -->
+                    <div style="grid-column: 1 / -1; margin-top: 8px;">
+                        <h4
+                            style="margin: 0 0 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                            Supported Inputs</h4>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_text_input" checked> <label
+                            style="font-size: 0.85rem;">Text</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_image_input"> <label style="font-size: 0.85rem;">Image</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_audio_input"> <label style="font-size: 0.85rem;">Audio</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_video_input"> <label style="font-size: 0.85rem;">Video</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_document_input"> <label
+                            style="font-size: 0.85rem;">Document</label>
+                    </div>
+
+                    <!-- Outputs -->
+                    <div style="grid-column: 1 / -1; margin-top: 8px;">
+                        <h4
+                            style="margin: 0 0 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                            Supported Outputs</h4>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_text_output" checked> <label
+                            style="font-size: 0.85rem;">Text</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_image_output"> <label style="font-size: 0.85rem;">Image</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_audio_output"> <label style="font-size: 0.85rem;">Audio</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_video_output"> <label style="font-size: 0.85rem;">Video</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="new_document_output"> <label
+                            style="font-size: 0.85rem;">Document</label>
+                    </div>
+
+                    <!-- Rate Limits -->
+                    <div style="grid-column: 1 / -1; margin-top: 8px;">
+                        <h4
+                            style="margin: 0 0 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+                            Rate Limits</h4>
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Tokens/Min (TPM)</label>
+                        <input type="number" id="new_rate_tpm"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Requests/Min (RPM)</label>
+                        <input type="number" id="new_rate_rpm"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.8rem; margin-bottom: 4px;">Requests/Day (RPD)</label>
+                        <input type="number" id="new_rate_rpd"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: inherit; font-size: 0.85rem;">
+                    </div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                    <button type="button" class="btn secondary" onclick="closeModelModal()">Cancel</button>
+                    <button type="button" class="btn primary" onclick="saveNewModel()">Save Model</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal for Deleting Models -->
+    <div id="deleteModelModal" class="modal"
+        style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+        <div class="modal-content glass-panel"
+            style="background: rgba(20, 20, 20, 0.95); margin: 5% auto; padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; height: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-size: 1.3rem;">Delete Model</h3>
+                <span onclick="closeDeleteModal()"
+                    style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted);">&times;</span>
+            </div>
+            <p style="margin-bottom: 24px; font-size: 0.95rem;">Are you sure you want to delete the model <strong
+                    id="deleteModelNameText"></strong>?</p>
+            <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                <button type="button" class="btn secondary" onclick="closeDeleteModal()">Cancel</button>
+                <button type="button" class="btn"
+                    style="background: #ff4757; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;"
+                    onclick="confirmDeleteModel()">Delete</button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    const registeredModels = {{ models| tojson | safe }} || [];
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('llmPref1').value = '{{ llm_pref_1 }}';
         document.getElementById('llmPref2').value = '{{ llm_pref_2 }}';
@@ -371,17 +534,6 @@
     });
 
     function saveSettings() {
-        const key = document.getElementById('apiKeyInput').value;
-        const model = document.getElementById('modelInput').value;
-        const qwenKey = document.getElementById('qwenApiKeyInput').value;
-        const qwenModel = document.getElementById('qwenModelInput').value;
-        const deepseekKey = document.getElementById('deepseekApiKeyInput').value;
-        const deepseekModel = document.getElementById('deepseekModelInput').value;
-        const openaiKey = document.getElementById('openaiApiKeyInput').value;
-        const openaiModel = document.getElementById('openaiModelInput').value;
-        const anthropicKey = document.getElementById('anthropicApiKeyInput').value;
-        const anthropicModel = document.getElementById('anthropicModelInput').value;
-
         const llmPref1 = document.getElementById('llmPref1').value;
         const llmPref2 = document.getElementById('llmPref2').value;
         const llmPref3 = document.getElementById('llmPref3').value;
@@ -389,17 +541,6 @@
         const llmPref5 = document.getElementById('llmPref5').value;
 
         const payload = {};
-        if (key) payload.gemini_api_key = key;
-        if (model) payload.llm_model = model;
-        if (qwenKey) payload.qwen_api_key = qwenKey;
-        if (qwenModel) payload.qwen_model = qwenModel;
-        if (deepseekKey) payload.deepseek_api_key = deepseekKey;
-        if (deepseekModel) payload.deepseek_model = deepseekModel;
-        if (openaiKey) payload.openai_api_key = openaiKey;
-        if (openaiModel) payload.openai_model = openaiModel;
-        if (anthropicKey) payload.anthropic_api_key = anthropicKey;
-        if (anthropicModel) payload.anthropic_model = anthropicModel;
-
         if (llmPref1 !== undefined) payload.llm_pref_1 = llmPref1;
         if (llmPref2 !== undefined) payload.llm_pref_2 = llmPref2;
         if (llmPref3 !== undefined) payload.llm_pref_3 = llmPref3;
@@ -412,31 +553,244 @@
             body: JSON.stringify(payload)
         }).then(res => res.json()).then(data => {
             if (data.status === 'success') {
-                showToast('Settings saved successfully!');
-                if (key) {
-                    document.getElementById('apiKeyInput').placeholder = '•••••••••••• (Key is already set)';
-                    document.getElementById('apiKeyInput').value = '';
-                }
-                if (qwenKey) {
-                    document.getElementById('qwenApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
-                    document.getElementById('qwenApiKeyInput').value = '';
-                }
-                if (deepseekKey) {
-                    document.getElementById('deepseekApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
-                    document.getElementById('deepseekApiKeyInput').value = '';
-                }
-                if (openaiKey) {
-                    document.getElementById('openaiApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
-                    document.getElementById('openaiApiKeyInput').value = '';
-                }
-                if (anthropicKey) {
-                    document.getElementById('anthropicApiKeyInput').placeholder = '•••••••••••• (Key is already set)';
-                    document.getElementById('anthropicApiKeyInput').value = '';
-                }
+                showToast('Preference order updated successfully!');
             } else {
                 showToast('Error saving settings.');
             }
         });
+    }
+
+    function openModelModal() {
+        document.getElementById('addModelModal').style.display = 'flex';
+    }
+
+    let currentDuplicateFromId = null;
+    let currentEditModelId = null;
+
+    function closeModelModal() {
+        document.getElementById('addModelModal').style.display = 'none';
+        document.getElementById('addModelForm').reset();
+        document.querySelector('#addModelModal h3').innerText = 'Add New Model';
+        currentDuplicateFromId = null;
+        currentEditModelId = null;
+        const input = document.getElementById('new_api_key');
+        input.type = 'password';
+        const eyeIcon = document.getElementById('eyeIcon');
+        eyeIcon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+    }
+
+    function toggleNewApiKeyVisibility() {
+        const input = document.getElementById('new_api_key');
+        const eyeIcon = document.getElementById('eyeIcon');
+        if (input.type === 'password') {
+            input.type = 'text';
+            eyeIcon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
+        } else {
+            input.type = 'password';
+            eyeIcon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+        }
+    }
+
+    function saveNewModel() {
+        const payload = {
+            model_name: document.getElementById('new_model_name').value,
+            provider: document.getElementById('new_provider').value,
+            api_key: document.getElementById('new_api_key').value,
+            enabled: document.getElementById('new_enabled').checked,
+            json_output: document.getElementById('new_json_output').checked,
+            thinking: document.getElementById('new_thinking').checked,
+            function_calling: document.getElementById('new_function_calling').checked,
+            context_window: document.getElementById('new_context_window').value,
+            max_output_tokens: document.getElementById('new_max_output_tokens').value,
+            text_input: document.getElementById('new_text_input').checked,
+            image_input: document.getElementById('new_image_input').checked,
+            audio_input: document.getElementById('new_audio_input').checked,
+            video_input: document.getElementById('new_video_input').checked,
+            document_input: document.getElementById('new_document_input').checked,
+            text_output: document.getElementById('new_text_output').checked,
+            image_output: document.getElementById('new_image_output').checked,
+            audio_output: document.getElementById('new_audio_output').checked,
+            video_output: document.getElementById('new_video_output').checked,
+            document_output: document.getElementById('new_document_output').checked,
+            rate_tpm: document.getElementById('new_rate_tpm').value,
+            rate_rpm: document.getElementById('new_rate_rpm').value,
+            rate_rpd: document.getElementById('new_rate_rpd').value
+        };
+
+        if (currentDuplicateFromId) {
+            payload.duplicate_from_id = currentDuplicateFromId;
+        }
+
+        if (!payload.model_name || !payload.provider) {
+            showToast('Model name and provider are required');
+            return;
+        }
+
+        const method = currentEditModelId ? 'PUT' : 'POST';
+        const url = currentEditModelId ? `/api/llm_models/${currentEditModelId}` : '/api/llm_models';
+
+        fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast(currentEditModelId ? 'Model updated successfully!' : 'Model added successfully!');
+                closeModelModal();
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast('Error saving model: ' + (data.error || 'Unknown error'));
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast('Error saving model');
+        });
+    }
+
+    let modelToDeleteId = null;
+
+    function deleteModel(id, name) {
+        modelToDeleteId = id;
+        document.getElementById('deleteModelNameText').innerText = `"${name}"`;
+        document.getElementById('deleteModelModal').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModelModal').style.display = 'none';
+        modelToDeleteId = null;
+    }
+
+    function confirmDeleteModel() {
+        if (!modelToDeleteId) return;
+
+        fetch(`/api/llm_models/${modelToDeleteId}`, {
+            method: 'DELETE'
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast('Model deleted successfully!');
+                closeDeleteModal();
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast('Error deleting model: ' + (data.error || 'Unknown error'));
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast('Error deleting model');
+        });
+    }
+
+    function toggleModelEnabled(id, checkbox) {
+        fetch(`/api/llm_models/${id}/toggle`, {
+            method: 'POST'
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast(`Model ${data.enabled ? 'enabled' : 'disabled'} successfully!`);
+            } else {
+                showToast('Error toggling model status.');
+                checkbox.checked = !checkbox.checked;
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast('Error toggling model status');
+            checkbox.checked = !checkbox.checked;
+        });
+    }
+
+    function editModelById(id) {
+        const model = registeredModels.find(m => m.id === id);
+        if (model) {
+            editModel(model);
+        } else {
+            showToast('Model not found for editing.');
+        }
+    }
+
+    function editModel(model) {
+        openModelModal();
+        currentEditModelId = model.id;
+        document.querySelector('#addModelModal h3').innerText = 'Edit Model';
+
+        document.getElementById('new_model_name').value = model.model_name || '';
+        document.getElementById('new_provider').value = model.provider || '';
+
+        const apiKeyInput = document.getElementById('new_api_key');
+        if (model.has_key) {
+            apiKeyInput.value = '••••••••••••';
+        } else {
+            apiKeyInput.value = '';
+        }
+
+        document.getElementById('new_context_window').value = model.context_window || '';
+        document.getElementById('new_max_output_tokens').value = model.max_output_tokens || '';
+
+        document.getElementById('new_enabled').checked = !!model.enabled;
+        document.getElementById('new_json_output').checked = !!model.json_output;
+        document.getElementById('new_thinking').checked = !!model.thinking;
+        document.getElementById('new_function_calling').checked = !!model.function_calling;
+
+        document.getElementById('new_text_input').checked = !!model.text_input;
+        document.getElementById('new_image_input').checked = !!model.image_input;
+        document.getElementById('new_audio_input').checked = !!model.audio_input;
+        document.getElementById('new_video_input').checked = !!model.video_input;
+        document.getElementById('new_document_input').checked = !!model.document_input;
+
+        document.getElementById('new_text_output').checked = !!model.text_output;
+        document.getElementById('new_image_output').checked = !!model.image_output;
+        document.getElementById('new_audio_output').checked = !!model.audio_output;
+        document.getElementById('new_video_output').checked = !!model.video_output;
+        document.getElementById('new_document_output').checked = !!model.document_output;
+
+        document.getElementById('new_rate_tpm').value = model.rate_tpm || '';
+        document.getElementById('new_rate_rpm').value = model.rate_rpm || '';
+        document.getElementById('new_rate_rpd').value = model.rate_rpd || '';
+    }
+
+    function duplicateModelById(id) {
+        const model = registeredModels.find(m => m.id === id);
+        if (model) {
+            duplicateModel(model);
+        } else {
+            showToast('Model not found for duplication.');
+        }
+    }
+
+    function duplicateModel(model) {
+        openModelModal();
+        currentDuplicateFromId = model.id;
+
+        document.getElementById('new_model_name').value = '';
+        document.getElementById('new_provider').value = model.provider || '';
+
+        const apiKeyInput = document.getElementById('new_api_key');
+        if (model.has_key) {
+            apiKeyInput.value = '••••••••••••';
+        } else {
+            apiKeyInput.value = '';
+        }
+
+        document.getElementById('new_context_window').value = model.context_window || '';
+        document.getElementById('new_max_output_tokens').value = model.max_output_tokens || '';
+
+        document.getElementById('new_enabled').checked = !!model.enabled;
+        document.getElementById('new_json_output').checked = !!model.json_output;
+        document.getElementById('new_thinking').checked = !!model.thinking;
+        document.getElementById('new_function_calling').checked = !!model.function_calling;
+
+        document.getElementById('new_text_input').checked = !!model.text_input;
+        document.getElementById('new_image_input').checked = !!model.image_input;
+        document.getElementById('new_audio_input').checked = !!model.audio_input;
+        document.getElementById('new_video_input').checked = !!model.video_input;
+        document.getElementById('new_document_input').checked = !!model.document_input;
+
+        document.getElementById('new_text_output').checked = !!model.text_output;
+        document.getElementById('new_image_output').checked = !!model.image_output;
+        document.getElementById('new_audio_output').checked = !!model.audio_output;
+        document.getElementById('new_video_output').checked = !!model.video_output;
+        document.getElementById('new_document_output').checked = !!model.document_output;
+
+        document.getElementById('new_rate_tpm').value = model.rate_tpm || '';
+        document.getElementById('new_rate_rpm').value = model.rate_rpm || '';
+        document.getElementById('new_rate_rpd').value = model.rate_rpd || '';
     }
 </script>
 {% endblock %}

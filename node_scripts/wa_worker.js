@@ -16,6 +16,15 @@ const botSentMsgIds = new Set();
 const typingIntervals = {};
 const typingTimeouts = {};
 
+function ensureJidSuffix(jid) {
+    if (!jid) return jid;
+    if (jid.includes('@')) return jid;
+    if (jid.includes('-') || jid.startsWith('120363')) {
+        return `${jid}@g.us`;
+    }
+    return `${jid}@s.whatsapp.net`;
+}
+
 function clearTyping(jid) {
     if (typingIntervals[jid]) {
         clearInterval(typingIntervals[jid]);
@@ -64,6 +73,14 @@ async function connectToWhatsApp() {
 
         if (connection === 'close') {
             const statusCode = (lastDisconnect.error)?.output?.statusCode;
+            
+            // 440 / 409 indicate a session conflict (another instance using the same credentials)
+            if (statusCode === 440 || statusCode === 409) {
+                console.error(`❌ Session conflict detected (status ${statusCode}). Another instance is likely running.`);
+                console.error('Terminating this orphaned instance to resolve the conflict.');
+                process.exit(1);
+            }
+            
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log('WhatsApp connection closed. Reconnecting:', shouldReconnect, 'Reason:', statusCode, lastDisconnect.error?.message);
             if (shouldReconnect) {
@@ -176,16 +193,19 @@ async function connectToWhatsApp() {
 
             if (!text) continue;
 
-            // Generate a sender ID (just using the base number)
-            const senderId = remoteJid.split('@')[0];
+            // Use remoteJid as the base channel ID, but extract actual participant if available (e.g. for groups)
+            const channelIdBase = remoteJid.split('@')[0];
+            const actualSenderJid = msg.key.participant || msg.key.remoteJid;
+            const senderId = actualSenderJid.split('@')[0];
 
-            console.log(`[Baileys Inbound] ${senderId}: ${text}`);
+            console.log(`[Baileys Inbound] ${senderId} (in ${channelIdBase}): ${text}`);
 
             try {
                 const payload = {
-                    channel_id: `wa_web:${senderId}`,
+                    channel_id: `wa_web:${channelIdBase}`,
                     sender_id: senderId,
-                    sender_jid: remoteJid,
+                    sender_jid: actualSenderJid,
+                    remote_jid: remoteJid,
                     content: text
                 };
                 if (audioBase64) {
@@ -228,7 +248,7 @@ app.post('/send', async (req, res) => {
     }
 
     // Use provided jid or fallback to ownJid
-    const targetJid = jid || ownJid;
+    const targetJid = ensureJidSuffix(jid || ownJid);
 
     clearTyping(targetJid);
 
@@ -257,7 +277,7 @@ app.post('/send_file', async (req, res) => {
         return res.status(400).json({ error: 'Missing file_path parameter' });
     }
 
-    const targetJid = jid || ownJid;
+    const targetJid = ensureJidSuffix(jid || ownJid);
 
     clearTyping(targetJid);
 
@@ -311,7 +331,7 @@ app.post('/send_audio', async (req, res) => {
         return res.status(400).json({ error: 'Missing file_path parameter' });
     }
 
-    const targetJid = jid || ownJid;
+    const targetJid = ensureJidSuffix(jid || ownJid);
 
     clearTyping(targetJid);
 
@@ -352,7 +372,7 @@ app.post('/presence', async (req, res) => {
         return res.status(400).json({ error: 'Missing state parameter' });
     }
 
-    const targetJid = jid || ownJid;
+    const targetJid = ensureJidSuffix(jid || ownJid);
 
     try {
         console.log(`[Baileys Presence] Sending ${state} to ${targetJid}`);
