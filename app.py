@@ -403,7 +403,8 @@ def permissions_config_page():
         perm_mail=get_config('PERM_MAIL', 'false').lower() == 'true',
         perm_messages=get_config('PERM_MESSAGES', 'false').lower() == 'true',
         perm_system_data=get_config('PERM_SYSTEM_DATA', 'false').lower() == 'true',
-        perm_screenshot=get_config('PERM_SCREENSHOT', 'false').lower() == 'true'
+        perm_screenshot=get_config('PERM_SCREENSHOT', 'false').lower() == 'true',
+        perm_web_search=get_config('PERM_WEB_SEARCH', 'false').lower() == 'true'
     )
 
 @app.route('/api/permissions/request', methods=['POST'])
@@ -1009,7 +1010,8 @@ def save_settings():
         'perm_mail': 'PERM_MAIL',
         'perm_messages': 'PERM_MESSAGES',
         'perm_system_data': 'PERM_SYSTEM_DATA',
-        'perm_screenshot': 'PERM_SCREENSHOT'
+        'perm_screenshot': 'PERM_SCREENSHOT',
+        'perm_web_search': 'PERM_WEB_SEARCH'
     }
     
     for json_key, db_key in bool_mapping.items():
