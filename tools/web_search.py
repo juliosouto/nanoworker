@@ -1,5 +1,5 @@
 import json
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from utils.security_utils import require_permission
 
 @require_permission('PERM_WEB_SEARCH')
