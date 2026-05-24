@@ -1,14 +1,16 @@
-import uuid
 import os
-from database import get_config
 import time
-from database import get_db
+import uuid
+
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
+
+import standard_prompts
+from database import get_config, get_db
 from tools import AVAILABLE_TOOLS
 from tools.browser import current_session_id
-import standard_prompts
+from utils.message_utils import truncate_message
 
 load_dotenv(override=True)
 
@@ -239,28 +241,17 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         role = row['role']
         msg_content = row['content']
         if role == 'user':
-            if is_wa_group and msg_content and len(msg_content) > 1000:
-                msg_content = msg_content[-1000:]
+            if is_wa_group:
+                msg_content = truncate_message(msg_content, 1000)
             if row['sender_id']:
                 msg_content = f"[Message from: {row['sender_id']}]\n{msg_content}"
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
+            from utils.image_utils import build_gemini_part
             mime_type = row['file_mime_type'] or "image/jpeg"
-            if row['gemini_file_uri']:
-                parts.insert(0, types.Part.from_uri(file_uri=row['gemini_file_uri'], mime_type=mime_type))
-            elif row['image_base64'].startswith('uri:'):
-                file_uri = row['image_base64'][4:]
-                parts.insert(0, types.Part.from_uri(file_uri=file_uri, mime_type=mime_type))
-            elif row['image_base64'].startswith('path:'):
-                file_path = row['image_base64'][5:]
-                if os.path.exists(file_path):
-                    with open(file_path, "rb") as f:
-                        img_data = f.read()
-                    parts.insert(0, types.Part.from_bytes(data=img_data, mime_type=mime_type))
-            else:
-                import base64
-                img_data = base64.b64decode(row['image_base64'])
-                parts.insert(0, types.Part.from_bytes(data=img_data, mime_type=mime_type))
+            part = build_gemini_part(row['image_base64'], mime_type, row['gemini_file_uri'])
+            if part:
+                parts.insert(0, part)
         
         history.append(
             types.Content(role=role, parts=parts)
@@ -282,54 +273,21 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         except Exception:
             pass
 
-    if is_wa_group and content and len(content) > 1000:
-        content = content[-1000:]
+    if is_wa_group:
+        content = truncate_message(content, 1000)
 
     if current_sender_id:
         content = f"[Message from: {current_sender_id}]\n{content}"
     send_content = [content]
     if current_image_base64:
+        from utils.image_utils import upload_and_build_gemini_part
         mime_type = current_msg['file_mime_type'] or "image/jpeg"
-        if current_gemini_uri:
-            send_content.insert(0, types.Part.from_uri(file_uri=current_gemini_uri, mime_type=mime_type))
-        elif current_image_base64.startswith('uri:'):
-            file_uri = current_image_base64[4:]
-            send_content.insert(0, types.Part.from_uri(file_uri=file_uri, mime_type=mime_type))
-        elif current_image_base64.startswith('path:'):
-            file_path = current_image_base64[5:]
-            if os.path.exists(file_path):
-                if client:
-                    try:
-                        uploaded_file = client.files.upload(file=file_path, config={"mime_type": mime_type})
-                        
-                        import time
-                        # Poll until processing is complete
-                        while uploaded_file.state.name == "PROCESSING":
-                            time.sleep(2)
-                            uploaded_file = client.files.get(name=uploaded_file.name)
-                            
-                        if uploaded_file.state.name == "FAILED":
-                            raise ValueError("Gemini failed to process the uploaded file.")
-                            
-                        send_content.insert(0, types.Part.from_uri(file_uri=uploaded_file.uri, mime_type=mime_type))
-                        # Save the URI in the database so we don't upload again!
-                        cursor.execute("UPDATE messages_in SET gemini_file_uri = ? WHERE id = ?", (uploaded_file.uri, message_in_id))
-                        conn.commit()
-                    except Exception as e:
-                        import logging
-                        logging.error(f"Failed to upload file to Gemini: {e}")
-                        # Fallback to from_bytes if upload fails (might work for images)
-                        with open(file_path, "rb") as f:
-                            img_data = f.read()
-                        send_content.insert(0, types.Part.from_bytes(data=img_data, mime_type=mime_type))
-                else:
-                    with open(file_path, "rb") as f:
-                        img_data = f.read()
-                    send_content.insert(0, types.Part.from_bytes(data=img_data, mime_type=mime_type))
-        else:
-            import base64
-            img_data = base64.b64decode(current_image_base64)
-            send_content.insert(0, types.Part.from_bytes(data=img_data, mime_type=mime_type))
+        part, new_uri = upload_and_build_gemini_part(client, current_image_base64, mime_type, current_gemini_uri)
+        if part:
+            send_content.insert(0, part)
+        if new_uri:
+            cursor.execute("UPDATE messages_in SET gemini_file_uri = ? WHERE id = ?", (new_uri, message_in_id))
+            conn.commit()
 
     preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
     models_to_try = [m for m in preferences if m and m.strip()]

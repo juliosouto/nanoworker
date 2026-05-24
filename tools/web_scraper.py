@@ -1,6 +1,7 @@
 import logging
-from curl_cffi import requests
+
 import trafilatura
+from curl_cffi import requests
 from playwright.sync_api import sync_playwright
 
 def extract_webpage_text(url: str) -> str:

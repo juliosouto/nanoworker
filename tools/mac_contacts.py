@@ -1,4 +1,5 @@
 import subprocess
+
 from utils.security_utils import require_permission
 @require_permission('PERM_CONTACTS')
 def get_mac_contacts(limit: int = 20) -> str:
