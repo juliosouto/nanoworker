@@ -12,3 +12,4 @@ kokoro-onnx
 soundfile
 cryptography
 openai
+duckduckgo-search
