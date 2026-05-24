@@ -4,14 +4,14 @@ NanoWorker is an Artificial Intelligence agent inspired by the OpenClaw and Nano
 
 It is built in **Python** using the **Flask** microframework, and features a **Node.js** bridge for native integration with **WhatsApp**. Impressively, **90% of the codebase was written with the assistance of Google Antigravity**.
 
-⚠️ **Notice:** This project was developed and **tested only on MacOS**. Furthermore, in this initial version, the language model (LLM) integration exclusively supports the **Google Gemini** API.
+⚠️ **Notice:** This project was developed and **tested only on MacOS**. Furthermore, in this initial version, the language model (LLM) integration exclusively supports the **Google Gemini** and **Alibaba Qwen** APIs.
 
 ## 🚀 Features
 
 - **Web Chat:** Native web chat interface with multimodal support for text, images, and files.
 - **Built-in IDE:** A simple, integrated development environment that allows you to develop software with AI and continuously improve the NanoWorker project itself.
 - **WhatsApp Integration:** Node.js bridge (using libraries like Baileys) to connect the agent to WhatsApp, allowing it to send and receive text messages, audio, and media.
-- **Multimodal Processing with Gemini:** Utilizes the Google Gemini API to understand text, images, and documents.
+- **Multimodal Processing with Gemini or Qwen:** Utilizes the **Google Gemini** or **Alibaba Qwen** APIs to understand text, images, and documents.
 - **Local Audio Processing:**
   - **Speech-to-Text (STT):** Uses `faster-whisper` to transcribe received audio (e.g., WhatsApp voice messages) locally.
   - **Text-to-Speech (TTS):** Uses `kokoro-onnx` for local audio generation.
@@ -86,7 +86,6 @@ Create or rename the environment variables configuration file. You must create a
 ```bash
 touch .env
 ```
-*Edit the `.env` file to insert your configurations if they are necessary for startup.* (The Gemini API key, by default, can be inserted and encrypted via the Flask Web interface on the settings screen).
 
 ### 8. Run the Project
 With everything installed, make sure you are in the root of the project and with the virtual environment activated:
@@ -95,15 +94,13 @@ With everything installed, make sure you are in the root of the project and with
 python app.py
 ```
 
-The Flask server will start (usually at `http://127.0.0.1:5000` or similar). Access the link in your browser to open the Web IDE interface, configure your Gemini API key, and view the integrations.
+The Flask server will start (usually at `http://127.0.0.1:5000` or similar). Access the link in your browser to open the Web IDE interface, configure your Gemini or Qwen API key, and view the integrations.
 
 ## 💡 Configuration Tips
 
 When configuring the agent's **"General Behavior"** (System Prompt) in the settings, you can use the following example to enable concise answers and voice messages using Kokoro TTS:
 
-> "You are a personal assistant. The final answer to the end user must have up to one paragraph and 350 characters, unless the opposite is explicitly requested.
-> 
-> If the user asks you to send an audio or voice message, or if you decide it is better to send an audio response, wrap ONLY the text you want to be spoken inside `<audio></audio>` tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: `<audio>Hi, here is your audio!</audio>`"
+> "The final answer to the end user must have up to one paragraph and 350 characters, unless the opposite is explicitly requested.
 
 When configuring the agent's **"IDE Behavior"** (System Prompt) in the settings, you can use the following example to enable strict software engineering guidelines:
 

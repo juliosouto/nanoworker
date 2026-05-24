@@ -8,6 +8,7 @@ from google.genai import types
 from dotenv import load_dotenv
 from tools import AVAILABLE_TOOLS
 from tools.browser import current_session_id
+import standard_prompts
 
 load_dotenv(override=True)
 
@@ -383,6 +384,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 "temperature": 0.0,
             }
             
+            system_prompt = standard_prompts.apply_standard_rules(system_prompt)
+            
             if system_prompt:
                 config_kwargs["system_instruction"] = system_prompt
             
@@ -493,6 +496,8 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
                 "tools": AVAILABLE_TOOLS,
                 "temperature": 0.0,
             }
+
+            system_prompt = standard_prompts.apply_standard_rules(system_prompt)
 
             if system_prompt:
                 config_kwargs["system_instruction"] = system_prompt
