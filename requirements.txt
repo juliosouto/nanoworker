@@ -12,3 +12,5 @@ kokoro-onnx
 soundfile
 cryptography
 openai
+trafilatura
+curl_cffi
