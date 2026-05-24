@@ -1,5 +1,6 @@
-import sqlite3
 import os
+import sqlite3
+
 from cryptography.fernet import Fernet
 
 DB_PATH = 'nanoworker.db'

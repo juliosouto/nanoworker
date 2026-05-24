@@ -11,14 +11,15 @@ Required env vars:
   WHATSAPP_PHONE_NUMBER_ID  — The Phone Number ID (not the phone number itself)
   WHATSAPP_VERIFY_TOKEN     — Any string you choose, must match Meta dashboard config
 """
-import os
-from database import get_config
 import logging
-import requests
+import os
 import tempfile
+
+import requests
 from dotenv import load_dotenv
 
-from utils.audio import transcribe_audio
+from database import get_config
+from utils.audio_utils import transcribe_audio
 
 load_dotenv(override=True)
 

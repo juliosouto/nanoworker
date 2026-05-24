@@ -1,5 +1,6 @@
 import os
 import shutil
+
 from utils.security_utils import require_permission
 
 ICLOUD_DRIVE_PATH = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs")

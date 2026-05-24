@@ -1,5 +1,6 @@
-import requests
 import logging
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,6 @@ def is_allowed_to(phone_number: str) -> bool:
     except Exception as e:
         logger.error(f"Error checking allowed_to: {e}")
         return True
-
 
 
 def send_whatsapp_message(phone_number: str, message: str) -> str:
@@ -162,16 +162,11 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     if not os.path.isfile(file_path):
         return f"Error: File not found at {file_path}"
 
-    temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "temp")
-    os.makedirs(temp_dir, exist_ok=True)
+    from utils.file_utils import create_temp_copy
     
     file_name = os.path.basename(file_path)
-    unique_id = uuid.uuid4().hex[:8]
-    temp_file_name = f"{unique_id}_{file_name}"
-    temp_file_path = os.path.join(temp_dir, temp_file_name)
-
     try:
-        shutil.copy2(file_path, temp_file_path)
+        temp_file_path = create_temp_copy(file_path)
     except Exception as e:
         logger.error(f"Failed to copy file to temp: {e}")
         return f"Error copying file to temporary directory: {str(e)}"

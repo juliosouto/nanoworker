@@ -1,4 +1,5 @@
 import functools
+
 from database import get_config
 
 def require_permission(permission_key: str):

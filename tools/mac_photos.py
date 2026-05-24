@@ -1,5 +1,6 @@
-import subprocess
 import os
+import subprocess
+
 from utils.security_utils import require_permission
 
 @require_permission('PERM_PHOTOS')

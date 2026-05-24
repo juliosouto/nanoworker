@@ -1,5 +1,7 @@
-from browser.manager import BrowserManager
 import contextvars
+
+from browser.manager import BrowserManager
+
 from utils.security_utils import require_permission
 
 # Context variable to hold the current session ID

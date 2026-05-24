@@ -1,9 +1,9 @@
-import subprocess
-import logging
-import sqlite3
-import os
 import getpass
-from typing import List, Dict, Any
+import logging
+import os
+import sqlite3
+import subprocess
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

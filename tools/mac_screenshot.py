@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 from datetime import datetime
+
 from utils.security_utils import require_permission
 
 @require_permission('PERM_SCREENSHOT')

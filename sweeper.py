@@ -1,11 +1,13 @@
-import time
-import uuid
 import logging
 import threading
+import time
+import uuid
 from datetime import datetime
+
 from croniter import croniter
-from database import get_db
+
 from agent_runner import process_message
+from database import get_db
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('sweeper')
