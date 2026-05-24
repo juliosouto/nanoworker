@@ -18,6 +18,7 @@ from .mac_notes import list_mac_notes, read_mac_note, create_mac_note, append_to
 from .mac_reminders import list_mac_reminders, create_mac_reminder, complete_mac_reminder, delete_mac_reminder
 from .mac_screenshot import take_mac_screenshot
 from .mac_mail import search_mac_mail, read_mac_mail, get_recent_mac_mail
+from .web_search import search_web
 
 from database import get_config
 
@@ -30,6 +31,9 @@ def get_permitted_tools():
         
     if get_config('PERM_TERMINAL', 'false').lower() == 'true':
         tools.append(run_bash_command)
+
+    if get_config('PERM_WEB_SEARCH', 'false').lower() == 'true':
+        tools.append(search_web)
         
     if get_config('PERM_PLAYWRIGHT', 'false').lower() == 'true':
         tools.extend([
@@ -63,7 +67,7 @@ def get_permitted_tools():
         
     if get_config('PERM_MAIL', 'false').lower() == 'true':
         tools.extend([search_mac_mail, read_mac_mail, get_recent_mac_mail])
-        
+    
     return tools
 
 # Keep AVAILABLE_TOOLS for backwards compatibility or full access if needed elsewhere
@@ -74,5 +78,5 @@ AVAILABLE_TOOLS = [
     create_mac_contact, get_recent_photos, list_albums, export_photos, delete_photos,
     list_icloud_files, read_icloud_file, write_icloud_file, list_mac_notes, read_mac_note,
     create_mac_note, append_to_mac_note, list_mac_reminders, create_mac_reminder, complete_mac_reminder, delete_mac_reminder,
-    take_mac_screenshot, search_mac_mail, read_mac_mail, get_recent_mac_mail
+    take_mac_screenshot, search_mac_mail, read_mac_mail, get_recent_mac_mail, search_web
 ]
