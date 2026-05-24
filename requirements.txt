@@ -14,4 +14,4 @@ cryptography
 openai
 trafilatura
 curl_cffi
-duckduckgo-search
+ddgs
