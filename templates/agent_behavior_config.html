@@ -4,11 +4,14 @@
 
 {% block content %}
 <div style="max-width: 1200px; margin: 0 auto;">
-    <div style="display: flex; align-items: center; margin-bottom: 24px;">
-        <a href="/settings" style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
-            &larr;
-        </a>
-        <h2 style="font-weight: 600; margin: 0;">Agent Behavior Configuration</h2>
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center;">
+            <a href="/settings" style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+                &larr;
+            </a>
+            <h2 style="font-weight: 600; margin: 0;">Agent Behavior Configuration</h2>
+        </div>
+        <button class="btn primary" style="padding: 10px 24px; font-size: 0.95rem;" onclick="saveAgentSettings()">Save Agent Config</button>
     </div>
 
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
@@ -16,30 +19,30 @@
         <!-- General Behavior Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column;">
             <h3>General Behavior</h3>
-            <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted);">
                 Configure how the AI agent behaves during conversations.
             </small>
-            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Agent Name</label>
+            <div class="settings-form" style="margin-top: 8px; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Agent Name</label>
                     <input type="text" id="agentNameInput" value="{{ agent_name }}" placeholder="Agent-000000"
                         style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.9rem;">
                 </div>
 
-                <div style="margin-bottom: 20px;">
+                <div style="margin-bottom: 16px;">
                     <label
-                        style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">System
+                        style="display: block; margin-bottom: 4px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">System
                         Prompt</label>
-                    <textarea id="systemPromptInput" rows="6" placeholder="Enter the system prompt for the agent..."
+                    <textarea id="systemPromptInput" rows="3" placeholder="Enter the system prompt for the agent..."
                         style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ system_prompt }}</textarea>
                 </div>
 
-                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
                             Thinking</label>
-                        <small style="display: block; margin-top: 4px; color: var(--text-muted);">Allow the LLM to
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Allow the LLM to
                             reason step-by-step before responding.</small>
                     </div>
                     <label
@@ -54,11 +57,11 @@
                     </label>
                 </div>
 
-                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Add current datetime</label>
-                        <small style="display: block; margin-top: 4px; color: var(--text-muted);">Automatically prepend the current date and time to the system prompt.</small>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Automatically prepend the current date and time to the system prompt.</small>
                     </div>
                     <label
                         style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
@@ -121,10 +124,7 @@
 
     </div>
 
-    <div style="margin-top: 32px; display: flex; justify-content: flex-end;">
-        <button class="btn primary" style="padding: 12px 32px; font-size: 1rem;"
-            onclick="saveAgentSettings()">Save Agent Config</button>
-    </div>
+
 </div>
 {% endblock %}
 

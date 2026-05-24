@@ -68,16 +68,16 @@
 
         <div class="glass-panel" style="display: flex; flex-direction: column;">
             <h3>Permissions & Routing</h3>
-            <p style="margin-top: 8px; color: var(--text-muted); margin-bottom: 24px; font-size: 0.9rem;">
+            <p style="margin-top: 8px; color: var(--text-muted); margin-bottom: 16px; font-size: 0.9rem;">
                 Configure how the bot interacts with WhatsApp.
             </p>
 
             <form id="wa-config-form">
-                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Bot
                             Active</label>
-                        <small style="display: block; margin-top: 4px; color: var(--text-muted);">Enable or pause bot
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Enable or pause bot
                             responses on WhatsApp.</small>
                     </div>
                     <label
@@ -92,12 +92,12 @@
                     </label>
                 </div>
 
-                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Allow
                             Mentions</label>
-                        <small style="display: block; margin-top: 4px; color: var(--text-muted);">Process messages from
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Process messages from
                             anyone if they start with @agent_name.</small>
                     </div>
                     <label
@@ -112,12 +112,12 @@
                     </label>
                 </div>
 
-                <div style="margin-bottom: 16px;">
+                <div style="margin-bottom: 12px;">
                     <label for="allowed-from"
-                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 8px;">Permitir
+                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Permitir
                         mensagens
                         de (Allowed From)</label>
-                    <textarea id="allowed-from" rows="3"
+                    <textarea id="allowed-from" rows="2"
                         placeholder="Ex: 5511999999999, 5511888888888 (Deixe em branco para bloquear todos)"
                         style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; font-family: inherit; resize: vertical;">{{ allowed_from }}</textarea>
                     <small style="color: var(--text-muted); display: block; margin-top: 4px;">Comma-separated list of
@@ -125,12 +125,12 @@
                         numbers the bot is allowed to reply to.</small>
                 </div>
 
-                <div style="margin-bottom: 24px;">
+                <div style="margin-bottom: 16px;">
                     <label for="allowed-to"
-                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 8px;">Permitir
+                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Permitir
                         enviar
                         para (Allowed To)</label>
-                    <textarea id="allowed-to" rows="3"
+                    <textarea id="allowed-to" rows="2"
                         placeholder="Ex: 5511999999999, 5511888888888 (Deixe em branco para bloquear todos)"
                         style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; font-family: inherit; resize: vertical;">{{ allowed_to }}</textarea>
                     <small style="color: var(--text-muted); display: block; margin-top: 4px;">Comma-separated list of
