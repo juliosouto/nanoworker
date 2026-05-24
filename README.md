@@ -21,6 +21,24 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 - **MacOS Ecosystem Integration:** Deep integration and support for native macOS applications including **Mail, Messages, Photos, Calendar, Reminders, Notes, Terminal**, and **iCloud Drive**.
 - **Tool Calling:** The agent has the ability to search the web, navigate pages, and much more (using `playwright`, etc).
 
+## Interface Overview
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/c3e57797-dfc5-4998-9c1e-c4c6f333281c" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/986f3791-a927-4811-9ed7-958377e5b06f" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/d2e567bd-4596-4238-8729-8b412200efb8" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/9d3d1083-9ce9-4279-b5bc-d71a6282239a" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/af104c79-9512-4465-8b42-39c2dec87b73" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/82eb4eb1-0efa-461a-81e2-f31f27060cd0" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/7ce7d702-2de1-49fc-9a1c-d8107d9c9515" />
+
+<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/439a0b9f-bf59-4739-8aa7-d6e240a51928" />
+
 ## 🛠️ System Requirements
 
 - **Operating System:** MacOS Tahoe 26.5 (tested and recommended)
