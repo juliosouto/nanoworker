@@ -114,11 +114,9 @@
 
                 <div style="margin-bottom: 12px;">
                     <label for="allowed-from"
-                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Permitir
-                        mensagens
-                        de (Allowed From)</label>
+                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Allowed From</label>
                     <textarea id="allowed-from" rows="2"
-                        placeholder="Ex: 5511999999999, 5511888888888 (Deixe em branco para bloquear todos)"
+                        placeholder="Ex: 5511999999999, 5511888888888 (Leave blank to block all)"
                         style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; font-family: inherit; resize: vertical;">{{ allowed_from }}</textarea>
                     <small style="color: var(--text-muted); display: block; margin-top: 4px;">Comma-separated list of
                         phone
@@ -127,11 +125,9 @@
 
                 <div style="margin-bottom: 16px;">
                     <label for="allowed-to"
-                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Permitir
-                        enviar
-                        para (Allowed To)</label>
+                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Allowed To</label>
                     <textarea id="allowed-to" rows="2"
-                        placeholder="Ex: 5511999999999, 5511888888888 (Deixe em branco para bloquear todos)"
+                        placeholder="Ex: 5511999999999, 5511888888888 (Leave blank to block all)"
                         style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; font-family: inherit; resize: vertical;">{{ allowed_to }}</textarea>
                     <small style="color: var(--text-muted); display: block; margin-top: 4px;">Comma-separated list of
                         phone
@@ -265,6 +261,32 @@
 
     setupToggle('bot-enabled', 'botToggleKnob');
     setupToggle('allow-mentions', 'mentionsToggleKnob');
+
+    function updateAllowedFieldsState() {
+        const allowMentions = document.getElementById('allow-mentions');
+        const allowedFrom = document.getElementById('allowed-from');
+        const allowedTo = document.getElementById('allowed-to');
+        if (allowMentions) {
+            const isDisabled = allowMentions.checked;
+            
+            if (allowedFrom) {
+                allowedFrom.disabled = isDisabled;
+                allowedFrom.style.opacity = isDisabled ? '0.5' : '1';
+                allowedFrom.style.cursor = isDisabled ? 'not-allowed' : 'text';
+            }
+            if (allowedTo) {
+                allowedTo.disabled = isDisabled;
+                allowedTo.style.opacity = isDisabled ? '0.5' : '1';
+                allowedTo.style.cursor = isDisabled ? 'not-allowed' : 'text';
+            }
+        }
+    }
+
+    const mentionsToggle = document.getElementById('allow-mentions');
+    if (mentionsToggle) {
+        mentionsToggle.addEventListener('change', updateAllowedFieldsState);
+        updateAllowedFieldsState(); // Run initially
+    }
 
     document.getElementById('wa-config-form').addEventListener('submit', function (e) {
         e.preventDefault();

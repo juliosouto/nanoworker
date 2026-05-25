@@ -6,7 +6,14 @@ from cryptography.fernet import Fernet
 DB_PATH = 'nanoworker.db'
 KEY_PATH = 'encryption.key'
 
-def get_encryption_key():
+def get_encryption_key() -> bytes:
+    """
+    Obtém ou gera uma chave de criptografia Fernet.
+    Se o arquivo da chave não existir, gera uma nova chave e salva no arquivo.
+    
+    Retorna:
+        bytes: A chave de criptografia.
+    """
     if not os.path.exists(KEY_PATH):
         key = Fernet.generate_key()
         with open(KEY_PATH, 'wb') as f:
@@ -22,16 +29,44 @@ except Exception as e:
     print(f"Failed to initialize encryption: {e}")
     cipher_suite = None
 
-def is_sensitive_key(key):
+def is_sensitive_key(key: str) -> bool:
+    """
+    Verifica se uma determinada chave de configuração contém informações sensíveis.
+    As chaves sensíveis incluem substrings como 'API_KEY', 'TOKEN', 'PASSWORD' ou 'SECRET'.
+    
+    Argumentos:
+        key (str): O nome da chave a ser verificada.
+        
+    Retorna:
+        bool: True se for sensível, False caso contrário.
+    """
     k = key.upper()
     return 'API_KEY' in k or 'TOKEN' in k or 'PASSWORD' in k or 'SECRET' in k
 
-def encrypt_value(value):
+def encrypt_value(value: str) -> str:
+    """
+    Criptografa um valor em string usando a chave configurada.
+    
+    Argumentos:
+        value (str): O valor em texto plano.
+        
+    Retorna:
+        str: O valor criptografado, ou o valor original caso a criptografia não esteja inicializada.
+    """
     if not value or not cipher_suite:
         return value
     return cipher_suite.encrypt(str(value).encode('utf-8')).decode('utf-8')
 
-def decrypt_value(value):
+def decrypt_value(value: str) -> str:
+    """
+    Descriptografa um valor previamente criptografado.
+    
+    Argumentos:
+        value (str): O valor criptografado em formato Fernet.
+        
+    Retorna:
+        str: O texto plano resultante da descriptografia, ou o próprio valor de entrada em caso de erro.
+    """
     if not value or not cipher_suite:
         return value
     try:
@@ -42,12 +77,29 @@ def decrypt_value(value):
         pass
     return value
 
-def get_db():
+def get_db() -> sqlite3.Connection:
+    """
+    Estabelece e retorna uma conexão com o banco de dados SQLite.
+    
+    Retorna:
+        sqlite3.Connection: Conexão ativa com o banco.
+    """
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_config(key, default=None):
+def get_config(key: str, default=None) -> str:
+    """
+    Recupera um valor de configuração geral da tabela app_config.
+    Descriptografa automaticamente caso a chave seja identificada como sensível.
+    
+    Argumentos:
+        key (str): O nome da configuração.
+        default (any, opcional): O valor padrão a retornar se não encontrado.
+        
+    Retorna:
+        str: O valor da configuração (descriptografado se aplicável) ou default.
+    """
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT value FROM app_config WHERE key = ?', (key,))
@@ -64,7 +116,14 @@ def get_config(key, default=None):
         return val
     return default
 
-def get_all_configs():
+def get_all_configs() -> dict:
+    """
+    Retorna todas as configurações da tabela app_config em formato de dicionário.
+    Valores de chaves sensíveis são retornados já descriptografados.
+    
+    Retorna:
+        dict: Dicionário contendo todas as chaves e valores.
+    """
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT key, value FROM app_config')
@@ -80,7 +139,15 @@ def get_all_configs():
             result[key] = val
     return result
 
-def set_config(key, value):
+def set_config(key: str, value: any):
+    """
+    Salva ou atualiza uma configuração na tabela app_config.
+    Criptografa automaticamente o valor se a chave for identificada como sensível.
+    
+    Argumentos:
+        key (str): O nome da configuração.
+        value (any): O valor a ser salvo (será convertido para string).
+    """
     conn = get_db()
     cursor = conn.cursor()
     val_to_save = str(value) if value is not None else ""
@@ -90,7 +157,17 @@ def set_config(key, value):
     conn.commit()
     conn.close()
 
-def get_ide_config(key, default=None):
+def get_ide_config(key: str, default=None) -> str:
+    """
+    Recupera uma configuração específica do ambiente da IDE da tabela ide_settings.
+    
+    Argumentos:
+        key (str): A chave da configuração da IDE.
+        default (any, opcional): Valor padrão retornado caso a chave não exista.
+        
+    Retorna:
+        str: O valor correspondente armazenado ou o default.
+    """
     conn = get_db()
     cursor = conn.cursor()
     try:
@@ -103,7 +180,14 @@ def get_ide_config(key, default=None):
         conn.close()
     return default
 
-def set_ide_config(key, value):
+def set_ide_config(key: str, value: any):
+    """
+    Salva ou atualiza uma configuração de ambiente da IDE na tabela ide_settings.
+    
+    Argumentos:
+        key (str): O nome da configuração.
+        value (any): O valor a ser armazenado.
+    """
     conn = get_db()
     cursor = conn.cursor()
     try:
@@ -114,7 +198,16 @@ def set_ide_config(key, value):
     finally:
         conn.close()
 
-def add_user_memory(instruction):
+def add_user_memory(instruction: str) -> int:
+    """
+    Adiciona uma nova instrução à memória do usuário (user_memory).
+    
+    Argumentos:
+        instruction (str): O texto da instrução.
+        
+    Retorna:
+        int: O ID da memória recém-inserida.
+    """
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('INSERT INTO user_memory (instruction) VALUES (?)', (instruction,))
@@ -123,7 +216,13 @@ def add_user_memory(instruction):
     conn.close()
     return inserted_id
 
-def get_all_user_memories():
+def get_all_user_memories() -> list:
+    """
+    Recupera todas as memórias gravadas pelo usuário.
+    
+    Retorna:
+        list: Lista de dicionários contendo os IDs e instruções.
+    """
     conn = get_db()
     cursor = conn.cursor()
     try:
@@ -135,7 +234,16 @@ def get_all_user_memories():
     finally:
         conn.close()
 
-def delete_user_memory(memory_id):
+def delete_user_memory(memory_id: int) -> bool:
+    """
+    Remove uma memória de usuário específica pelo seu ID.
+    
+    Argumentos:
+        memory_id (int): O ID da memória a ser removida.
+        
+    Retorna:
+        bool: True se a exclusão foi bem-sucedida, False caso contrário.
+    """
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM user_memory WHERE id = ?', (memory_id,))
@@ -144,7 +252,17 @@ def delete_user_memory(memory_id):
     conn.close()
     return success
 
-def update_user_memory(memory_id, instruction):
+def update_user_memory(memory_id: int, instruction: str) -> bool:
+    """
+    Atualiza o texto da instrução de uma memória existente identificada pelo ID.
+    
+    Argumentos:
+        memory_id (int): O ID da memória.
+        instruction (str): O novo texto da instrução.
+        
+    Retorna:
+        bool: True se a atualização teve sucesso, False caso contrário.
+    """
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('UPDATE user_memory SET instruction = ? WHERE id = ?', (instruction, memory_id))
@@ -154,6 +272,11 @@ def update_user_memory(memory_id, instruction):
     return success
 
 def init_db():
+    """
+    Inicializa o banco de dados SQLite, criando as tabelas necessárias caso
+    elas ainda não existam. Também realiza algumas migrações de esquema e 
+    de conteúdo (.env, chaves não criptografadas, etc).
+    """
     conn = get_db()
     cursor = conn.cursor()
 

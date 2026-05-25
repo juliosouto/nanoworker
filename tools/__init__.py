@@ -30,7 +30,10 @@ from .whatsapp import send_whatsapp_file, send_whatsapp_message
 
 def get_permitted_tools():
     """Returns a list of tools filtered by the user's permissions."""
-    tools = [send_whatsapp_message, send_whatsapp_file, schedule_task, list_scheduled_tasks, delete_scheduled_task]
+    tools = [
+        send_whatsapp_message, send_whatsapp_file, schedule_task, 
+        list_scheduled_tasks, delete_scheduled_task
+    ]
     
     if get_config('PERM_FS', 'false').lower() == 'true':
         tools.extend([read_file, write_file])
