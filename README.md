@@ -48,7 +48,23 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 
 ## ⚙️ Installation and Setup Guide
 
-Follow the steps below to run the project locally on your MacOS:
+### Running with Docker (Recommended)
+
+The easiest way to run NanoWorker is using Docker. Ensure you have Docker and Docker Compose installed on your system.
+
+```bash
+git clone https://github.com/juliosouto/nanoworker.git
+cd nanoworker
+docker compose up -d
+```
+
+Once the container is built and running, access the Web IDE interface at `http://localhost:5001`.
+
+---
+
+### Manual Installation
+
+If you prefer to run the project manually on your MacOS without Docker, follow the steps below:
 
 ### 1. Install FFmpeg and Node.js (via Homebrew)
 If you don't have Homebrew installed, install it first. Then, install Node.js and FFmpeg via the terminal:
