@@ -35,6 +35,10 @@ if (Get-Command winget -ErrorAction SilentlyContinue) {
         Write-Host "FFmpeg is already installed."
     }
 
+    # Visual C++ Redistributable (Required for onnxruntime/DLL issues)
+    Write-Host "Installing/Updating Visual C++ Redistributable (required for AI libraries)..."
+    winget install -e --id Microsoft.VCRedist.2015+.x64 --accept-source-agreements --accept-package-agreements | Out-Null
+
 } else {
     Write-Host "Winget not found! Please install Node.js, Python 3.13, and FFmpeg manually before continuing." -ForegroundColor Red
 }
