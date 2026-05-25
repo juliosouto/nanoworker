@@ -50,15 +50,21 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 
 ### 1. Automatic Local Installation (Recommended)
 
-The easiest and most complete way to run NanoWorker, retaining full access to macOS native apps and functionalities, is using the automated setup script. This script works on both macOS and Linux (WSL).
+The easiest and most complete way to run NanoWorker, retaining full access to native apps and functionalities, is using the automated setup script. This script automatically installs system dependencies (Node, FFmpeg, Python), configures the virtual environment, and starts the application.
 
+**For macOS and Linux (WSL/Ubuntu):**
 ```bash
 git clone https://github.com/juliosouto/nanoworker.git
 cd nanoworker
 ./setup_and_run.sh
 ```
 
-This script will automatically detect your OS, install system dependencies (`node`, `ffmpeg` via Homebrew or apt), setup a Python 3.13 virtual environment, install all python and node packages, and start the application.
+**For Windows (PowerShell):**
+```powershell
+git clone https://github.com/juliosouto/nanoworker.git
+cd nanoworker
+.\setup_and_run.ps1
+```
 
 Once running, access the Web IDE interface at `http://localhost:5000` (or the port shown in your terminal).
 
