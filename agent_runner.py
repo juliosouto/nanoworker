@@ -17,10 +17,7 @@ load_dotenv(override=True)
 def call_gemini_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key=None):
     max_retries = 5
     if not api_key:
-        from database import get_config
-        api_key = get_config("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set.")
+        raise ValueError("API Key for Gemini model is not set.")
     client = genai.Client(api_key=api_key)
     
     chat = client.chats.create(
@@ -87,10 +84,7 @@ def call_gemini_llm(model_name, history, config_kwargs, content, cursor, session
 def call_qwen_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key=None):
     import openai
     if not api_key:
-        from database import get_config
-        api_key = get_config("QWEN_API_KEY")
-    if not api_key:
-        raise ValueError("QWEN_API_KEY is not set.")
+        raise ValueError("API Key for Qwen model is not set.")
     
     client = openai.OpenAI(
         api_key=api_key,
@@ -264,14 +258,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     current_gemini_uri = current_msg['gemini_file_uri'] if current_msg else None
     current_sender_id = current_msg['sender_id'] if current_msg else None
     
-    # Generate response using Gemini API
-    api_key = get_config("GEMINI_API_KEY")
+    # Ensure client is available for fallback handling
     client = None
-    if api_key:
-        try:
-            client = genai.Client(api_key=api_key)
-        except Exception:
-            pass
 
     if is_wa_group:
         content = truncate_message(content, 1000)
@@ -294,67 +282,62 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     if not models_to_try:
         models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
     
-    if not api_key:
-        mock_response = "Error: GEMINI_API_KEY is not set. Please set it in the dashboard settings."
-    else:
+    try:
+        system_prompt = get_config("SYSTEM_PROMPT", "")
+        
+        cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
+        session_row = cursor.fetchone()
+        if session_row:
+            channel_id = session_row['channel_id']
+            if channel_id.startswith('whatsapp:') or channel_id.startswith('wa_web:'):
+                system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat.\n\n{system_prompt}"
+            elif channel_id.startswith('web-chat'):
+                system_prompt = f"This message comes from the web chat (HTML). You must reply via the web chat.\n\n{system_prompt}"
+        thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
+        add_datetime_enabled = get_config("ADD_DATETIME_ENABLED", "false").lower() == "true"
+        
+        if add_datetime_enabled:
+            import datetime
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            system_prompt = f"Current Datetime: {current_time}\n\n{system_prompt}"
+            
+        from database import get_ide_config
+        project_path = get_ide_config('CURRENT_PROJECT_PATH')
+        if project_path:
+            system_prompt = f"IMPORTANT: You are currently operating in the workspace directory: {project_path}\nYou MUST use this absolute path as the base directory for all file operations (reading, writing, searching) unless the user specifies otherwise.\n\n{system_prompt}"
+        
+        # Fetch and inject user memory instructions
         try:
-            client = genai.Client(api_key=api_key)
-            
-            system_prompt = get_config("SYSTEM_PROMPT", "")
-            
-            cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
-            session_row = cursor.fetchone()
-            if session_row:
-                channel_id = session_row['channel_id']
-                if channel_id.startswith('whatsapp:') or channel_id.startswith('wa_web:'):
-                    system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat.\n\n{system_prompt}"
-                elif channel_id.startswith('web-chat'):
-                    system_prompt = f"This message comes from the web chat (HTML). You must reply via the web chat.\n\n{system_prompt}"
-            thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
-            add_datetime_enabled = get_config("ADD_DATETIME_ENABLED", "false").lower() == "true"
-            
-            if add_datetime_enabled:
-                import datetime
-                current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                system_prompt = f"Current Datetime: {current_time}\n\n{system_prompt}"
-                
-            from database import get_ide_config
-            project_path = get_ide_config('CURRENT_PROJECT_PATH')
-            if project_path:
-                system_prompt = f"IMPORTANT: You are currently operating in the workspace directory: {project_path}\nYou MUST use this absolute path as the base directory for all file operations (reading, writing, searching) unless the user specifies otherwise.\n\n{system_prompt}"
-            
-            # Fetch and inject user memory instructions
-            try:
-                cursor.execute('SELECT instruction FROM user_memory')
-                memories = [r['instruction'] for r in cursor.fetchall()]
-                if memories:
-                    memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
-                    if system_prompt:
-                        system_prompt = f"{memory_block}\n\n{system_prompt}"
-                    else:
-                        system_prompt = memory_block
-            except Exception as e:
-                import logging
-                logging.error(f"Error fetching user memory: {e}")
-
-            config_kwargs = {
-                "tools": AVAILABLE_TOOLS,
-                "temperature": 0.0,
-            }
-            
-            system_prompt = standard_prompts.apply_standard_rules(system_prompt)
-            
-            if system_prompt:
-                config_kwargs["system_instruction"] = system_prompt
-            
-            if thinking_enabled:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
-            
-            mock_response = invoke_llm_with_fallback(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False)
-            
-                
+            cursor.execute('SELECT instruction FROM user_memory')
+            memories = [r['instruction'] for r in cursor.fetchall()]
+            if memories:
+                memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
+                if system_prompt:
+                    system_prompt = f"{memory_block}\n\n{system_prompt}"
+                else:
+                    system_prompt = memory_block
         except Exception as e:
-            mock_response = f"Error calling Gemini API: {str(e)}"
+            import logging
+            logging.error(f"Error fetching user memory: {e}")
+
+        config_kwargs = {
+            "tools": AVAILABLE_TOOLS,
+            "temperature": 0.0,
+        }
+        
+        system_prompt = standard_prompts.apply_standard_rules(system_prompt)
+        
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
+        
+        if thinking_enabled:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
+        
+        mock_response = invoke_llm_with_fallback(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False)
+        
+            
+    except Exception as e:
+        mock_response = f"Error calling LLM API: {str(e)}"
     
     # Write to messages_out
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
@@ -414,59 +397,52 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             types.Content(role=role, parts=[types.Part.from_text(text=msg_content)])
         )
 
-    api_key = get_config("GEMINI_API_KEY")
-
     preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
     models_to_try = [m for m in preferences if m and m.strip()]
     if not models_to_try:
         models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
 
-    if not api_key:
-        mock_response = "Error: GEMINI_API_KEY is not set. Please set it in the dashboard settings."
-    else:
+    try:
+        system_prompt = get_config("IDE_PROMPT", "")
+        
+        from database import get_ide_config
+        project_path = get_ide_config('CURRENT_PROJECT_PATH')
+        if project_path:
+            system_prompt = f"IMPORTANT: You are currently operating in the workspace directory: {project_path}\nYou MUST use this absolute path as the base directory for all file operations (reading, writing, searching) unless the user specifies otherwise.\n\n{system_prompt}"
+
+        thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
+
+        # Fetch and inject user memory instructions
         try:
-            client = genai.Client(api_key=api_key)
-
-            system_prompt = get_config("IDE_PROMPT", "")
-            
-            from database import get_ide_config
-            project_path = get_ide_config('CURRENT_PROJECT_PATH')
-            if project_path:
-                system_prompt = f"IMPORTANT: You are currently operating in the workspace directory: {project_path}\nYou MUST use this absolute path as the base directory for all file operations (reading, writing, searching) unless the user specifies otherwise.\n\n{system_prompt}"
-
-            thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
-
-            # Fetch and inject user memory instructions
-            try:
-                cursor.execute('SELECT instruction FROM user_memory')
-                memories = [r['instruction'] for r in cursor.fetchall()]
-                if memories:
-                    memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
-                    if system_prompt:
-                        system_prompt = f"{memory_block}\n\n{system_prompt}"
-                    else:
-                        system_prompt = memory_block
-            except Exception as e:
-                import logging
-                logging.error(f"Error fetching user memory: {e}")
-
-            config_kwargs = {
-                "tools": AVAILABLE_TOOLS,
-                "temperature": 0.0,
-            }
-
-            system_prompt = standard_prompts.apply_standard_rules(system_prompt)
-
-            if system_prompt:
-                config_kwargs["system_instruction"] = system_prompt
-
-            if thinking_enabled:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
-
-            mock_response = invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
-
+            cursor.execute('SELECT instruction FROM user_memory')
+            memories = [r['instruction'] for r in cursor.fetchall()]
+            if memories:
+                memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
+                if system_prompt:
+                    system_prompt = f"{memory_block}\n\n{system_prompt}"
+                else:
+                    system_prompt = memory_block
         except Exception as e:
-            mock_response = f"Error calling Gemini API: {str(e)}"
+            import logging
+            logging.error(f"Error fetching user memory: {e}")
+
+        config_kwargs = {
+            "tools": AVAILABLE_TOOLS,
+            "temperature": 0.0,
+        }
+
+        system_prompt = standard_prompts.apply_standard_rules(system_prompt)
+
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
+
+        if thinking_enabled:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
+
+        mock_response = invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
+
+    except Exception as e:
+        mock_response = f"Error calling LLM API: {str(e)}"
 
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
     cursor.execute('''
