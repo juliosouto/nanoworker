@@ -134,6 +134,15 @@
                         numbers the bot is allowed to proactively send messages to.</small>
                 </div>
 
+                <div style="margin-bottom: 16px;">
+                    <label for="rate-limit"
+                        style="display: block; font-weight: 500; font-size: 0.95rem; margin-bottom: 4px;">Rate Limit (Messages / Minute)</label>
+                    <input type="number" id="rate-limit" min="0" value="{{ rate_limit }}"
+                        placeholder="Ex: 10 (Leave 0 to disable)"
+                        style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); color: white; font-family: inherit;">
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">Maximum number of messages a user can send per minute. 0 to disable.</small>
+                </div>
+
                 <button type="submit" class="btn primary"
                     style="padding: 10px 20px; font-size: 0.95rem; border-radius: 8px; border: none; background: var(--accent-color); color: white; cursor: pointer;">
                     Save Configuration
@@ -294,7 +303,8 @@
             bot_enabled: document.getElementById('bot-enabled').checked,
             allow_mentions: document.getElementById('allow-mentions').checked,
             allowed_from: document.getElementById('allowed-from').value,
-            allowed_to: document.getElementById('allowed-to').value
+            allowed_to: document.getElementById('allowed-to').value,
+            rate_limit_per_minute: document.getElementById('rate-limit').value
         };
 
         const btn = this.querySelector('button[type="submit"]');
