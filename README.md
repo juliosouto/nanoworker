@@ -48,9 +48,33 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 
 ## ⚙️ Installation and Setup Guide
 
-### Running with Docker (Recommended)
+### 1. Automatic Local Installation (Recommended)
 
-The easiest way to run NanoWorker is using Docker. Ensure you have Docker and Docker Compose installed on your system.
+The easiest and most complete way to run NanoWorker, retaining full access to native apps and functionalities, is using the automated setup script. This script automatically installs system dependencies (Node, FFmpeg, Python), configures the virtual environment, and starts the application.
+
+**For macOS and Linux (WSL/Ubuntu):**
+```bash
+git clone https://github.com/juliosouto/nanoworker.git
+cd nanoworker
+./setup_and_run.sh
+```
+
+**For Windows (PowerShell):**
+```powershell
+git clone https://github.com/juliosouto/nanoworker.git
+cd nanoworker
+.\setup_and_run.ps1
+```
+
+Once running, access the Web IDE interface at `http://localhost:5000` (or the port shown in your terminal).
+
+---
+
+### 2. Running with Docker
+
+You can also run NanoWorker using Docker. Ensure you have Docker and Docker Compose installed on your system.
+
+> ⚠️ **Warning for macOS users:** When running via Docker, the agent runs in an isolated Linux container and **loses access to native macOS apps and functionalities** (like Mail, Contacts, Calendar, AppleScript, etc.). If you want the agent to interact with your Mac, use the "Automatic Local Installation" above instead.
 
 ```bash
 git clone https://github.com/juliosouto/nanoworker.git
@@ -62,9 +86,9 @@ Once the container is built and running, access the Web IDE interface at `http:/
 
 ---
 
-### Manual Installation
+### 3. Manual Installation
 
-If you prefer to run the project manually on your MacOS without Docker, follow the steps below:
+If you prefer to run the project manually without the automated script, follow the steps below:
 
 ### 1. Install FFmpeg and Node.js (via Homebrew)
 If you don't have Homebrew installed, install it first. Then, install Node.js and FFmpeg via the terminal:
