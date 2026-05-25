@@ -12,8 +12,24 @@ from database import get_db
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('sweeper')
 
-def make_baileys_callback(jid):
-    def callback(out_text):
+def make_baileys_callback(jid: str):
+    """
+    Cria uma função de callback específica para enviar mensagens via Baileys 
+    (WhatsApp Web JS) para um determinado JID.
+    
+    Argumentos:
+        jid (str): O ID do WhatsApp do destinatário.
+        
+    Retorna:
+        function: A função de callback a ser executada ao concluir uma tarefa.
+    """
+    def callback(out_text: str):
+        """
+        Gera áudio (se aplicável) e envia a resposta de texto ou áudio via API interna.
+        
+        Argumentos:
+            out_text (str): O texto gerado pelo agente para envio.
+        """
         import requests as req
         from utils.audio_utils import extract_and_generate_audio
         try:
@@ -29,8 +45,23 @@ def make_baileys_callback(jid):
             logger.error(f"Failed to send scheduled Baileys message: {e}")
     return callback
 
-def make_cloud_callback(sender_id):
-    def callback(out_text):
+def make_cloud_callback(sender_id: str):
+    """
+    Cria uma função de callback específica para enviar mensagens via WhatsApp Cloud API.
+    
+    Argumentos:
+        sender_id (str): O identificador do remetente/destinatário na API Cloud.
+        
+    Retorna:
+        function: A função de callback a ser executada ao concluir uma tarefa.
+    """
+    def callback(out_text: str):
+        """
+        Envia a mensagem de texto resultante utilizando a Cloud API.
+        
+        Argumentos:
+            out_text (str): O texto gerado para ser enviado.
+        """
         from channels.whatsapp_cloud import send_text_message
         try:
             logger.info(f"Cron job Cloud API callback triggered for {sender_id}")
@@ -40,6 +71,13 @@ def make_cloud_callback(sender_id):
     return callback
 
 def sweep():
+    """
+    Loop principal do Sweeper. Verifica a cada 10 segundos no banco de dados
+    se há trabalhos agendados (cron_jobs) que precisam ser executados.
+    
+    Quando um trabalho está na hora, ele cria uma mensagem do sistema e despacha
+    para o agente (LLM) processar num pool de threads. Atualiza as recorrências.
+    """
     logger.info("Sweeper started. Polling for scheduled tasks...")
     from concurrent.futures import ThreadPoolExecutor
     executor = ThreadPoolExecutor(max_workers=5)

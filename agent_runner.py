@@ -14,7 +14,26 @@ from utils.message_utils import truncate_message
 
 load_dotenv(override=True)
 
-def call_gemini_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key=None):
+def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
+    """
+    Realiza uma chamada para a API do Google Gemini.
+    Suporta chamadas de ferramentas (function calling) e lida com retentativas 
+    em caso de falhas transitórias (como erro 503).
+    
+    Argumentos:
+        model_name (str): O nome do modelo Gemini a ser utilizado.
+        history (list): O histórico da conversa no formato esperado pela API.
+        config_kwargs (dict): Configurações adicionais de geração.
+        content (any): O conteúdo da mensagem atual do usuário.
+        cursor (sqlite3.Cursor): O cursor do banco de dados para logs e feedbacks parciais.
+        session_id (str): ID da sessão de chat.
+        message_in_id (str): ID da mensagem de entrada sendo processada.
+        table (str): Nome da tabela para inserir feedbacks (ex: messages_out).
+        api_key (str, opcional): Chave de API do Gemini. Levanta exceção se não fornecida.
+        
+    Retorna:
+        str: O texto da resposta gerada pelo modelo.
+    """
     max_retries = 5
     if not api_key:
         raise ValueError("API Key for Gemini model is not set.")
@@ -81,7 +100,24 @@ def call_gemini_llm(model_name, history, config_kwargs, content, cursor, session
         return response_text
     return "Error: Gemini model failed."
 
-def call_qwen_llm(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, api_key=None):
+def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
+    """
+    Realiza uma chamada para a API da OpenAI compatível com modelos Qwen (DashScope).
+    
+    Argumentos:
+        model_name (str): O nome do modelo Qwen.
+        history (list): O histórico da conversa.
+        config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
+        content (any): O conteúdo da mensagem do usuário atual.
+        cursor (sqlite3.Cursor): O cursor do banco de dados (não utilizado ativamente nesta função, mantido para assinatura padrão).
+        session_id (str): ID da sessão.
+        message_in_id (str): ID da mensagem de entrada.
+        table (str): Nome da tabela de saída.
+        api_key (str, opcional): Chave de API do Qwen. Levanta exceção se ausente.
+        
+    Retorna:
+        str: O texto da resposta gerada pelo modelo.
+    """
     import openai
     if not api_key:
         raise ValueError("API Key for Qwen model is not set.")
@@ -114,7 +150,24 @@ def call_qwen_llm(model_name, history, config_kwargs, content, cursor, session_i
     )
     return response.choices[0].message.content
 
-def route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide):
+def route_llm_call(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, is_ide: bool) -> str:
+    """
+    Roteia a chamada do LLM para o provedor apropriado (Qwen ou Gemini) 
+    com base nas configurações armazenadas no banco de dados para o modelo solicitado.
+    
+    Argumentos:
+        model_name (str): O nome do modelo selecionado.
+        history (list): Histórico da conversa.
+        config_kwargs (dict): Argumentos de configuração para o LLM.
+        content (any): Conteúdo da mensagem a ser processada.
+        cursor (sqlite3.Cursor): Cursor do banco de dados para operações de log.
+        session_id (str): Identificador da sessão.
+        message_in_id (str): Identificador da mensagem de origem.
+        is_ide (bool): Flag indicando se a requisição se originou da interface da IDE.
+        
+    Retorna:
+        str: Resposta processada pelo modelo selecionado.
+    """
     table = "ide_messages_out" if is_ide else "messages_out"
     
     from database import get_db, decrypt_value
@@ -142,7 +195,24 @@ def route_llm_call(model_name, history, config_kwargs, content, cursor, session_
     else:
         return call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
 
-def invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=False):
+def invoke_llm_with_fallback(history: list, config_kwargs: dict, content: any, models_to_try: list, cursor: any, session_id: str, message_in_id: str, is_ide: bool = False) -> str:
+    """
+    Tenta invocar iterativamente uma lista de modelos preferenciais em caso de falha.
+    Registra mensagens de feedback no banco informando a troca de modelos.
+    
+    Argumentos:
+        history (list): O histórico da conversa.
+        config_kwargs (dict): Configurações para a geração.
+        content (any): O conteúdo da mensagem atual do usuário.
+        models_to_try (list): Uma lista ordenada com os nomes dos modelos para tentar.
+        cursor (sqlite3.Cursor): O cursor do banco de dados.
+        session_id (str): ID da sessão.
+        message_in_id (str): ID da mensagem de entrada associada.
+        is_ide (bool): Se verdadeiro, envia o feedback para ide_messages_out. Padrão é False.
+        
+    Retorna:
+        str: A resposta do primeiro modelo que obteve sucesso, ou uma mensagem de erro geral se todos falharem.
+    """
     table = "ide_messages_out" if is_ide else "messages_out"
     
     cursor.execute(f'''

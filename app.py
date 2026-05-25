@@ -42,6 +42,10 @@ if run_workers:
         state.worker_process = subprocess.Popen(['node', worker_script])
         
         def cleanup_worker():
+            """
+            Função registrada via atexit para garantir o encerramento limpo do 
+            processo em segundo plano do Baileys (wa_worker.js) quando o servidor parar.
+            """
             if state.worker_process:
                 logging.info("Shutting down Baileys WhatsApp Worker...")
                 state.worker_process.terminate()
