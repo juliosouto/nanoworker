@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+node_modules
+__pycache__
+*.pyc
+nanoworker.db
+nanoworker.db-journal
+.env
+.store

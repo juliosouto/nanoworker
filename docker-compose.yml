@@ -1,0 +1,13 @@
+services:
+  nanoworker:
+    build: .
+    container_name: nanoworker
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./.env:/app/.env
+      - ./nanoworker.db:/app/nanoworker.db
+      - ./.store:/app/.store
+    environment:
+      - HOST=0.0.0.0
+    restart: unless-stopped
