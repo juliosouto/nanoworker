@@ -74,3 +74,49 @@ def truncate_message(content, max_length=1000):
     if content and len(content) > max_length:
         return content[-max_length:]
     return content
+
+def check_rate_limit(sender_id):
+    """
+    Checks if the sender has exceeded their rate limit.
+    If not, logs the usage.
+    Returns True if allowed, False if exceeded.
+    """
+    from database import get_db
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Get the limit
+    cursor.execute('SELECT rate_limit_per_minute FROM whatsapp_config WHERE id = 1')
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return True
+    
+    try:
+        limit = int(row['rate_limit_per_minute'])
+    except (TypeError, ValueError, KeyError):
+        limit = 0
+        
+    if limit <= 0:
+        conn.close()
+        return True
+        
+    # Check usage
+    # Clean up old records
+    cursor.execute("DELETE FROM rate_limit_usage WHERE timestamp < datetime('now', '-1 minute')")
+    
+    # Count requests
+    cursor.execute("SELECT COUNT(*) FROM rate_limit_usage WHERE sender_id = ?", (sender_id,))
+    count = cursor.fetchone()[0]
+    
+    if count >= limit:
+        conn.commit()
+        conn.close()
+        return False
+        
+    # Log usage
+    cursor.execute("INSERT INTO rate_limit_usage (sender_id) VALUES (?)", (sender_id,))
+    conn.commit()
+    conn.close()
+    
+    return True

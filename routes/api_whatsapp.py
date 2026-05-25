@@ -23,14 +23,18 @@ def save_whatsapp_config():
     allowed_to = data.get('allowed_to', '')
     bot_enabled = 1 if data.get('bot_enabled') else 0
     allow_mentions = 1 if data.get('allow_mentions') else 0
+    try:
+        rate_limit = int(data.get('rate_limit_per_minute', 0))
+    except ValueError:
+        rate_limit = 0
     
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE whatsapp_config 
-        SET allowed_from = ?, allowed_to = ?, bot_enabled = ?, allow_mentions = ?
+        SET allowed_from = ?, allowed_to = ?, bot_enabled = ?, allow_mentions = ?, rate_limit_per_minute = ?
         WHERE id = 1
-    ''', (allowed_from, allowed_to, bot_enabled, allow_mentions))
+    ''', (allowed_from, allowed_to, bot_enabled, allow_mentions, rate_limit))
     conn.commit()
     conn.close()
     return jsonify({"status": "success"})
@@ -100,6 +104,12 @@ def whatsapp_inbound():
         
         if not should_process_wa_message(sender_id):
             logging.info(f"Ignored Cloud API message from {sender_id} due to WhatsApp config permissions.")
+            continue
+
+        from utils.message_utils import check_rate_limit
+        if not check_rate_limit(sender_id):
+            logging.warning(f"Rate limit exceeded for {sender_id}")
+            wa_send(sender_id, "Rate limit reached. Please wait a minute.")
             continue
 
         channel_id = f"whatsapp:{sender_id}"

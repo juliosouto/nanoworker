@@ -546,6 +546,20 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN rate_limit_per_minute INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Rate Limit Usage Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS rate_limit_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id TEXT NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     # User Memory Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS user_memory (

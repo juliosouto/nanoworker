@@ -137,7 +137,7 @@ def whatsapp_settings_page():
     
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions FROM whatsapp_config WHERE id = 1')
+    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions, rate_limit_per_minute FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
     conn.close()
     
@@ -149,13 +149,19 @@ def whatsapp_settings_page():
         allow_mentions = bool(config['allow_mentions']) if config else True
     except (IndexError, KeyError):
         allow_mentions = True
+
+    try:
+        rate_limit = int(config['rate_limit_per_minute']) if config else 0
+    except (IndexError, KeyError, TypeError, ValueError):
+        rate_limit = 0
     
     return render_template('whatsapp_settings.html', 
                            has_wa_web_session=has_wa_web_session,
                            allowed_from=allowed_from,
                            allowed_to=allowed_to,
                            bot_enabled=bot_enabled,
-                           allow_mentions=allow_mentions)
+                           allow_mentions=allow_mentions,
+                           rate_limit=rate_limit)
 
 @views_bp.route('/settings/general')
 def general_config_page():
