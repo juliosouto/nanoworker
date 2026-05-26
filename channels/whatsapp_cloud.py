@@ -14,6 +14,7 @@ Required env vars:
 import logging
 import os
 import tempfile
+import time
 
 import requests
 from dotenv import load_dotenv
@@ -148,6 +149,13 @@ def parse_incoming_messages(payload):
                 sender = msg.get("from")
                 msg_id = msg.get("id")
                 timestamp = msg.get("timestamp")
+
+                if timestamp:
+                    now = time.time()
+                    if now - int(timestamp) > 600:
+                        logger.info(f"Ignored old Cloud API message from {sender} (age: {int(now - int(timestamp))}s)")
+                        continue
+
                 sender_name = contacts.get(sender, sender)
 
                 # Extract text content based on message type

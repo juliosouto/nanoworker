@@ -115,6 +115,14 @@ async function connectToWhatsApp() {
             const remoteJid = msg.key.remoteJid;
             console.log(`[DEBUG] Received message from remoteJid: ${remoteJid}, type: ${m.type}, fromMe: ${msg.key.fromMe}`);
             
+            // Ignore messages older than 10 minutes (600 seconds)
+            const now = Math.floor(Date.now() / 1000);
+            const msgTimestamp = msg.messageTimestamp;
+            if (msgTimestamp && (now - msgTimestamp > 600)) {
+                console.log(`[DEBUG] Ignored old message from ${remoteJid} (age: ${now - msgTimestamp}s)`);
+                continue;
+            }
+
             // Prevent infinite loop by ignoring messages we just sent via the bot
             if (msg.key.id && botSentMsgIds.has(msg.key.id)) {
                 continue;
