@@ -16,6 +16,7 @@ if OS_PLATFORM == "Windows":
     from .windows.web_scraper import extract_webpage_text
     from .windows.web_search import search_web
     from .windows.whatsapp import send_whatsapp_file, send_whatsapp_message
+    from .windows.tool_creator import create_self_developed_tool
 else:
     from .macos.bash import run_bash_command
     from .macos.browser import (
@@ -36,6 +37,11 @@ else:
     from .macos.web_scraper import extract_webpage_text
     from .macos.web_search import search_web
     from .macos.whatsapp import send_whatsapp_file, send_whatsapp_message
+    
+    if OS_PLATFORM == "Linux":
+        from .linux.tool_creator import create_self_developed_tool
+    else:
+        from .macos.tool_creator import create_self_developed_tool
 
 def get_permitted_tools():
     """Returns a list of tools filtered by the user's permissions."""
@@ -93,13 +99,30 @@ def get_permitted_tools():
         else:
             tools.append(take_mac_screenshot)
             
+    if get_config('PERM_TOOL_CREATOR', 'false').lower() == 'true':
+        tools.append(create_self_developed_tool)
+        
+        try:
+            import importlib
+            if OS_PLATFORM == "Windows":
+                mod = importlib.import_module('tools.self-developed.windows')
+            elif OS_PLATFORM == "Linux":
+                mod = importlib.import_module('tools.self-developed.linux')
+            else:
+                mod = importlib.import_module('tools.self-developed.macos')
+            
+            tools.extend(mod.AVAILABLE_SELF_DEVELOPED_TOOLS)
+        except Exception as e:
+            print(f"Error loading self-developed tools dynamically: {e}")
+            
     return tools
 
 # Keep AVAILABLE_TOOLS for backwards compatibility or full access if needed elsewhere
 AVAILABLE_TOOLS = [
     read_file, write_file, send_whatsapp_message, send_whatsapp_file, extract_webpage_text,
     browser_navigate, browser_snapshot, browser_click, browser_fill, browser_extract, browser_run_js,
-    schedule_task, list_scheduled_tasks, delete_scheduled_task, search_web, manage_persistent_memory
+    schedule_task, list_scheduled_tasks, delete_scheduled_task, search_web, manage_persistent_memory,
+    create_self_developed_tool
 ]
 
 if OS_PLATFORM == "Windows":
@@ -112,3 +135,16 @@ else:
         create_mac_note, append_to_mac_note, list_mac_reminders, create_mac_reminder, complete_mac_reminder, delete_mac_reminder,
         take_mac_screenshot, search_mac_mail, read_mac_mail, get_recent_mac_mail
     ])
+
+try:
+    import importlib
+    if OS_PLATFORM == "Windows":
+        mod = importlib.import_module('tools.self-developed.windows')
+    elif OS_PLATFORM == "Linux":
+        mod = importlib.import_module('tools.self-developed.linux')
+    else:
+        mod = importlib.import_module('tools.self-developed.macos')
+    
+    AVAILABLE_TOOLS.extend(mod.AVAILABLE_SELF_DEVELOPED_TOOLS)
+except Exception:
+    pass
