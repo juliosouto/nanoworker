@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from database import add_user_memory, delete_user_memory, get_all_user_memories, get_db, update_user_memory
-from tools.browser import current_session_id
+from utils.session import current_session_id
 
 def manage_persistent_memory(action: str, memory_text: Optional[str] = None, memory_id: Optional[int] = None) -> str:
     """

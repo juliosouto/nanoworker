@@ -178,7 +178,10 @@ def agent_behavior_config_page():
 
 @views_bp.route('/settings/permissions')
 def permissions_config_page():
+    import platform
+    os_type = platform.system()
     return render_template('permissions_config.html',
+        os_type=os_type,
         perm_terminal=get_config('PERM_TERMINAL', 'false').lower() == 'true',
         perm_playwright=get_config('PERM_PLAYWRIGHT', 'false').lower() == 'true',
         perm_safari=get_config('PERM_SAFARI', 'false').lower() == 'true',
