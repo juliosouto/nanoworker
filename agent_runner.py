@@ -8,7 +8,7 @@ from google.genai import types
 
 import standard_prompts
 from database import get_config, get_db
-from tools import AVAILABLE_TOOLS
+from tools import get_permitted_tools
 from utils.session import current_session_id
 from utils.message_utils import truncate_message
 
@@ -391,7 +391,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             logging.error(f"Error fetching user memory: {e}")
 
         config_kwargs = {
-            "tools": AVAILABLE_TOOLS,
+            "tools": get_permitted_tools(),
             "temperature": 0.0,
         }
         
@@ -497,7 +497,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             logging.error(f"Error fetching user memory: {e}")
 
         config_kwargs = {
-            "tools": AVAILABLE_TOOLS,
+            "tools": get_permitted_tools(),
             "temperature": 0.0,
         }
 

@@ -74,7 +74,8 @@ def save_settings():
         'perm_messages': 'PERM_MESSAGES',
         'perm_system_data': 'PERM_SYSTEM_DATA',
         'perm_screenshot': 'PERM_SCREENSHOT',
-        'perm_web_search': 'PERM_WEB_SEARCH'
+        'perm_web_search': 'PERM_WEB_SEARCH',
+        'perm_tool_creator': 'PERM_TOOL_CREATOR'
     }
     
     for json_key, db_key in bool_mapping.items():

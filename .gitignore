@@ -256,3 +256,9 @@ store/*
 *.bin
 temp/*
 encryption.key
+tools/self-developed/macos/*
+!tools/self-developed/macos/__init__.py
+tools/self-developed/linux/*
+!tools/self-developed/linux/__init__.py
+tools/self-developed/windows/*
+!tools/self-developed/windows/__init__.py

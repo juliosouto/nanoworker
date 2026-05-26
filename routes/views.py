@@ -196,7 +196,8 @@ def permissions_config_page():
         perm_messages=get_config('PERM_MESSAGES', 'false').lower() == 'true',
         perm_system_data=get_config('PERM_SYSTEM_DATA', 'false').lower() == 'true',
         perm_screenshot=get_config('PERM_SCREENSHOT', 'false').lower() == 'true',
-        perm_web_search=get_config('PERM_WEB_SEARCH', 'false').lower() == 'true'
+        perm_web_search=get_config('PERM_WEB_SEARCH', 'false').lower() == 'true',
+        perm_tool_creator=get_config('PERM_TOOL_CREATOR', 'false').lower() == 'true'
     )
 
 @views_bp.route('/settings/llm')
