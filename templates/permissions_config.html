@@ -68,33 +68,6 @@
             </div>
         </div>
 
-        <!-- Safari Access Card -->
-        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
-            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Safari Access</h3>
-            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
-                Allow the agent to control your local Safari browser.
-            </small>
-            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
-                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
-                        <label
-                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
-                            Safari</label>
-                    </div>
-                    <label
-                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
-                        <input type="checkbox" id="safariToggle" {% if perm_safari %}checked{% endif %}
-                            style="opacity: 0; width: 0; height: 0;">
-                        <span
-                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
-                        <span
-                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
-                            id="safariToggleKnob"></span>
-                    </label>
-                </div>
-            </div>
-        </div>
-
         <!-- File System Access Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
             <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">File System Access</h3>
@@ -117,6 +90,34 @@
                         <span
                             style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
                             id="fsToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        {% if os_type == 'Darwin' %}
+        <!-- Safari Access Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Safari Access</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Allow the agent to control your local Safari browser.
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
+                            Safari</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="safariToggle" {% if perm_safari %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="safariToggleKnob"></span>
                     </label>
                 </div>
             </div>
@@ -393,6 +394,8 @@
             </div>
         </div>
 
+        {% endif %}
+
         <!-- Web Search Access Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
             <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Web Search Access</h3>
@@ -478,13 +481,21 @@
     }
 
     function requestOsPermission(permType) {
-        fetch('/api/permissions/request', {
+        const osType = '{{ os_type }}';
+        let endpoint = 'linux';
+        if (osType === 'Darwin') {
+            endpoint = 'macos';
+        } else if (osType === 'Windows') {
+            endpoint = 'windows';
+        }
+        
+        fetch(`/api/permissions/request/${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ permission: permType })
         }).then(res => res.json()).then(data => {
             if (data.status === 'success') {
-                console.log(`OS prompt triggered for ${permType}`);
+                console.log(`OS prompt triggered for ${permType} on ${endpoint}`);
             } else {
                 console.error(`Error requesting OS permission: ${data.error}`);
             }

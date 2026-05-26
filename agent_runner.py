@@ -9,7 +9,7 @@ from google.genai import types
 import standard_prompts
 from database import get_config, get_db
 from tools import AVAILABLE_TOOLS
-from tools.browser import current_session_id
+from utils.session import current_session_id
 from utils.message_utils import truncate_message
 
 load_dotenv(override=True)
