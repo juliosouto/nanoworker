@@ -27,12 +27,13 @@ from .scheduling import delete_scheduled_task, list_scheduled_tasks, schedule_ta
 from .web_scraper import extract_webpage_text
 from .web_search import search_web
 from .whatsapp import send_whatsapp_file, send_whatsapp_message
+from .memory import manage_persistent_memory
 
 def get_permitted_tools():
     """Returns a list of tools filtered by the user's permissions."""
     tools = [
         send_whatsapp_message, send_whatsapp_file, schedule_task, 
-        list_scheduled_tasks, delete_scheduled_task
+        list_scheduled_tasks, delete_scheduled_task, manage_persistent_memory
     ]
     
     if get_config('PERM_FS', 'false').lower() == 'true':
@@ -87,5 +88,5 @@ AVAILABLE_TOOLS = [
     create_mac_contact, get_recent_photos, list_albums, export_photos, delete_photos,
     list_icloud_files, read_icloud_file, write_icloud_file, list_mac_notes, read_mac_note,
     create_mac_note, append_to_mac_note, list_mac_reminders, create_mac_reminder, complete_mac_reminder, delete_mac_reminder,
-    take_mac_screenshot, search_mac_mail, read_mac_mail, get_recent_mac_mail, search_web
+    take_mac_screenshot, search_mac_mail, read_mac_mail, get_recent_mac_mail, search_web, manage_persistent_memory
 ]
