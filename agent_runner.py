@@ -378,10 +378,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         
         # Fetch and inject user memory instructions
         try:
-            cursor.execute('SELECT instruction FROM user_memory')
-            memories = [r['instruction'] for r in cursor.fetchall()]
+            cursor.execute('SELECT id, instruction FROM user_memory')
+            memories = cursor.fetchall()
             if memories:
-                memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
+                memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"[ID: {r['id']}] {r['instruction']}" for r in memories)
                 if system_prompt:
                     system_prompt = f"{memory_block}\n\n{system_prompt}"
                 else:
@@ -484,10 +484,10 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
 
         # Fetch and inject user memory instructions
         try:
-            cursor.execute('SELECT instruction FROM user_memory')
-            memories = [r['instruction'] for r in cursor.fetchall()]
+            cursor.execute('SELECT id, instruction FROM user_memory')
+            memories = cursor.fetchall()
             if memories:
-                memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"{i}. {m}" for i, m in enumerate(memories, 1))
+                memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"[ID: {r['id']}] {r['instruction']}" for r in memories)
                 if system_prompt:
                     system_prompt = f"{memory_block}\n\n{system_prompt}"
                 else:
