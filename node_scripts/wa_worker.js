@@ -291,23 +291,25 @@ app.post('/send_file', async (req, res) => {
 
     try {
         console.log(`[Baileys Outbound File] to ${targetJid}: ${file_path}`);
+        
+        const fileBuffer = await fs.promises.readFile(file_path);
         let messagePayload = {};
         
         if (mimetype && mimetype.startsWith('image/')) {
             messagePayload = {
-                image: { url: file_path },
+                image: fileBuffer,
                 mimetype: mimetype,
                 fileName: file_name || 'image'
             };
         } else if (mimetype && mimetype.startsWith('video/')) {
             messagePayload = {
-                video: { url: file_path },
+                video: fileBuffer,
                 mimetype: mimetype,
                 fileName: file_name || 'video'
             };
         } else {
             messagePayload = {
-                document: { url: file_path },
+                document: fileBuffer,
                 mimetype: mimetype || 'application/octet-stream',
                 fileName: file_name || 'file'
             };
