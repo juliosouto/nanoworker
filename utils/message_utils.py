@@ -31,8 +31,8 @@ def should_process_wa_message(sender_id, content="", is_group=False):
             return True
         
         # Check audio mention
-        if allow_audio_mentions and '\n[Transcrição]: ' in content:
-            transcription = content.split('\n[Transcrição]: ', 1)[1].strip()
+        if allow_audio_mentions and '\n[Transcription]: ' in content:
+            transcription = content.split('\n[Transcription]: ', 1)[1].strip()
             if transcription.lower().startswith(f"{agent_name.lower()}") or transcription.lower().startswith(f"@{agent_name.lower()}"):
                 return True
 
@@ -83,8 +83,8 @@ def clean_mention(content, agent_name):
         if cleaned_content.lower().startswith(mention_prefix):
             cleaned_content = cleaned_content[len(mention_prefix):].strip()
             
-        if '\n[Transcrição]: ' in cleaned_content:
-            parts = cleaned_content.split('\n[Transcrição]: ', 1)
+        if '\n[Transcription]: ' in cleaned_content:
+            parts = cleaned_content.split('\n[Transcription]: ', 1)
             original_text = parts[0]
             transcription = parts[1].strip()
             
@@ -94,7 +94,7 @@ def clean_mention(content, agent_name):
             elif transcription.lower().startswith(agent_name_lower):
                 transcription = transcription[len(agent_name_lower):].strip()
                 
-            cleaned_content = f"{original_text}\n[Transcrição]: {transcription}"
+            cleaned_content = f"{original_text}\n[Transcription]: {transcription}"
             
     return cleaned_content
 

@@ -178,7 +178,7 @@ async function connectToWhatsApp() {
             } else if (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text) {
                 text = msgContent.extendedTextMessage.text;
             } else if (msgContent.audioMessage) {
-                text = '[Áudio recebido, aguardando transcrição...]';
+                text = '[Audio received, waiting for transcription...]';
                 mimeType = msgContent.audioMessage.mimetype || 'audio/ogg';
                 try {
                     const buffer = await downloadMediaMessage(
@@ -194,10 +194,10 @@ async function connectToWhatsApp() {
                     console.log(`[Baileys Inbound] Audio downloaded, size: ${buffer.length} bytes`);
                 } catch (err) {
                     console.error('Failed to download audio:', err.message);
-                    text = '[Erro ao baixar áudio recebido]';
+                    text = '[Error downloading received audio]';
                 }
             } else if (msgContent.imageMessage) {
-                text = msgContent.imageMessage.caption || '[Imagem recebida]';
+                text = msgContent.imageMessage.caption || '[Image received]';
                 mimeType = msgContent.imageMessage.mimetype || 'image/jpeg';
                 try {
                     const buffer = await downloadMediaMessage(
@@ -213,7 +213,7 @@ async function connectToWhatsApp() {
                     console.log(`[Baileys Inbound] Image downloaded, size: ${buffer.length} bytes`);
                 } catch (err) {
                     console.error('Failed to download image:', err.message);
-                    text = '[Erro ao baixar imagem recebida]';
+                    text = '[Error downloading received image]';
                 }
             }
 

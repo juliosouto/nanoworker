@@ -20,10 +20,10 @@ def webhook():
         from utils.audio_utils import process_base64_audio_to_text
         try:
             transcription = process_base64_audio_to_text(data['audio_base64'], data.get('mimetype', ''))
-            content = f"{content}\n[Transcrição]: {transcription}"
+            content = f"{content}\n[Transcription]: {transcription}"
         except Exception as e:
             logging.error(f"Failed to process webhook audio: {e}")
-            content = f"{content}\n[Erro interno ao processar áudio]"
+            content = f"{content}\n[Internal error processing audio]"
     on_complete = None
     if data['channel_id'].startswith('wa_web:'):
         def on_complete(out_text):
@@ -45,7 +45,7 @@ def webhook():
                     resp = req.post('http://127.0.0.1:3000/send_audio', json={"file_path": audio_path, "jid": target_jid}, timeout=5)
                     logging.info(f"Audio send response: {resp.status_code} {resp.text}")
                 elif '<audio>' in out_text and not audio_path:
-                    resp = req.post('http://127.0.0.1:3000/send', json={"text": "[Erro ao gerar áudio]", "jid": target_jid}, timeout=5)
+                    resp = req.post('http://127.0.0.1:3000/send', json={"text": "[Error generating audio]", "jid": target_jid}, timeout=5)
                     logging.info(f"Audio error send response: {resp.status_code} {resp.text}")
 
             except Exception as e:

@@ -166,10 +166,10 @@ def transcribe_audio(file_path):
     try:
         segments, info = model.transcribe(file_path, beam_size=5)
         text = " ".join([segment.text for segment in segments]).strip()
-        return f"{text}" if text else "[Áudio recebido, mas nenhum texto detectado]"
+        return f"{text}" if text else "[Audio received, but no text detected]"
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
-        return f"[Erro na transcrição de áudio: {e}]"
+        return f"[Audio transcription error: {e}]"
 
 def process_base64_audio_to_text(audio_base64: str, mimetype: str = '') -> str:
     """Decodes a base64 audio string, saves it to a temp file, and returns the transcription."""
