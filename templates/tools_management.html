@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Tools Management{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center;">
+            <a href="/settings"
+                style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+                &larr;
+            </a>
+            <h2 style="font-weight: 600; margin: 0;">Tools Management</h2>
+        </div>
+        <div style="position: relative;">
+            <input type="text" id="toolSearchInput" placeholder="Search tools..."
+                style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); padding: 8px 12px 8px 32px; border-radius: 6px; outline: none; width: 250px; font-size: 0.9rem;">
+            <span
+                style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); display: flex;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+            </span>
+        </div>
+    </div>
+
+    <p style="color: var(--text-muted); margin-bottom: 24px;">
+        Enable or disable agent access to specific tools. The tools enabled here will be sent directly to the LLM.
+    </p>
+
+    {% for section_name, section_tools in sections.items() %}
+    <div class="tool-section">
+        {% if section_name == 'Self-Developed' %}
+        <div class="agent-apps-header"
+            style="margin-top: 48px; margin-bottom: 16px; border-top: 2px dashed rgba(255,255,255,0.2); padding-top: 32px; text-align: center;">
+            <span
+                style="background: rgba(255,255,255,0.05); padding: 6px 16px; border-radius: 20px; color: var(--text-muted); font-size: 0.85rem; letter-spacing: 1px; text-transform: uppercase;">Agent-Created
+                Apps</span>
+        </div>
+        {% endif %}
+        <h3 class="section-title"
+            style="margin-top: 32px; margin-bottom: 16px; font-size: 1.5rem; font-weight: 600; color: var(--text-main); border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
+            {{ section_name }}</h3>
+        <div class="section-grid"
+            style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px;">
+            {% for tool in section_tools %}
+            <div class="glass-panel tool-card" style="display: flex; flex-direction: column; padding: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                    <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px; word-break: break-word;">{{
+                        tool.name|replace('_', ' ')|title }}</h3>
+                    <span
+                        style="font-size: 0.75rem; background: rgba(255, 255, 255, 0.1); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); white-space: nowrap;">
+                        ~{{ tool.tokens }} tokens
+                    </span>
+                </div>
+                <small
+                    style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 42px;">
+                    {{ tool.description }}
+                </small>
+                <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                    <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <label
+                                style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable</label>
+                        </div>
+                        <label
+                            style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                            <input type="checkbox" id="toggle_{{ tool.name }}" {% if tool.enabled %}checked{% endif %}
+                                style="opacity: 0; width: 0; height: 0;">
+                            <span
+                                style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                            <span
+                                style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                                id="knob_{{ tool.name }}"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function setupToolToggle(toolName) {
+        const toggle = document.getElementById(`toggle_${toolName}`);
+        const knob = document.getElementById(`knob_${toolName}`);
+
+        function updateVisual() {
+            if (toggle && knob) {
+                if (toggle.checked) {
+                    knob.style.transform = 'translateX(32px)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(59, 130, 246, 0.6)'; // blue
+                } else {
+                    knob.style.transform = 'translateX(0)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                }
+            }
+        }
+
+        if (toggle) {
+            updateVisual();
+            toggle.addEventListener('change', (e) => {
+                updateVisual();
+                saveToolState(toolName, e.target.checked);
+            });
+        }
+    }
+
+    function saveToolState(toolName, isEnabled) {
+        fetch('/api/settings/tools', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tool_name: toolName,
+                enabled: isEnabled
+            })
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast(`Tool ${toolName} ${isEnabled ? 'enabled' : 'disabled'}`);
+            } else {
+                showToast(`Error saving ${toolName}`);
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast(`Error saving ${toolName}`);
+        });
+    }
+
+    // Initialize all toggles
+    {% for section_name, section_tools in sections.items() %}
+    {% for tool in section_tools %}
+    setupToolToggle('{{ tool.name }}');
+    {% endfor %}
+    {% endfor %}
+
+    // Search functionality
+    const searchInput = document.getElementById('toolSearchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', function (e) {
+            const searchTerm = e.target.value.toLowerCase();
+
+            document.querySelectorAll('.tool-section').forEach(section => {
+                let hasVisibleTools = false;
+
+                const sectionTitleEl = section.querySelector('.section-title');
+                const sectionTitle = sectionTitleEl ? sectionTitleEl.textContent.toLowerCase() : '';
+                const matchSection = sectionTitle.includes(searchTerm);
+
+                section.querySelectorAll('.tool-card').forEach(card => {
+                    const title = card.querySelector('h3').textContent.toLowerCase();
+                    const desc = card.querySelector('small').textContent.toLowerCase();
+
+                    if (matchSection || title.includes(searchTerm) || desc.includes(searchTerm)) {
+                        card.style.display = 'flex';
+                        hasVisibleTools = true;
+                    } else {
+                        card.style.display = 'none';
+                    }
+                });
+
+                if (hasVisibleTools) {
+                    section.style.display = 'block';
+                } else {
+                    section.style.display = 'none';
+                }
+            });
+        });
+    }
+</script>
+{% endblock %}

@@ -44,76 +44,14 @@ else:
         from .macos.tool_creator import create_self_developed_tool
 
 def get_permitted_tools():
-    """Returns a list of tools filtered by the user's permissions."""
-    tools = [
-        send_whatsapp_message, send_whatsapp_file, schedule_task, 
-        list_scheduled_tasks, delete_scheduled_task, manage_persistent_memory
-    ]
+    """Returns a list of tools filtered by the user's specific tool settings."""
+    tools = []
     
-    if get_config('PERM_FS', 'false').lower() == 'true':
-        tools.extend([read_file, write_file])
-        
-    if get_config('PERM_TERMINAL', 'false').lower() == 'true':
-        if OS_PLATFORM == "Windows":
-            tools.append(run_windows_command)
-        else:
-            tools.append(run_bash_command)
-
-    if get_config('PERM_WEB_SEARCH', 'false').lower() == 'true':
-        tools.append(search_web)
-        
-    if get_config('PERM_PLAYWRIGHT', 'false').lower() == 'true':
-        tools.extend([
-            browser_navigate, browser_snapshot, browser_click,
-            browser_fill, browser_extract, browser_run_js
-        ])
-        
-    if get_config('PERM_SAFARI', 'false').lower() == 'true':
-        pass # Placeholder for Safari specific tools
-        
-    if OS_PLATFORM != "Windows":
-        if get_config('PERM_CALENDAR', 'false').lower() == 'true':
-            tools.extend([get_mac_calendar_events, create_mac_calendar_event])
-            
-        if get_config('PERM_CONTACTS', 'false').lower() == 'true':
-            tools.extend([get_mac_contacts, search_mac_contacts, create_mac_contact])
-            
-        if get_config('PERM_PHOTOS', 'false').lower() == 'true':
-            tools.extend([get_recent_photos, list_albums, export_photos, delete_photos])
-            
-        if get_config('PERM_ICLOUD', 'false').lower() == 'true':
-            tools.extend([list_icloud_files, read_icloud_file, write_icloud_file])
-            
-        if get_config('PERM_NOTES', 'false').lower() == 'true':
-            tools.extend([list_mac_notes, read_mac_note, create_mac_note, append_to_mac_note])
-            
-        if get_config('PERM_REMINDERS', 'false').lower() == 'true':
-            tools.extend([list_mac_reminders, create_mac_reminder, complete_mac_reminder, delete_mac_reminder])
-            
-        if get_config('PERM_MAIL', 'false').lower() == 'true':
-            tools.extend([search_mac_mail, read_mac_mail, get_recent_mac_mail])
-
-    if get_config('PERM_SCREENSHOT', 'false').lower() == 'true':
-        if OS_PLATFORM == "Windows":
-            tools.append(take_windows_screenshot)
-        else:
-            tools.append(take_mac_screenshot)
-            
-    if get_config('PERM_TOOL_CREATOR', 'false').lower() == 'true':
-        tools.append(create_self_developed_tool)
-        
-        try:
-            import importlib
-            if OS_PLATFORM == "Windows":
-                mod = importlib.import_module('tools.self-developed.windows')
-            elif OS_PLATFORM == "Linux":
-                mod = importlib.import_module('tools.self-developed.linux')
-            else:
-                mod = importlib.import_module('tools.self-developed.macos')
-            
-            tools.extend(mod.AVAILABLE_SELF_DEVELOPED_TOOLS)
-        except Exception as e:
-            print(f"Error loading self-developed tools dynamically: {e}")
+    for tool_func in AVAILABLE_TOOLS:
+        tool_name = tool_func.__name__
+        # Se for verdadeiro (default = 'true'), a ferramenta é disponibilizada
+        if get_config(f'TOOL_{tool_name.upper()}', 'true').lower() == 'true':
+            tools.append(tool_func)
             
     return tools
 
