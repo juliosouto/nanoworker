@@ -114,6 +114,17 @@ async function connectToWhatsApp() {
         for (const msg of m.messages) {
             if (!msg.message) continue;
 
+            let msgContent = msg.message;
+            if (msgContent?.ephemeralMessage?.message) {
+                msgContent = msgContent.ephemeralMessage.message;
+            } else if (msgContent?.viewOnceMessage?.message) {
+                msgContent = msgContent.viewOnceMessage.message;
+            } else if (msgContent?.documentWithCaptionMessage?.message) {
+                msgContent = msgContent.documentWithCaptionMessage.message;
+            } else if (msgContent?.viewOnceMessageV2?.message) {
+                msgContent = msgContent.viewOnceMessageV2.message;
+            }
+
             const remoteJid = msg.key.remoteJid;
             console.log(`[DEBUG] Received message from remoteJid: ${remoteJid}, type: ${m.type}, fromMe: ${msg.key.fromMe}`);
             
@@ -132,23 +143,23 @@ async function connectToWhatsApp() {
 
             // Extract text early to check for @agent_name mentions
             let earlyText = '';
-            if (msg.message.conversation) {
-                earlyText = msg.message.conversation;
-            } else if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) {
-                earlyText = msg.message.extendedTextMessage.text;
-            } else if (msg.message.imageMessage && msg.message.imageMessage.caption) {
-                earlyText = msg.message.imageMessage.caption;
+            if (msgContent.conversation) {
+                earlyText = msgContent.conversation;
+            } else if (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text) {
+                earlyText = msgContent.extendedTextMessage.text;
+            } else if (msgContent.imageMessage && msgContent.imageMessage.caption) {
+                earlyText = msgContent.imageMessage.caption;
             }
 
             const agentConfig = await getAgentName();
             const isMention = agentConfig.allowMentions && agentConfig.name && earlyText.toLowerCase().startsWith(`@${agentConfig.name}`);
-            const isAudio = msg.message.audioMessage !== undefined || msg.message.audioMessage !== null;
+            const isAudio = msgContent.audioMessage !== undefined || msgContent.audioMessage !== null;
             const allowAudioMentions = agentConfig.allowAudioMentions;
 
             // Only process messages sent in the chat with oneself, OR if it's a mention, OR if it's an audio we should forward
             const isDirectMessage = (remoteJid === ownJid || remoteJid === ownLid);
             if (!isDirectMessage && !isMention) {
-                if (!(msg.message.audioMessage && allowAudioMentions)) {
+                if (!(msgContent.audioMessage && allowAudioMentions)) {
                     continue;
                 }
             }
@@ -162,13 +173,13 @@ async function connectToWhatsApp() {
             let imageBase64 = null;
             let mimeType = null;
 
-            if (msg.message.conversation) {
-                text = msg.message.conversation;
-            } else if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) {
-                text = msg.message.extendedTextMessage.text;
-            } else if (msg.message.audioMessage) {
+            if (msgContent.conversation) {
+                text = msgContent.conversation;
+            } else if (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text) {
+                text = msgContent.extendedTextMessage.text;
+            } else if (msgContent.audioMessage) {
                 text = '[Áudio recebido, aguardando transcrição...]';
-                mimeType = msg.message.audioMessage.mimetype || 'audio/ogg';
+                mimeType = msgContent.audioMessage.mimetype || 'audio/ogg';
                 try {
                     const buffer = await downloadMediaMessage(
                         msg,
@@ -185,9 +196,9 @@ async function connectToWhatsApp() {
                     console.error('Failed to download audio:', err.message);
                     text = '[Erro ao baixar áudio recebido]';
                 }
-            } else if (msg.message.imageMessage) {
-                text = msg.message.imageMessage.caption || '[Imagem recebida]';
-                mimeType = msg.message.imageMessage.mimetype || 'image/jpeg';
+            } else if (msgContent.imageMessage) {
+                text = msgContent.imageMessage.caption || '[Imagem recebida]';
+                mimeType = msgContent.imageMessage.mimetype || 'image/jpeg';
                 try {
                     const buffer = await downloadMediaMessage(
                         msg,
