@@ -111,6 +111,25 @@
                             id="mentionsToggleKnob"></span>
                     </label>
                 </div>
+                
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Allow
+                            Audio Mentions</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Transcribe group audios to check for @agent_name.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="allow-audio-mentions" {% if allow_audio_mentions %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="audioMentionsToggleKnob"></span>
+                    </label>
+                </div>
 
                 <div style="margin-bottom: 12px;">
                     <label for="allowed-from"
@@ -270,6 +289,7 @@
 
     setupToggle('bot-enabled', 'botToggleKnob');
     setupToggle('allow-mentions', 'mentionsToggleKnob');
+    setupToggle('allow-audio-mentions', 'audioMentionsToggleKnob');
 
     function updateAllowedFieldsState() {
         const allowMentions = document.getElementById('allow-mentions');
@@ -302,6 +322,7 @@
         const data = {
             bot_enabled: document.getElementById('bot-enabled').checked,
             allow_mentions: document.getElementById('allow-mentions').checked,
+            allow_audio_mentions: document.getElementById('allow-audio-mentions').checked,
             allowed_from: document.getElementById('allowed-from').value,
             allowed_to: document.getElementById('allowed-to').value,
             rate_limit_per_minute: document.getElementById('rate-limit').value

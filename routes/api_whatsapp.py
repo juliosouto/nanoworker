@@ -23,6 +23,7 @@ def save_whatsapp_config():
     allowed_to = data.get('allowed_to', '')
     bot_enabled = 1 if data.get('bot_enabled') else 0
     allow_mentions = 1 if data.get('allow_mentions') else 0
+    allow_audio_mentions = 1 if data.get('allow_audio_mentions') else 0
     try:
         rate_limit = int(data.get('rate_limit_per_minute', 0))
     except ValueError:
@@ -32,9 +33,9 @@ def save_whatsapp_config():
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE whatsapp_config 
-        SET allowed_from = ?, allowed_to = ?, bot_enabled = ?, allow_mentions = ?, rate_limit_per_minute = ?
+        SET allowed_from = ?, allowed_to = ?, bot_enabled = ?, allow_mentions = ?, allow_audio_mentions = ?, rate_limit_per_minute = ?
         WHERE id = 1
-    ''', (allowed_from, allowed_to, bot_enabled, allow_mentions, rate_limit))
+    ''', (allowed_from, allowed_to, bot_enabled, allow_mentions, allow_audio_mentions, rate_limit))
     conn.commit()
     conn.close()
     return jsonify({"status": "success"})

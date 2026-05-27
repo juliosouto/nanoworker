@@ -12,6 +12,18 @@ def webhook():
     data = request.json
     if not data or 'content' not in data or 'channel_id' not in data:
         return jsonify({"error": "Missing required fields"}), 400
+
+    content = data['content']
+    
+    # Process audio if present BEFORE permission checks, so the transcribed text can be evaluated
+    if 'audio_base64' in data:
+        from utils.audio_utils import process_base64_audio_to_text
+        try:
+            transcription = process_base64_audio_to_text(data['audio_base64'], data.get('mimetype', ''))
+            content = f"{content}\n[Transcrição]: {transcription}"
+        except Exception as e:
+            logging.error(f"Failed to process webhook audio: {e}")
+            content = f"{content}\n[Erro interno ao processar áudio]"
     on_complete = None
     if data['channel_id'].startswith('wa_web:'):
         def on_complete(out_text):
@@ -40,8 +52,8 @@ def webhook():
                 logging.error(f"Failed to send reply to Baileys Worker: {e}")
 
         channel_base = data['channel_id'].replace('wa_web:', '')
-        if not should_process_wa_message(channel_base, data.get('content', '')) and \
-           not should_process_wa_message(data.get('sender_id'), data.get('content', '')):
+        if not should_process_wa_message(channel_base, content) and \
+           not should_process_wa_message(data.get('sender_id'), content):
             logging.info(f"Ignored message from {data.get('sender_id')} in channel {channel_base} due to WhatsApp config permissions.")
             return jsonify({"status": "ignored", "reason": "permissions_or_disabled"}), 200
 
@@ -60,17 +72,6 @@ def webhook():
         except Exception as e:
             logging.error(f"Failed to send composing presence: {e}")
 
-    content = data['content']
-    
-    # Process audio if present
-    if 'audio_base64' in data:
-        from utils.audio_utils import process_base64_audio_to_text
-        try:
-            transcription = process_base64_audio_to_text(data['audio_base64'], data.get('mimetype', ''))
-            content = f"{content}\n[Transcrição]: {transcription}"
-        except Exception as e:
-            logging.error(f"Failed to process webhook audio: {e}")
-            content = f"{content}\n[Erro interno ao processar áudio]"
 
     file_path = None
     b64_data = data.get('file_base64') or data.get('image_base64')

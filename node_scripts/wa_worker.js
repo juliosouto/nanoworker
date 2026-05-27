@@ -38,6 +38,7 @@ function clearTyping(jid) {
 
 let currentAgentName = null;
 let allowMentions = true;
+let allowAudioMentions = false;
 let lastAgentNameFetch = 0;
 
 async function getAgentName() {
@@ -48,13 +49,14 @@ async function getAgentName() {
             if (res.data) {
                 currentAgentName = res.data.agent_name ? res.data.agent_name.toLowerCase() : null;
                 allowMentions = res.data.allow_mentions !== false;
+                allowAudioMentions = res.data.allow_audio_mentions === true;
             }
         } catch (e) {
             // ignore
         }
         lastAgentNameFetch = now;
     }
-    return { name: currentAgentName, allowMentions: allowMentions };
+    return { name: currentAgentName, allowMentions: allowMentions, allowAudioMentions: allowAudioMentions };
 }
 
 async function connectToWhatsApp() {
@@ -140,10 +142,15 @@ async function connectToWhatsApp() {
 
             const agentConfig = await getAgentName();
             const isMention = agentConfig.allowMentions && agentConfig.name && earlyText.toLowerCase().startsWith(`@${agentConfig.name}`);
+            const isAudio = msg.message.audioMessage !== undefined || msg.message.audioMessage !== null;
+            const allowAudioMentions = agentConfig.allowAudioMentions;
 
-            // Only process messages sent in the chat with oneself, OR if it's a mention
-            if (remoteJid !== ownJid && remoteJid !== ownLid && !isMention) {
-                continue;
+            // Only process messages sent in the chat with oneself, OR if it's a mention, OR if it's an audio we should forward
+            const isDirectMessage = (remoteJid === ownJid || remoteJid === ownLid);
+            if (!isDirectMessage && !isMention) {
+                if (!(msg.message.audioMessage && allowAudioMentions)) {
+                    continue;
+                }
             }
 
             // In personal chat, msg.key.fromMe might be true for messages we send,

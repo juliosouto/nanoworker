@@ -4,7 +4,7 @@ def should_process_wa_message(sender_id, content=""):
     from database import get_db, get_config
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allowed_from, bot_enabled, allow_mentions FROM whatsapp_config WHERE id = 1')
+    cursor.execute('SELECT allowed_from, bot_enabled, allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
     conn.close()
     
@@ -19,10 +19,22 @@ def should_process_wa_message(sender_id, content=""):
     except (IndexError, KeyError):
         allow_mentions = True
 
-    if allow_mentions:
-        agent_name = get_config('agent_name', '')
-        if agent_name and content and content.lower().startswith(f"@{agent_name.lower()}"):
+    try:
+        allow_audio_mentions = bool(config['allow_audio_mentions'])
+    except (IndexError, KeyError):
+        allow_audio_mentions = False
+
+    agent_name = get_config('agent_name', '')
+    if agent_name and content:
+        # Check text mention
+        if allow_mentions and content.lower().startswith(f"@{agent_name.lower()}"):
             return True
+        
+        # Check audio mention
+        if allow_audio_mentions and '\n[Transcrição]: ' in content:
+            transcription = content.split('\n[Transcrição]: ', 1)[1].strip()
+            if transcription.lower().startswith(f"{agent_name.lower()}") or transcription.lower().startswith(f"@{agent_name.lower()}"):
+                return True
 
     clean_sender = str(sender_id).split('@')[0] if sender_id else ''
 
@@ -60,9 +72,24 @@ def clean_mention(content, agent_name):
     
     cleaned_content = content.strip()
     if agent_name:
-        mention_prefix = f"@{agent_name.lower()}"
+        agent_name_lower = agent_name.lower()
+        mention_prefix = f"@{agent_name_lower}"
+        
         if cleaned_content.lower().startswith(mention_prefix):
             cleaned_content = cleaned_content[len(mention_prefix):].strip()
+            
+        if '\n[Transcrição]: ' in cleaned_content:
+            parts = cleaned_content.split('\n[Transcrição]: ', 1)
+            original_text = parts[0]
+            transcription = parts[1].strip()
+            
+            # Remove agent name from transcription start if it's there
+            if transcription.lower().startswith(mention_prefix):
+                transcription = transcription[len(mention_prefix):].strip()
+            elif transcription.lower().startswith(agent_name_lower):
+                transcription = transcription[len(agent_name_lower):].strip()
+                
+            cleaned_content = f"{original_text}\n[Transcrição]: {transcription}"
             
     return cleaned_content
 
