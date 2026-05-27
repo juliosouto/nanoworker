@@ -281,3 +281,66 @@ def cron_jobs_page():
     jobs = cursor.fetchall()
     conn.close()
     return render_template('cron_jobs.html', jobs=jobs)
+
+@views_bp.route('/dashboard')
+def dashboard_page():
+    from standard_prompts import apply_standard_rules
+    from tools import get_permitted_tools
+    from database import get_ide_config
+    import inspect
+    import datetime
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, instruction FROM user_memory')
+    memories = cursor.fetchall()
+    conn.close()
+    
+    memory_block = ""
+    if memories:
+        memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"[ID: {r['id']}] {r['instruction']}" for r in memories)
+        
+    project_path = get_ide_config('CURRENT_PROJECT_PATH')
+    if project_path:
+        memory_block += f"\n\nIMPORTANT: You are currently operating in the workspace directory: {project_path}\n"
+        
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    memory_block += f"\nCurrent Datetime: {current_time}\n\n"
+    
+    system_prompt = get_config('SYSTEM_PROMPT', '')
+    full_system_prompt = apply_standard_rules(system_prompt)
+    full_system_prompt = f"{memory_block}\n{full_system_prompt}"
+    system_tokens = len(full_system_prompt) // 4
+    
+    permitted_tools = get_permitted_tools()
+    tools_length = 0
+    json_overhead = len(permitted_tools) * 15 # Approximate JSON schema structure overhead per tool
+    
+    for t in permitted_tools:
+        tools_length += len(t.__name__)
+        if t.__doc__:
+            tools_length += len(str(t.__doc__))
+            
+        try:
+            sig = inspect.signature(t)
+            for param_name, param in sig.parameters.items():
+                tools_length += len(param_name)
+                if param.annotation != inspect.Parameter.empty:
+                    tools_length += len(str(param.annotation))
+        except Exception:
+            pass
+            
+    tools_tokens = (tools_length // 4) + json_overhead
+    user_tokens = 50
+    total_min = user_tokens + system_tokens + tools_tokens
+    
+    # Assume a ceiling of ~3000 tokens for long conversation history
+    history_ceiling_tokens = 3000
+    total_max = total_min + history_ceiling_tokens
+    
+    return render_template('dashboard.html', 
+                           user_tokens=user_tokens,
+                           system_tokens=system_tokens,
+                           tools_tokens=tools_tokens,
+                           total_min=total_min,
+                           total_max=total_max)
