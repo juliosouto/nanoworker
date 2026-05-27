@@ -84,3 +84,17 @@ def save_settings():
             set_config(db_key, val)
             
     return jsonify({"status": "success", "message": "Settings saved"}), 200
+
+@api_settings_bp.route('/api/settings/tools', methods=['POST'])
+def save_tool_setting():
+    data = request.json
+    tool_name = data.get('tool_name')
+    is_enabled = data.get('enabled')
+    
+    if tool_name is not None and is_enabled is not None:
+        db_key = f"TOOL_{tool_name.upper()}"
+        val = 'true' if is_enabled else 'false'
+        set_config(db_key, val)
+        return jsonify({"status": "success", "message": f"Tool {tool_name} saved"}), 200
+    
+    return jsonify({"status": "error", "message": "Invalid payload"}), 400

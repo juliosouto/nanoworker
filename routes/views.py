@@ -200,6 +200,70 @@ def permissions_config_page():
         perm_tool_creator=get_config('PERM_TOOL_CREATOR', 'false').lower() == 'true'
     )
 
+@views_bp.route('/settings/tools')
+def tools_management_page():
+    from tools import AVAILABLE_TOOLS
+    import inspect
+    from collections import defaultdict
+    
+    def get_tool_category(name):
+        if 'note' in name: return 'Notes'
+        if 'calendar' in name: return 'Calendar'
+        if 'contact' in name: return 'Contacts'
+        if 'mail' in name: return 'Mail'
+        if 'photo' in name or 'album' in name: return 'Photos'
+        if 'reminder' in name: return 'Reminders'
+        if 'icloud' in name: return 'iCloud'
+        if 'browser' in name or 'webpage' in name: return 'Browser'
+        if 'whatsapp' in name: return 'WhatsApp'
+        if 'schedule' in name: return 'Scheduling'
+        if 'search_web' in name: return 'Web Search'
+        if 'screenshot' in name: return 'Screenshot'
+        if name in ['read_file', 'write_file']: return 'File System'
+        if 'command' in name: return 'Terminal'
+        if 'memory' in name: return 'Memory'
+        if 'tool' in name: return 'Tool Creator'
+        return 'Other'
+        
+    sections = defaultdict(list)
+    
+    for tool_func in AVAILABLE_TOOLS:
+        tool_name = tool_func.__name__
+        # Default is true if not set
+        is_enabled = get_config(f'TOOL_{tool_name.upper()}', 'true').lower() == 'true'
+        
+        doc = tool_func.__doc__ or "No description available."
+        short_doc = doc.strip().split('\n')[0] # Get first line of docstring
+        
+        tool_length = len(tool_name)
+        if tool_func.__doc__:
+            tool_length += len(str(tool_func.__doc__))
+            
+        try:
+            sig = inspect.signature(tool_func)
+            for param_name, param in sig.parameters.items():
+                tool_length += len(param_name)
+                if param.annotation != inspect.Parameter.empty:
+                    tool_length += len(str(param.annotation))
+        except Exception:
+            pass
+            
+        tool_tokens = (tool_length // 4) + 15
+        
+        sections[get_tool_category(tool_name)].append({
+            'name': tool_name,
+            'enabled': is_enabled,
+            'description': short_doc,
+            'tokens': tool_tokens
+        })
+        
+    # Sort sections and their tools alphabetically (case-insensitive for keys)
+    sorted_sections = {}
+    for category in sorted(sections.keys(), key=lambda k: k.lower()):
+        sorted_sections[category] = sorted(sections[category], key=lambda x: x['name'])
+    
+    return render_template('tools_management.html', sections=sorted_sections)
+
 @views_bp.route('/settings/llm')
 def llm_config_page():
     current_model = get_config('GEMINI_MODEL', 'gemini-2.0-flash')

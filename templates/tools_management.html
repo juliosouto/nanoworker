@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Tools Management{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto;">
+    <div style="display: flex; align-items: center; margin-bottom: 24px;">
+        <a href="/settings"
+            style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
+            &larr;
+        </a>
+        <h2 style="font-weight: 600; margin: 0;">Tools Management</h2>
+    </div>
+    
+    <p style="color: var(--text-muted); margin-bottom: 24px;">
+        Habilite ou desabilite o acesso do agente a ferramentas específicas. As ferramentas habilitadas aqui serão diretamente enviadas ao LLM.
+    </p>
+
+    {% for section_name, section_tools in sections.items() %}
+    <h3 style="margin-top: 32px; margin-bottom: 16px; font-size: 1.5rem; font-weight: 600; color: var(--text-main); border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">{{ section_name }}</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+        {% for tool in section_tools %}
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px; word-break: break-all;">{{ tool.name }}</h3>
+                <span style="font-size: 0.75rem; background: rgba(255, 255, 255, 0.1); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); white-space: nowrap;">
+                    ~{{ tool.tokens }} tokens
+                </span>
+            </div>
+            <small style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
+                {{ tool.description }}
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable</label>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="toggle_{{ tool.name }}" {% if tool.enabled %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="knob_{{ tool.name }}"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function setupToolToggle(toolName) {
+        const toggle = document.getElementById(`toggle_${toolName}`);
+        const knob = document.getElementById(`knob_${toolName}`);
+
+        function updateVisual() {
+            if (toggle && knob) {
+                if (toggle.checked) {
+                    knob.style.transform = 'translateX(32px)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(59, 130, 246, 0.6)'; // blue
+                } else {
+                    knob.style.transform = 'translateX(0)';
+                    knob.previousElementSibling.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                }
+            }
+        }
+
+        if (toggle) {
+            updateVisual();
+            toggle.addEventListener('change', (e) => {
+                updateVisual();
+                saveToolState(toolName, e.target.checked);
+            });
+        }
+    }
+
+    function saveToolState(toolName, isEnabled) {
+        fetch('/api/settings/tools', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tool_name: toolName,
+                enabled: isEnabled
+            })
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast(`Tool ${toolName} ${isEnabled ? 'enabled' : 'disabled'}`);
+            } else {
+                showToast(`Error saving ${toolName}`);
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast(`Error saving ${toolName}`);
+        });
+    }
+
+    // Inicializar todos os toggles
+    {% for section_name, section_tools in sections.items() %}
+    {% for tool in section_tools %}
+    setupToolToggle('{{ tool.name }}');
+    {% endfor %}
+    {% endfor %}
+</script>
+{% endblock %}
