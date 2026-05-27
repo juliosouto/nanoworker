@@ -206,7 +206,12 @@ def tools_management_page():
     import inspect
     from collections import defaultdict
     
-    def get_tool_category(name):
+    def get_tool_category(tool_func):
+        mod_name = getattr(tool_func, '__module__', '')
+        if 'self_developed' in mod_name or 'self-developed' in mod_name:
+            return 'Self-Developed'
+            
+        name = tool_func.__name__
         if 'note' in name: return 'Notes'
         if 'calendar' in name: return 'Calendar'
         if 'contact' in name: return 'Contacts'
@@ -250,17 +255,21 @@ def tools_management_page():
             
         tool_tokens = (tool_length // 4) + 15
         
-        sections[get_tool_category(tool_name)].append({
+        sections[get_tool_category(tool_func)].append({
             'name': tool_name,
             'enabled': is_enabled,
             'description': short_doc,
             'tokens': tool_tokens
         })
         
-    # Sort sections and their tools alphabetically (case-insensitive for keys)
+    # Sort sections and their tools alphabetically (case-insensitive for keys), but put Self-Developed last
     sorted_sections = {}
     for category in sorted(sections.keys(), key=lambda k: k.lower()):
-        sorted_sections[category] = sorted(sections[category], key=lambda x: x['name'])
+        if category != 'Self-Developed':
+            sorted_sections[category] = sorted(sections[category], key=lambda x: x['name'])
+            
+    if 'Self-Developed' in sections:
+        sorted_sections['Self-Developed'] = sorted(sections['Self-Developed'], key=lambda x: x['name'])
     
     return render_template('tools_management.html', sections=sorted_sections)
 
