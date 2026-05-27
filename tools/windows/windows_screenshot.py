@@ -8,8 +8,10 @@ from utils.security_utils import require_permission
 @require_permission('PERM_SCREENSHOT')
 def take_windows_screenshot(output_path: str = None) -> str:
     """
-    Takes a screenshot of the Windows screen and saves it.
+    Takes a screenshot of the Windows screen and saves it locally.
     If output_path is not provided, it generates one in temp/screenshots/.
+    IMPORTANT: This tool only saves the file locally. To actually show it to the user on WhatsApp,
+    you MUST subsequently call the `send_whatsapp_file` tool with the returned path and phone_number="self".
     """
     if not output_path:
         os.makedirs("temp/screenshots", exist_ok=True)

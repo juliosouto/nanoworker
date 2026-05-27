@@ -360,7 +360,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if session_row:
             channel_id = session_row['channel_id']
             if channel_id.startswith('whatsapp:') or channel_id.startswith('wa_web:'):
-                system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat.\n\n{system_prompt}"
+                system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat. However, if you need to send an image or file (like a screenshot), you MUST use the send_whatsapp_file tool (with phone_number='self').\n\n{system_prompt}"
             elif channel_id.startswith('web-chat'):
                 system_prompt = f"This message comes from the web chat (HTML). You must reply via the web chat.\n\n{system_prompt}"
         thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
