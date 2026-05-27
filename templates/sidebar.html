@@ -29,7 +29,8 @@
         <div class="nav-section">
             <h3>System</h3>
             <ul>
-                <li {% if request.endpoint=='dashboard' %}class="active" {% endif %}><a href="/">Chat</a></li>
+                <li {% if request.endpoint=='dashboard_page' %}class="active" {% endif %}><a href="/dashboard">Dashboard</a></li>
+                <li {% if request.endpoint=='chat' %}class="active" {% endif %}><a href="/">Chat</a></li>
                 <li {% if request.endpoint=='ide_page' %}class="active" {% endif %}><a href="/ide"
                         target="_blank">IDE</a></li>
                 <li {% if request.endpoint=='cron_jobs_page' %}class="active" {% endif %}><a href="/cron">Cron Jobs</a>
