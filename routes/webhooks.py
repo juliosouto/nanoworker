@@ -52,8 +52,9 @@ def webhook():
                 logging.error(f"Failed to send reply to Baileys Worker: {e}")
 
         channel_base = data['channel_id'].replace('wa_web:', '')
-        if not should_process_wa_message(channel_base, content) and \
-           not should_process_wa_message(data.get('sender_id'), content):
+        is_group = '@g.us' in data['channel_id']
+        if not should_process_wa_message(channel_base, content, is_group) and \
+           not should_process_wa_message(data.get('sender_id'), content, is_group):
             logging.info(f"Ignored message from {data.get('sender_id')} in channel {channel_base} due to WhatsApp config permissions.")
             return jsonify({"status": "ignored", "reason": "permissions_or_disabled"}), 200
 

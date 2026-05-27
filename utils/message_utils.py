@@ -1,6 +1,6 @@
 import requests
 
-def should_process_wa_message(sender_id, content=""):
+def should_process_wa_message(sender_id, content="", is_group=False):
     from database import get_db, get_config
     conn = get_db()
     cursor = conn.cursor()
@@ -35,6 +35,11 @@ def should_process_wa_message(sender_id, content=""):
             transcription = content.split('\n[Transcrição]: ', 1)[1].strip()
             if transcription.lower().startswith(f"{agent_name.lower()}") or transcription.lower().startswith(f"@{agent_name.lower()}"):
                 return True
+
+    if is_group:
+        # For groups, if it didn't match the mention checks above, we MUST ignore it.
+        # Otherwise, the bot would respond to every audio sent by allowed users in the group!
+        return False
 
     clean_sender = str(sender_id).split('@')[0] if sender_id else ''
 
