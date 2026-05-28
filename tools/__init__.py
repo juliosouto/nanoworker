@@ -46,8 +46,20 @@ else:
 def get_permitted_tools():
     """Returns a list of tools filtered by the user's specific tool settings."""
     tools = []
+    import sys
+    import os
     
-    for tool_func in AVAILABLE_TOOLS:
+    for tool_func in list(AVAILABLE_TOOLS):
+        # Verify self-developed tool file still exists
+        mod_name = getattr(tool_func, '__module__', '')
+        if 'self_developed' in mod_name or 'self-developed' in mod_name:
+            if mod_name in sys.modules:
+                module = sys.modules[mod_name]
+                if hasattr(module, '__file__') and module.__file__:
+                    if not os.path.exists(module.__file__):
+                        AVAILABLE_TOOLS.remove(tool_func)
+                        continue
+
         tool_name = tool_func.__name__
         # Se for verdadeiro (default = 'true'), a ferramenta é disponibilizada
         if get_config(f'TOOL_{tool_name.upper()}', 'true').lower() == 'true':
