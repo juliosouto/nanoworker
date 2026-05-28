@@ -331,6 +331,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             part = build_gemini_part(row['image_base64'], mime_type, row['gemini_file_uri'])
             if part:
                 parts.insert(0, part)
+                if row['image_base64'].startswith('path:'):
+                    parts.insert(1, types.Part.from_text(text=f"[Attached Document File Path: {row['image_base64'][5:]}]"))
         
         if history and history[-1].role == role:
             history[-1].parts.extend(parts)
@@ -361,6 +363,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         part, new_uri = upload_and_build_gemini_part(client, current_image_base64, mime_type, current_gemini_uri)
         if part:
             send_content.insert(0, part)
+            if current_image_base64.startswith('path:'):
+                send_content.insert(1, f"[Attached Document File Path: {current_image_base64[5:]}]")
         if new_uri:
             cursor.execute("UPDATE messages_in SET gemini_file_uri = ? WHERE id = ?", (new_uri, message_in_id))
             conn.commit()
