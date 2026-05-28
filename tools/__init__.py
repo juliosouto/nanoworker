@@ -104,3 +104,22 @@ try:
     AVAILABLE_TOOLS.extend(mod.AVAILABLE_SELF_DEVELOPED_TOOLS)
 except Exception:
     pass
+
+# Dynamically load any other tools in the root tools/ directory
+import os
+import inspect
+
+current_dir = os.path.dirname(__file__)
+for filename in os.listdir(current_dir):
+    if filename.endswith(".py") and filename != "__init__.py":
+        module_name = filename[:-3]
+        try:
+            importlib = __import__('importlib')
+            module = importlib.import_module(f"tools.{module_name}")
+            for name, obj in inspect.getmembers(module, inspect.isfunction):
+                if obj.__module__ == module.__name__ and not obj.__name__.startswith("_"):
+                    if obj not in AVAILABLE_TOOLS:
+                        AVAILABLE_TOOLS.append(obj)
+        except Exception as e:
+            print(f"Error loading tool {module_name}: {e}")
+
