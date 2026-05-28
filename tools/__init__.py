@@ -17,6 +17,8 @@ if OS_PLATFORM == "Windows":
     from .windows.web_search import search_web
     from .windows.whatsapp import send_whatsapp_file, send_whatsapp_message
     from .windows.tool_creator import create_self_developed_tool
+    from .windows.binance_crypto_price import get_binance_crypto_price
+    from .windows.get_currency_or_metal_price import get_currency_or_metal_price
 else:
     from .macos.bash import run_bash_command
     from .macos.browser import (
@@ -40,8 +42,12 @@ else:
     
     if OS_PLATFORM == "Linux":
         from .linux.tool_creator import create_self_developed_tool
+        from .linux.binance_crypto_price import get_binance_crypto_price
+        from .linux.get_currency_or_metal_price import get_currency_or_metal_price
     else:
         from .macos.tool_creator import create_self_developed_tool
+        from .macos.binance_crypto_price import get_binance_crypto_price
+        from .macos.get_currency_or_metal_price import get_currency_or_metal_price
 
 def get_permitted_tools():
     """Returns a list of tools filtered by the user's specific tool settings."""
@@ -72,7 +78,7 @@ AVAILABLE_TOOLS = [
     read_file, write_file, send_whatsapp_message, send_whatsapp_file, extract_webpage_text,
     browser_navigate, browser_snapshot, browser_click, browser_fill, browser_extract, browser_run_js,
     schedule_task, list_scheduled_tasks, delete_scheduled_task, search_web, manage_persistent_memory,
-    create_self_developed_tool
+    create_self_developed_tool, get_binance_crypto_price, get_currency_or_metal_price
 ]
 
 if OS_PLATFORM == "Windows":
