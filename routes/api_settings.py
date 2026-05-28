@@ -11,7 +11,7 @@ api_settings_bp = Blueprint('api_settings', __name__)
 def get_agent_name_api():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allow_mentions FROM whatsapp_config WHERE id = 1')
+    cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
     conn.close()
     
@@ -19,10 +19,16 @@ def get_agent_name_api():
         allow_mentions = bool(config['allow_mentions']) if config else True
     except (IndexError, KeyError):
         allow_mentions = True
+
+    try:
+        allow_audio_mentions = bool(config['allow_audio_mentions']) if config else False
+    except (IndexError, KeyError):
+        allow_audio_mentions = False
         
     return jsonify({
         "agent_name": get_config('agent_name', ''),
-        "allow_mentions": allow_mentions
+        "allow_mentions": allow_mentions,
+        "allow_audio_mentions": allow_audio_mentions
     })
 
 @api_settings_bp.route('/api/settings', methods=['POST'])

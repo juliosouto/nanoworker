@@ -547,6 +547,11 @@ def init_db():
         pass
 
     try:
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_audio_mentions BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
         cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN rate_limit_per_minute INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
