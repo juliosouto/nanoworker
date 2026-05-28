@@ -22,6 +22,84 @@ def create_self_developed_tool(tool_name: str, code: str) -> str:
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         os_name = "macos"
         target_dir = os.path.join(project_root, "tools", "self-developed", os_name)
+        was_double_checked = False
+        
+        # --- DOUBLE-CHECK LOGIC ---
+        try:
+            from database import get_config, get_db, decrypt_value
+            from utils.session import current_session_id
+            
+            double_check_enabled = get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true'
+            print(f"Double-check enabled flag: {double_check_enabled}")
+            if double_check_enabled:
+                session_id = current_session_id.get()
+                user_prompt = "No user prompt found"
+                if session_id:
+                    conn = get_db()
+                    c = conn.cursor()
+                    c.execute('SELECT content, created_at FROM messages_in WHERE session_id = ? ORDER BY created_at DESC LIMIT 1', (session_id,))
+                    row1 = c.fetchone()
+                    c.execute('SELECT content, created_at FROM ide_messages_in WHERE session_id = ? ORDER BY created_at DESC LIMIT 1', (session_id,))
+                    row2 = c.fetchone()
+                    conn.close()
+                    
+                    if row1 and row2:
+                        if row1['created_at'] > row2['created_at']:
+                            user_prompt = row1['content']
+                        else:
+                            user_prompt = row2['content']
+                    elif row1:
+                        user_prompt = row1['content']
+                    elif row2:
+                        user_prompt = row2['content']
+                
+                gemini_model = get_config("GEMINI_MODEL", "gemini-2.5-flash")
+                gemini_key_enc = get_config("GEMINI_API_KEY")
+                print(f"Gemini key present: {bool(gemini_key_enc)}")
+                if gemini_key_enc:
+                    api_key = decrypt_value(gemini_key_enc)
+                    from google import genai
+                    from google.genai import types
+                    client = genai.Client(api_key=api_key)
+                    
+                    review_prompt = f"""You are an expert python developer evaluating a newly generated tool.
+The user requested the following tool functionality:
+{user_prompt}
+
+The initial generated python code is:
+```python
+{code}
+```
+
+Please validate this code. Fix any bugs, ensure all parameters and return values have python type hints, and ensure there is a complete Google-style docstring for the tool function. If the tool is missing required imports, add them.
+Return ONLY the final, complete, and valid Python code without any markdown wrappers or additional text if possible. If you must use markdown wrappers like ```python, ensure they are easily parseable."""
+                    
+                    print("Sending double-check prompt to Gemini...")
+                    chat = client.chats.create(
+                        model=gemini_model,
+                        config=types.GenerateContentConfig(
+                            thinking_config=types.ThinkingConfig(thinking_budget=4000),
+                            temperature=0.0
+                        )
+                    )
+                    response = chat.send_message(review_prompt)
+                    reviewed_code = response.text
+                    
+                    if reviewed_code:
+                        if reviewed_code.startswith("```python"):
+                            reviewed_code = reviewed_code[9:]
+                        elif reviewed_code.startswith("```"):
+                            reviewed_code = reviewed_code[3:]
+                        if reviewed_code.endswith("```"):
+                            reviewed_code = reviewed_code[:-3]
+                        code = reviewed_code.strip()
+                        was_double_checked = True
+                        print("Double-check successful!")
+                else:
+                    print("Double-check aborted: no API key.")
+        except Exception as e:
+            print(f"Tool Creator Double-Check failed: {e}")
+        # --------------------------
         
         # Ensure directories exist
         os.makedirs(target_dir, exist_ok=True)
@@ -104,6 +182,9 @@ for filename in os.listdir(current_dir):
         init_module.AVAILABLE_SELF_DEVELOPED_TOOLS = [t for t in init_module.AVAILABLE_SELF_DEVELOPED_TOOLS if getattr(t, '__module__', None) != module.__name__]
         init_module.AVAILABLE_SELF_DEVELOPED_TOOLS.extend(new_functions)
             
-        return f"Successfully created self-developed tool '{tool_name}' at {file_path}"
+        success_msg = f"Successfully created self-developed tool '{tool_name}' at {file_path}"
+        if was_double_checked:
+            success_msg += " (Code was successfully double-checked and validated by Thinking Mode)"
+        return success_msg
     except Exception as e:
         return f"Error creating tool: {str(e)}"

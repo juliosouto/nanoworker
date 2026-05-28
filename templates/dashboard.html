@@ -30,6 +30,12 @@
                         <span>OS Tools:</span>
                         <span style="font-family: monospace;">{{ tools_tokens }}</span>
                     </li>
+                    {% if double_check_tokens > 0 %}
+                    <li style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color: #10b981;">Double-Check (Input Est.):</span>
+                        <span style="font-family: monospace; color: #10b981;">~{{ double_check_tokens }}</span>
+                    </li>
+                    {% endif %}
                 </ul>
             </div>
 
