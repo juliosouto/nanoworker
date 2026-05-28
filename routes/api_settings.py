@@ -56,7 +56,8 @@ def save_settings():
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'system_prompt': 'SYSTEM_PROMPT',
         'ide_prompt': 'IDE_PROMPT',
-        'agent_name': 'agent_name'
+        'agent_name': 'agent_name',
+        'whisper_model': 'WHISPER_MODEL'
     }
     
     for json_key, db_key in mapping.items():
@@ -81,7 +82,8 @@ def save_settings():
         'perm_system_data': 'PERM_SYSTEM_DATA',
         'perm_screenshot': 'PERM_SCREENSHOT',
         'perm_web_search': 'PERM_WEB_SEARCH',
-        'perm_tool_creator': 'PERM_TOOL_CREATOR'
+        'perm_tool_creator': 'PERM_TOOL_CREATOR',
+        'tool_creator_double_check': 'TOOL_CREATOR_DOUBLE_CHECK'
     }
     
     for json_key, db_key in bool_mapping.items():

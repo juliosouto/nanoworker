@@ -206,6 +206,13 @@ def permissions_config_page():
         perm_tool_creator=get_config('PERM_TOOL_CREATOR', 'false').lower() == 'true'
     )
 
+@views_bp.route('/settings/advanced')
+def advanced_settings_page():
+    return render_template('advanced-settings.html',
+        tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
+        whisper_model=get_config('WHISPER_MODEL', 'small')
+    )
+
 @views_bp.route('/settings/tools')
 def tools_management_page():
     from tools import AVAILABLE_TOOLS
@@ -422,15 +429,21 @@ def dashboard_page():
             
     tools_tokens = (tools_length // 4) + json_overhead
     user_tokens = 50
+    
+    double_check_enabled = get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true'
+    # Adding ~500 tokens as a base input estimate for the double-check prompt (original code + user prompt)
+    double_check_tokens = 500 if double_check_enabled else 0
+    
     total_min = user_tokens + system_tokens + tools_tokens
     
     # Assume a ceiling of ~3000 tokens for long conversation history
     history_ceiling_tokens = 3000
-    total_max = total_min + history_ceiling_tokens
+    total_max = total_min + history_ceiling_tokens + double_check_tokens
     
     return render_template('dashboard.html', 
                            user_tokens=user_tokens,
                            system_tokens=system_tokens,
                            tools_tokens=tools_tokens,
                            total_min=total_min,
-                           total_max=total_max)
+                           total_max=total_max,
+                           double_check_tokens=double_check_tokens)
