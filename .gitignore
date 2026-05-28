@@ -256,6 +256,8 @@ store/*
 *.bin
 temp/*
 .vdd/
+bin/docs/*
+!bin/docs/.gitkeep
 encryption.key
 tools/self-developed/macos/*
 !tools/self-developed/macos/__init__.py

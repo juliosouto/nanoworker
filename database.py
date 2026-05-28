@@ -573,6 +573,19 @@ def init_db():
     )
     ''')
 
+    # Extracted Documents Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS extracted_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_hash TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        category TEXT,
+        extracted_data TEXT,
+        metadata TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     conn.commit()
     conn.close()
 
