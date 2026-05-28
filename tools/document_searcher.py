@@ -82,12 +82,12 @@ def search_documents_data_in_database(
         cursor.execute(sql, params)
         rows = cursor.fetchall()
 
-        print('\n***************************************************')
-        print("DB PATH:", conn.execute("PRAGMA database_list").fetchall())
-        print("SQL:", sql)
-        print("PARAMS:", params)
-        print("ROWS:", list(rows))
-        print('***************************************************\n')
+        # print('\n***************************************************')
+        # print("DB PATH:", conn.execute("PRAGMA database_list").fetchall())
+        # print("SQL:", sql)
+        # print("PARAMS:", params)
+        # print("ROWS:", list(rows))
+        # print('***************************************************\n')
         
         conn.close()
         
