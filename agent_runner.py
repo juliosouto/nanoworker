@@ -137,9 +137,12 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: 
         messages.append({"role": role, "content": " ".join(text_parts)})
         
     if isinstance(content, list):
-        text_parts = [p.text for p in content if getattr(p, 'text', None)]
-        if not text_parts and len(content) > 0 and isinstance(content[0], str):
-            text_parts = [content[0]]
+        text_parts = []
+        for p in content:
+            if isinstance(p, str):
+                text_parts.append(p)
+            elif getattr(p, 'text', None):
+                text_parts.append(p.text)
     else:
         text_parts = [content]
     messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
@@ -263,8 +266,20 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     """
     Runs the LLM agent, providing it with tools and conversation history.
     """
+    # Wait a bit to debounce multiple rapid messages (like multiple images from WhatsApp)
+    time.sleep(2)
+
     conn = get_db()
     cursor = conn.cursor()
+
+    # Check if a newer message arrived while we slept
+    cursor.execute('SELECT id FROM messages_in WHERE session_id = ? AND rowid > (SELECT rowid FROM messages_in WHERE id = ?) LIMIT 1', (session_id, message_in_id))
+    newer = cursor.fetchone()
+    if newer:
+        cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
+        conn.commit()
+        conn.close()
+        return message_in_id, "Skipped to allow newer message to process batch."
 
     # Mark as processed
     cursor.execute('UPDATE messages_in SET processed = 1 WHERE id = ?', (message_in_id,))
@@ -316,10 +331,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             part = build_gemini_part(row['image_base64'], mime_type, row['gemini_file_uri'])
             if part:
                 parts.insert(0, part)
+                if row['image_base64'].startswith('path:'):
+                    parts.insert(1, types.Part.from_text(text=f"[Attached Document File Path: {row['image_base64'][5:]}]"))
         
-        history.append(
-            types.Content(role=role, parts=parts)
-        )
+        if history and history[-1].role == role:
+            history[-1].parts.extend(parts)
+        else:
+            history.append(
+                types.Content(role=role, parts=parts)
+            )
 
     # Get current message info
     cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id FROM messages_in WHERE id = ?', (message_in_id,))
@@ -343,9 +363,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         part, new_uri = upload_and_build_gemini_part(client, current_image_base64, mime_type, current_gemini_uri)
         if part:
             send_content.insert(0, part)
+            if current_image_base64.startswith('path:'):
+                send_content.insert(1, f"[Attached Document File Path: {current_image_base64[5:]}]")
         if new_uri:
             cursor.execute("UPDATE messages_in SET gemini_file_uri = ? WHERE id = ?", (new_uri, message_in_id))
             conn.commit()
+
+    if history and history[-1].role == 'user':
+        last_user = history.pop()
+        send_content = last_user.parts + send_content
 
     preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
     models_to_try = [m for m in preferences if m and m.strip()]

@@ -13,7 +13,7 @@ def save_extracted_document(category: str, extracted_data: dict, additional_meta
         category (str): The category of the document (e.g., 'invoice', 'receipt', 'contract').
         extracted_data (dict): The data extracted from the document, to be stored as JSON.
         additional_metadata (dict, optional): Any other important metadata, to be stored as JSON.
-        file_path (str, optional): The path to the file. If not provided, the tool will automatically use the most recent image sent by the user.
+        file_path (str, optional): The path to the file. If you received multiple documents, you MUST provide the file_path (which is provided to you in the message text as [Attached Document File Path: ...]) for each document to save them all correctly.
         
     Returns:
         str: A success message indicating the saved file name and hash, or an error message.
