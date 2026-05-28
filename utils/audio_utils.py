@@ -152,9 +152,9 @@ def generate_audio(text: str, voice: str = "af_heart") -> str:
 def get_whisper_model():
     global _whisper_model
     if _whisper_model is None and WhisperModel is not None:
-        logger.info("Loading faster-whisper model...")
+        logger.info("Loading faster-whisper model (base)...")
         # device="cpu" is usually safe for general environments, though it could be configurable
-        _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
     return _whisper_model
 
 def transcribe_audio(file_path):
@@ -164,7 +164,14 @@ def transcribe_audio(file_path):
         return "[Audio message received - Transcription unavailable: faster-whisper not installed]"
         
     try:
-        segments, info = model.transcribe(file_path, beam_size=5)
+        try:
+            from database import get_config
+            agent_name = get_config('agent_name', '')
+            prompt = f"{agent_name}, " if agent_name else None
+        except Exception:
+            prompt = None
+
+        segments, info = model.transcribe(file_path, beam_size=5, initial_prompt=prompt)
         text = " ".join([segment.text for segment in segments]).strip()
         return f"{text}" if text else "[Audio received, but no text detected]"
     except Exception as e:

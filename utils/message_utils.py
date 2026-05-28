@@ -32,8 +32,11 @@ def should_process_wa_message(sender_id, content="", is_group=False):
         
         # Check audio mention
         if allow_audio_mentions and '\n[Transcription]: ' in content:
-            transcription = content.split('\n[Transcription]: ', 1)[1].strip()
-            if transcription.lower().startswith(f"{agent_name.lower()}") or transcription.lower().startswith(f"@{agent_name.lower()}"):
+            transcription = content.split('\n[Transcription]: ', 1)[1].strip().lower()
+            print(f"DEBUG TRANSCRIPTION (bot={agent_name}): '{transcription}'", flush=True)
+            
+            agent_lower = agent_name.lower()
+            if agent_lower in transcription[:30] or f"@{agent_lower}" in transcription[:30]:
                 return True
 
     if is_group:
