@@ -22,6 +22,7 @@ def create_self_developed_tool(tool_name: str, code: str) -> str:
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         os_name = "linux"
         target_dir = os.path.join(project_root, "tools", "self-developed", os_name)
+        was_double_checked = False
         
         # --- DOUBLE-CHECK LOGIC ---
         try:
@@ -29,6 +30,7 @@ def create_self_developed_tool(tool_name: str, code: str) -> str:
             from utils.session import current_session_id
             
             double_check_enabled = get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true'
+            print(f"Double-check enabled flag: {double_check_enabled}")
             if double_check_enabled:
                 session_id = current_session_id.get()
                 user_prompt = "No user prompt found"
@@ -53,6 +55,7 @@ def create_self_developed_tool(tool_name: str, code: str) -> str:
                 
                 gemini_model = get_config("GEMINI_MODEL", "gemini-2.5-flash")
                 gemini_key_enc = get_config("GEMINI_API_KEY")
+                print(f"Gemini key present: {bool(gemini_key_enc)}")
                 if gemini_key_enc:
                     api_key = decrypt_value(gemini_key_enc)
                     from google import genai
@@ -71,6 +74,7 @@ The initial generated python code is:
 Please validate this code. Fix any bugs, ensure all parameters and return values have python type hints, and ensure there is a complete Google-style docstring for the tool function. If the tool is missing required imports, add them.
 Return ONLY the final, complete, and valid Python code without any markdown wrappers or additional text if possible. If you must use markdown wrappers like ```python, ensure they are easily parseable."""
                     
+                    print("Sending double-check prompt to Gemini...")
                     chat = client.chats.create(
                         model=gemini_model,
                         config=types.GenerateContentConfig(
@@ -89,6 +93,10 @@ Return ONLY the final, complete, and valid Python code without any markdown wrap
                         if reviewed_code.endswith("```"):
                             reviewed_code = reviewed_code[:-3]
                         code = reviewed_code.strip()
+                        was_double_checked = True
+                        print("Double-check successful!")
+                else:
+                    print("Double-check aborted: no API key.")
         except Exception as e:
             print(f"Tool Creator Double-Check failed: {e}")
         # --------------------------
@@ -174,6 +182,9 @@ for filename in os.listdir(current_dir):
         init_module.AVAILABLE_SELF_DEVELOPED_TOOLS = [t for t in init_module.AVAILABLE_SELF_DEVELOPED_TOOLS if getattr(t, '__module__', None) != module.__name__]
         init_module.AVAILABLE_SELF_DEVELOPED_TOOLS.extend(new_functions)
             
-        return f"Successfully created self-developed tool '{tool_name}' at {file_path}"
+        success_msg = f"Successfully created self-developed tool '{tool_name}' at {file_path}"
+        if was_double_checked:
+            success_msg += " (Code was successfully double-checked and validated by Thinking Mode)"
+        return success_msg
     except Exception as e:
         return f"Error creating tool: {str(e)}"
