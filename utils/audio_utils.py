@@ -152,9 +152,9 @@ def generate_audio(text: str, voice: str = "af_heart") -> str:
 def get_whisper_model():
     global _whisper_model
     if _whisper_model is None and WhisperModel is not None:
-        logger.info("Loading faster-whisper model (base)...")
+        logger.info("Loading faster-whisper model (small)...")
         # device="cpu" is usually safe for general environments, though it could be configurable
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        _whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
     return _whisper_model
 
 def transcribe_audio(file_path):
