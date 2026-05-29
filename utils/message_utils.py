@@ -155,3 +155,54 @@ def check_rate_limit(sender_id):
     conn.close()
     
     return True
+
+def format_dict_to_lines(data, prefix=""):
+    """
+    Recursively formats a dictionary or list into a list of strings,
+    with each key-value pair on a separate line.
+    """
+    lines = []
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(v, (dict, list)):
+                lines.append(f"{prefix}{k}:")
+                lines.extend(format_dict_to_lines(v, prefix + "  "))
+            else:
+                lines.append(f"{prefix}{k}: {v}")
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, (dict, list)):
+                lines.extend(format_dict_to_lines(item, prefix + "  "))
+            else:
+                lines.append(f"{prefix}- {item}")
+    else:
+        lines.append(f"{prefix}{data}")
+    return lines
+
+def format_document_search_results(results):
+    """
+    Formats the search results from search_documents_data_in_database tool.
+    Places each detail in extracted_data and metadata on a new line (key: value).
+    """
+    if not isinstance(results, list):
+        return str(results)
+    
+    formatted_output = []
+    for doc in results:
+        formatted_output.append(f"Document ID: {doc.get('id', 'N/A')}")
+        formatted_output.append(f"File Name: {doc.get('file_name', 'Unknown')}")
+        formatted_output.append(f"Category: {doc.get('category', 'Unknown')}")
+        
+        extracted_data = doc.get("extracted_data", {})
+        if extracted_data:
+            formatted_output.append("Extracted Data:")
+            formatted_output.extend(format_dict_to_lines(extracted_data, prefix="  "))
+            
+        metadata = doc.get("metadata", {})
+        if metadata:
+            formatted_output.append("Metadata:")
+            formatted_output.extend(format_dict_to_lines(metadata, prefix="  "))
+            
+        formatted_output.append("-" * 40)
+        
+    return "\n".join(formatted_output)
