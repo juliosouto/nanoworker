@@ -423,6 +423,9 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         
         system_prompt = standard_prompts.apply_standard_rules(system_prompt)
         
+        if current_image_base64:
+            system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
+        
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
         
