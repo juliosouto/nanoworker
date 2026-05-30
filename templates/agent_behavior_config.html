@@ -14,7 +14,20 @@
         <button class="btn primary" style="padding: 10px 24px; font-size: 0.95rem;" onclick="saveAgentSettings()">Save Agent Config</button>
     </div>
 
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
+    <style>
+        .behavior-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+        }
+        @media (max-width: 900px) {
+            .behavior-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+
+    <div class="behavior-grid">
 
         <!-- General Behavior Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column;">
@@ -25,14 +38,14 @@
             <div class="settings-form" style="margin-top: 8px; flex: 1; display: flex; flex-direction: column;">
                 <input type="hidden" id="systemPromptInput" value="">
 
-                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
+                <div style="margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Require "@" Mention Prefix</label>
                         <small style="display: block; margin-top: 2px; color: var(--text-muted);">Require users to write @ before the worker name to trigger a response.</small>
                     </div>
                     <label
-                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">
                         <input type="checkbox" id="requireAtToggle" {% if require_at_prefix %}checked{% endif %}
                             style="opacity: 0; width: 0; height: 0;">
                         <span
@@ -43,27 +56,22 @@
                     </label>
                 </div>
 
-
-
-
-
-            </div>
-        </div>
-
-        <!-- IDE Behavior Card -->
-        <div class="glass-panel" style="display: flex; flex-direction: column;">
-            <h3>IDE Behavior</h3>
-            <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
-                Configure how the agent interacts with the IDE and codebase.
-            </small>
-            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
-                <div style="margin-bottom: 20px;">
+                <div style="margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Use Recipes as Tools</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Enabling this saves input tokens by only sending the signature and docstrings of each method.</small>
+                    </div>
                     <label
-                        style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">IDE
-                        Prompt</label>
-                    <textarea id="idePromptInput" rows="6" placeholder="Enter IDE specific prompt..."
-                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ ide_prompt }}</textarea>
-                    <small style="display: block; margin-top: 6px; color: var(--text-muted);">Instructions for IDE tasks.</small>
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">
+                        <input type="checkbox" id="useRecipesToggle" {% if use_recipes_as_tools %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="useRecipesKnob"></span>
+                    </label>
                 </div>
             </div>
         </div>
@@ -90,6 +98,24 @@
                             style="flex: 1; padding: 10px 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.9rem;">
                         <button class="btn primary" style="padding: 10px 16px; border-radius: 8px; white-space: nowrap;" onclick="addUserMemory()">Add</button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- IDE Behavior Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column;">
+            <h3>IDE Behavior</h3>
+            <small style="display: block; margin-bottom: 16px; color: var(--text-muted);">
+                Configure how the agent interacts with the IDE and codebase.
+            </small>
+            <div class="settings-form" style="margin-top: 12px; flex: 1; display: flex; flex-direction: column;">
+                <div style="margin-bottom: 20px;">
+                    <label
+                        style="display: block; margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">IDE
+                        Prompt</label>
+                    <textarea id="idePromptInput" rows="6" placeholder="Enter IDE specific prompt..."
+                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ ide_prompt }}</textarea>
+                    <small style="display: block; margin-top: 6px; color: var(--text-muted);">Instructions for IDE tasks.</small>
                 </div>
             </div>
         </div>
@@ -124,11 +150,13 @@
     }
 
     setupToggle('requireAtToggle', 'requireAtKnob');
+    setupToggle('useRecipesToggle', 'useRecipesKnob');
 
     function saveAgentSettings() {
         const systemPrompt = document.getElementById('systemPromptInput').value;
         const idePrompt = document.getElementById('idePromptInput').value;
         const requireAtPrefix = document.getElementById('requireAtToggle').checked;
+        const useRecipesAsTools = document.getElementById('useRecipesToggle').checked;
 
         fetch('/api/settings', {
             method: 'POST',
@@ -136,7 +164,8 @@
             body: JSON.stringify({
                 system_prompt: systemPrompt,
                 ide_prompt: idePrompt,
-                require_at_prefix: requireAtPrefix
+                require_at_prefix: requireAtPrefix,
+                use_recipes_as_tools: useRecipesAsTools
             })
         }).then(res => res.json()).then(data => {
             if (data.status === 'success') {

@@ -256,7 +256,9 @@ store/*
 *.bin
 temp/*
 .vdd/
+bin/backups/*
 bin/docs/*
+!bin/backups/.gitkeep
 !bin/docs/.gitkeep
 encryption.key
 tools/self-developed/macos/*

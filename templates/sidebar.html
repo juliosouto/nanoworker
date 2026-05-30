@@ -31,11 +31,13 @@
             <ul>
                 <li {% if request.endpoint=='dashboard_page' %}class="active" {% endif %}><a
                         href="/dashboard">Dashboard</a></li>
+                <li {% if request.endpoint in ['llm_models_page', 'views.llm_models_page', 'llm_config_page', 'views.llm_config_page'] %}class="active" {% endif %}><a
+                        href="/llm-models">LLM Models</a></li>
                 <li {% if request.endpoint=='workers_page' %}class="active" {% endif %}><a href="/workers">Workers</a>
                 </li>
                 <li {% if request.endpoint=='tools_management_page' %}class="active" {% endif %}><a
                         href="/settings/tools">Tools</a></li>
-                <li {% if request.endpoint=='chat' %}class="active" {% endif %}><a href="/">Chat</a></li>
+                <li {% if request.endpoint=='chat' %}class="active" {% endif %}><a href="/chat">Chat</a></li>
                 <li {% if request.endpoint=='ide_page' %}class="active" {% endif %}><a href="/ide"
                         target="_blank">IDE</a></li>
                 <li {% if request.endpoint=='cron_jobs_page' %}class="active" {% endif %}><a href="/cron">Cron Jobs</a>

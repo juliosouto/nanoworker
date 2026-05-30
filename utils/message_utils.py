@@ -297,3 +297,40 @@ def format_document_search_results(results):
         formatted_output.append("-" * 40)
         
     return "\n".join(formatted_output)
+
+def process_tools_for_llm(tools):
+    """
+    Processes all permitted tools sent to any LLM.
+    If the USE_RECIPES_AS_TOOLS database config is true, it wraps each tool
+    function preserving its name, docstring, and signature, while delegating 
+    calls to the original function. Otherwise, returns the tools unmodified.
+    """
+    if not tools:
+        return tools
+
+    from database import get_config
+    use_recipes = get_config("USE_RECIPES_AS_TOOLS", "true").lower() == "true"
+    if not use_recipes:
+        return tools
+
+    import inspect
+    from functools import wraps
+
+    def make_wrapper(f):
+        @wraps(f)
+        def recipe_wrapper(*args, **kwargs):
+            return f(*args, **kwargs)
+            
+        recipe_wrapper.__name__ = f.__name__
+        recipe_wrapper.__doc__ = f.__doc__
+        recipe_wrapper.__signature__ = inspect.signature(f)
+        return recipe_wrapper
+
+    processed = []
+    for func in tools:
+        if not callable(func):
+            processed.append(func)
+            continue
+        processed.append(make_wrapper(func))
+        
+    return processed

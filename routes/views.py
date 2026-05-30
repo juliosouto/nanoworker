@@ -1,6 +1,6 @@
 import os
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, redirect, url_for
 
 import state
 from database import get_config, get_db
@@ -8,6 +8,10 @@ from database import get_config, get_db
 views_bp = Blueprint('views', __name__)
 
 @views_bp.route('/')
+def index():
+    return redirect(url_for('views.dashboard_page'))
+
+@views_bp.route('/chat')
 def chat():
     conn = get_db()
     cursor = conn.cursor()
@@ -182,6 +186,7 @@ def agent_behavior_config_page():
         agent_name=agent_name,
         system_prompt=get_config('SYSTEM_PROMPT', ''),
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
+        use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')
@@ -367,6 +372,10 @@ def llm_config_page():
         llm_pref_5=llm_pref_5,
         models=model_list)
 
+@views_bp.route('/llm-models')
+def llm_models_page():
+    return llm_config_page()
+
 @views_bp.route('/workers')
 def workers_page():
     conn = get_db()
@@ -428,40 +437,78 @@ def dashboard_page():
     system_tokens = len(full_system_prompt) // 4
     
     permitted_tools = get_permitted_tools()
-    tools_length = 0
+    tools_length_recipes = 0
+    tools_length_full = 0
     json_overhead = len(permitted_tools) * 15 # Approximate JSON schema structure overhead per tool
     
     for t in permitted_tools:
-        tools_length += len(t.__name__)
+        # Recipes Mode (Signature + Docstring)
+        tools_length_recipes += len(t.__name__)
         if t.__doc__:
-            tools_length += len(str(t.__doc__))
-            
+            tools_length_recipes += len(str(t.__doc__))
         try:
             sig = inspect.signature(t)
             for param_name, param in sig.parameters.items():
-                tools_length += len(param_name)
+                tools_length_recipes += len(param_name)
                 if param.annotation != inspect.Parameter.empty:
-                    tools_length += len(str(param.annotation))
+                    tools_length_recipes += len(str(param.annotation))
         except Exception:
             pass
             
-    tools_tokens = (tools_length // 4) + json_overhead
+        # Full Code Mode
+        try:
+            source = inspect.getsource(t)
+            tools_length_full += len(source)
+        except Exception:
+            # Fallback to signature/docstring if getsource fails
+            fallback_len = len(t.__name__)
+            if t.__doc__:
+                fallback_len += len(str(t.__doc__))
+            try:
+                sig = inspect.signature(t)
+                for param_name, param in sig.parameters.items():
+                    fallback_len += len(param_name)
+                    if param.annotation != inspect.Parameter.empty:
+                        fallback_len += len(str(param.annotation))
+            except Exception:
+                pass
+            tools_length_full += fallback_len
+            
+    tools_tokens_recipes = (tools_length_recipes // 4) + json_overhead
+    tools_tokens_full = (tools_length_full // 4) + json_overhead
+    
+    from database import get_config
+    use_recipes = get_config("USE_RECIPES_AS_TOOLS", "true").lower() == "true"
+    
+    tools_tokens = tools_tokens_recipes if use_recipes else tools_tokens_full
     user_tokens = 50
     
     double_check_enabled = get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true'
     # Adding ~500 tokens as a base input estimate for the double-check prompt (original code + user prompt)
     double_check_tokens = 500 if double_check_enabled else 0
     
-    total_min = user_tokens + system_tokens + tools_tokens
-    
+    total_min_recipes = user_tokens + system_tokens + tools_tokens_recipes
     # Assume a ceiling of ~3000 tokens for long conversation history
     history_ceiling_tokens = 3000
-    total_max = total_min + history_ceiling_tokens + double_check_tokens
+    total_max_recipes = total_min_recipes + history_ceiling_tokens + double_check_tokens
+    
+    total_min_full = user_tokens + system_tokens + tools_tokens_full
+    total_max_full = total_min_full + history_ceiling_tokens + double_check_tokens
+    
+    total_min = total_min_recipes if use_recipes else total_min_full
+    total_max = total_max_recipes if use_recipes else total_max_full
     
     return render_template('dashboard.html', 
                            user_tokens=user_tokens,
                            system_tokens=system_tokens,
                            tools_tokens=tools_tokens,
+                           tools_tokens_recipes=tools_tokens_recipes,
+                           tools_tokens_full=tools_tokens_full,
+                           use_recipes=use_recipes,
+                           total_min_recipes=total_min_recipes,
+                           total_max_recipes=total_max_recipes,
+                           total_min_full=total_min_full,
+                           total_max_full=total_max_full,
                            total_min=total_min,
                            total_max=total_max,
                            double_check_tokens=double_check_tokens)
