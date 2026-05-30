@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Workers{% endblock %}
+
+{% block content %}
+
+<style>
+    .premium-input-container {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 16px;
+    }
+
+    .premium-label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-muted, #a0a0a0);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+    }
+
+    .premium-input {
+        width: 100%;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--text-main, #ffffff);
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+    .premium-input:focus {
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
+    }
+</style>
+
+<div style="max-width: 1000px; margin: 0 auto; padding: 20px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px;">
+        <div style="display: flex; align-items: center;">
+            <a href="/settings"
+                style="color: var(--text-muted); text-decoration: none; margin-right: 16px; font-size: 1.3rem; transition: color 0.2s;"
+                onmouseover="this.style.color='var(--text-main)'" onmouseout="this.style.color='var(--text-muted)'">
+                &larr;
+            </a>
+            <h2 style="font-weight: 600; margin: 0; font-size: 1.6rem; letter-spacing: -0.5px;">Workers Configuration
+            </h2>
+        </div>
+        <button class="btn primary" onclick="openWorkerModal()"
+            style="padding: 10px 18px; font-size: 0.9rem; border-radius: 8px; font-weight: 500;">
+            + Add Worker
+        </button>
+    </div>
+
+    <div class="glass-panel" style="display: flex; flex-direction: column; padding: 24px; border-radius: 12px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+            <h3 style="margin: 0; font-weight: 600; font-size: 1.15rem; color: var(--text-main);">Configured Workers
+            </h3>
+            <span
+                style="font-size: 0.8rem; color: var(--text-muted); background: rgba(255,255,255,0.06); padding: 4px 12px; border-radius: 20px; font-weight: 500;">
+                {{ workers|length }} Active
+            </span>
+        </div>
+
+        <div style="overflow-x: auto; width: 100%;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+                <thead>
+                    <tr
+                        style="border-bottom: 1px solid rgba(255,255,255,0.08); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.8px;">
+                        <th style="padding: 14px 16px;">Worker Name</th>
+                        <th style="padding: 14px 16px;">Worker Model</th>
+                        <th style="padding: 14px 16px;">Thinking</th>
+                        <th style="padding: 14px 16px;">Worker Instructions</th>
+                        <th style="padding: 14px 16px; text-align: right; width: 150px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if workers %}
+                    {% for w in workers %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;"
+                        onmouseover="this.style.background='rgba(255,255,255,0.02)'"
+                        onmouseout="this.style.background='none'">
+                        <td style="padding: 16px; font-weight: 600; color: var(--text-main);">
+                            {{ w.worker_name }}
+                            {% if w.is_default %}
+                            <span style="background: rgba(46, 204, 113, 0.15); color: #2ecc71; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 8px; font-weight: 500;">Default</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 16px; color: #3498db; font-weight: 500;">{{ w.worker_model }}</td>
+                        <td style="padding: 16px;">
+                            {% if w.thinking_enabled %}
+                            <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Enabled</span>
+                            {% else %}
+                            <span style="background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Disabled</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 16px; color: var(--text-muted); font-size: 0.85rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ w.worker_instructions or '' }}</td>
+                        <td
+                            style="padding: 16px; text-align: right; display: flex; gap: 10px; justify-content: flex-end; align-items: center;">
+                            <button type="button" onclick="editWorkerById({{ w.id }})" title="Edit Worker"
+                                style="background: none; border: none; color: #2ecc71; cursor: pointer; padding: 6px; border-radius: 6px; transition: background 0.2s; display: inline-flex; align-items: center; justify-content: center;"
+                                onmouseover="this.style.background='rgba(46,204,113,0.1)'"
+                                onmouseout="this.style.background='none'">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                            </button>
+                            <button type="button" onclick="deleteWorker({{ w.id }}, '{{ w.worker_name }}')"
+                                title="Delete Worker"
+                                style="background: none; border: none; color: #ff4757; cursor: pointer; padding: 6px; border-radius: 6px; transition: background 0.2s; display: inline-flex; align-items: center; justify-content: center;"
+                                onmouseover="this.style.background='rgba(255,71,87,0.1)'"
+                                onmouseout="this.style.background='none'">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                    </path>
+                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td colspan="5"
+                            style="padding: 40px; text-align: center; color: var(--text-muted); font-style: italic;">
+                            No workers configured yet. Click "+ Add Worker" to create your first worker!
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for Adding / Editing Workers -->
+<div id="workerModal" class="modal"
+    style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+    <div class="modal-content glass-panel"
+        style="background: rgba(20, 20, 20, 0.95); padding: 24px; border-radius: 12px; width: 90%; max-width: 480px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); height: auto !important;">
+        <div
+            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+            <h3 id="modalTitle" style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-main);">Add
+                New Worker</h3>
+            <span onclick="closeWorkerModal()"
+                style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted); transition: color 0.2s;"
+                onmouseover="this.style.color='var(--text-main)'"
+                onmouseout="this.style.color='var(--text-muted)'">&times;</span>
+        </div>
+
+        <form id="workerForm" autocomplete="off" onsubmit="event.preventDefault(); saveWorker();">
+            <div class="premium-input-container">
+                <label class="premium-label" for="worker_name">Worker Name *</label>
+                <input type="text" id="worker_name" required class="premium-input" placeholder="e.g. Nano">
+            </div>
+            <div class="premium-input-container" style="margin-bottom: 24px;">
+                <label class="premium-label" for="worker_model">Worker Model *</label>
+                <div class="premium-select-wrapper"
+                    style="position: relative; border-radius: 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1);">
+                    <select id="worker_model" required class="premium-input"
+                        style="appearance: none; -webkit-appearance: none; background: transparent; border: none; padding-right: 36px; cursor: pointer; width: 100%;">
+                        <option value="" disabled selected style="background: #1e1e24;">Select a model...</option>
+                        {% for provider, provider_models in models|groupby('provider') %}
+                        <optgroup label="{{ provider }}" style="background: #1e1e24; color: #3498db; font-weight: 600;">
+                            {% for m in provider_models %}
+                            <option value="{{ m.model_name }}" style="background: #1e1e24; color: #ffffff;">{{
+                                m.model_name }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                    </select>
+                    <div
+                        style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); border: 5px solid transparent; border-top-color: var(--text-muted, #a0a0a0); pointer-events: none;">
+                    </div>
+                </div>
+            </div>
+
+            <div class="premium-input-container" style="margin-bottom: 24px;">
+                <label class="premium-label" for="worker_instructions">Worker Instructions</label>
+                <textarea id="worker_instructions" class="premium-input" style="height: 100px; resize: vertical;" placeholder="Enter system instructions or behavior guidelines for the worker..."></textarea>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <input type="checkbox" id="thinking_enabled" style="cursor: pointer; width: 16px; height: 16px;">
+                <label for="thinking_enabled" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Enable Thinking (step-by-step reasoning)</label>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 24px;">
+                <input type="checkbox" id="is_default" style="cursor: pointer; width: 16px; height: 16px;">
+                <label for="is_default" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Set as Default Worker</label>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                <button type="button" class="btn secondary" onclick="closeWorkerModal()"
+                    style="border-radius: 6px;">Cancel</button>
+                <button type="submit" class="btn primary" style="border-radius: 6px;">Save Worker</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal for Deleting Workers -->
+<div id="deleteWorkerModal" class="modal"
+    style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+    <div class="modal-content glass-panel"
+        style="background: rgba(20, 20, 20, 0.95); padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; height: auto !important;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="margin: 0; font-size: 1.2rem; font-weight: 600; color: var(--text-main);">Delete Worker</h3>
+            <span onclick="closeDeleteModal()"
+                style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted);">&times;</span>
+        </div>
+        <p style="margin-bottom: 24px; font-size: 0.95rem; color: var(--text-muted);">
+            Are you sure you want to delete worker <strong id="deleteWorkerNameText"
+                style="color: var(--text-main);"></strong>?
+        </p>
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+            <button type="button" class="btn secondary" onclick="closeDeleteModal()"
+                style="border-radius: 6px;">Cancel</button>
+            <button type="button" class="btn" onclick="confirmDeleteWorker()"
+                style="background: #ff4757; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">
+                Delete
+            </button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const registeredWorkers = {{ workers | tojson | safe }} || [];
+    let currentEditWorkerId = null;
+    let workerToDeleteId = null;
+
+    function openWorkerModal() {
+        document.getElementById('workerModal').style.display = 'flex';
+    }
+
+    function closeWorkerModal() {
+        document.getElementById('workerModal').style.display = 'none';
+        document.getElementById('workerForm').reset();
+        document.getElementById('is_default').checked = false;
+        document.getElementById('thinking_enabled').checked = false;
+        document.getElementById('modalTitle').innerText = 'Add New Worker';
+        currentEditWorkerId = null;
+    }
+
+    function editWorkerById(id) {
+        const worker = registeredWorkers.find(w => w.id === id);
+        if (worker) {
+            currentEditWorkerId = worker.id;
+            document.getElementById('worker_name').value = worker.worker_name;
+            document.getElementById('worker_model').value = worker.worker_model;
+            document.getElementById('worker_instructions').value = worker.worker_instructions || '';
+            document.getElementById('is_default').checked = !!worker.is_default;
+            document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
+            document.getElementById('modalTitle').innerText = 'Edit Worker';
+            openWorkerModal();
+        } else {
+            showToast('Worker not found.');
+        }
+    }
+
+    function saveWorker() {
+        const payload = {
+            worker_name: document.getElementById('worker_name').value,
+            worker_model: document.getElementById('worker_model').value,
+            worker_instructions: document.getElementById('worker_instructions').value,
+            is_default: document.getElementById('is_default').checked,
+            thinking_enabled: document.getElementById('thinking_enabled').checked
+        };
+
+        if (!payload.worker_name || !payload.worker_model) {
+            showToast('Worker name and model are required.');
+            return;
+        }
+
+        const method = currentEditWorkerId ? 'PUT' : 'POST';
+        const url = currentEditWorkerId ? `/api/workers/${currentEditWorkerId}` : '/api/workers';
+
+        fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast(currentEditWorkerId ? 'Worker updated successfully!' : 'Worker added successfully!');
+                closeWorkerModal();
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                showToast('Error saving worker: ' + (data.error || 'Unknown error'));
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast('Error saving worker');
+        });
+    }
+
+    function deleteWorker(id, name) {
+        workerToDeleteId = id;
+        document.getElementById('deleteWorkerNameText').innerText = `"${name}"`;
+        document.getElementById('deleteWorkerModal').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteWorkerModal').style.display = 'none';
+        workerToDeleteId = null;
+    }
+
+    function confirmDeleteWorker() {
+        if (!workerToDeleteId) return;
+
+        fetch(`/api/workers/${workerToDeleteId}`, {
+            method: 'DELETE'
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast('Worker deleted successfully!');
+                closeDeleteModal();
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                showToast('Error deleting worker: ' + (data.error || 'Unknown error'));
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast('Error deleting worker');
+        });
+    }
+</script>
+{% endblock %}

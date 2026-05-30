@@ -31,6 +31,8 @@
             <ul>
                 <li {% if request.endpoint=='dashboard_page' %}class="active" {% endif %}><a
                         href="/dashboard">Dashboard</a></li>
+                <li {% if request.endpoint=='workers_page' %}class="active" {% endif %}><a href="/workers">Workers</a>
+                </li>
                 <li {% if request.endpoint=='tools_management_page' %}class="active" {% endif %}><a
                         href="/settings/tools">Tools</a></li>
                 <li {% if request.endpoint=='chat' %}class="active" {% endif %}><a href="/">Chat</a></li>

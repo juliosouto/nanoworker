@@ -1,5 +1,66 @@
 import requests
 
+def get_default_worker(workers=None):
+    from database import get_db
+    if workers is None:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled FROM workers_config')
+        workers = [dict(w) for w in cursor.fetchall()]
+        conn.close()
+
+    for worker in workers:
+        if worker['is_default']:
+            return worker
+    
+    if workers:
+        return workers[0]
+    return None
+
+def resolve_worker_from_content(content):
+    """
+    Looks for a mention of any worker name at the start of content or transcription.
+    Returns the worker dict if matched, otherwise returns the default worker.
+    """
+    from database import get_db
+    if not content:
+        return get_default_worker()
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled FROM workers_config')
+    workers = [dict(w) for w in cursor.fetchall()]
+    conn.close()
+
+    content_lower = content.lower().strip()
+    from database import get_config
+    require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+    
+    # 1. Check for text mention at the start (handling both with/without spaces)
+    for worker in workers:
+        worker_name_clean = worker['worker_name'].strip().lower()
+        worker_name_no_spaces = worker_name_clean.replace(" ", "")
+        
+        if content_lower.startswith(f"@{worker_name_clean}") or content_lower.startswith(f"@{worker_name_no_spaces}"):
+            return worker
+            
+        if not require_at:
+            if content_lower.startswith(worker_name_clean) or content_lower.startswith(worker_name_no_spaces):
+                return worker
+
+    # 2. Check for audio mention in transcription
+    if '\n[Transcription]: ' in content:
+        transcription = content.split('\n[Transcription]: ', 1)[1].strip().lower()
+        for worker in workers:
+            worker_name_clean = worker['worker_name'].strip().lower()
+            worker_name_no_spaces = worker_name_clean.replace(" ", "")
+            
+            if worker_name_clean in transcription[:30] or f"@{worker_name_clean}" in transcription[:30] or \
+               worker_name_no_spaces in transcription[:30] or f"@{worker_name_no_spaces}" in transcription[:30]:
+                return worker
+
+    return get_default_worker(workers)
+
 def should_process_wa_message(sender_id, content="", is_group=False):
     from database import get_db, get_config
     conn = get_db()
@@ -24,24 +85,44 @@ def should_process_wa_message(sender_id, content="", is_group=False):
     except (IndexError, KeyError):
         allow_audio_mentions = False
 
-    agent_name = get_config('agent_name', '')
-    if agent_name and content:
-        # Check text mention
-        if allow_mentions and content.lower().startswith(f"@{agent_name.lower()}"):
-            return True
+    # Check if ANY worker is mentioned in the content
+    worker_mentioned = False
+    if content:
+        from database import get_db
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT worker_name FROM workers_config')
+        worker_names = [row['worker_name'].strip().lower() for row in cursor.fetchall()]
+        conn.close()
         
-        # Check audio mention
-        if allow_audio_mentions and '\n[Transcription]: ' in content:
-            transcription = content.split('\n[Transcription]: ', 1)[1].strip().lower()
-            print(f"DEBUG TRANSCRIPTION (bot={agent_name}): '{transcription}'", flush=True)
+        content_lower = content.lower().strip()
+        from database import get_config
+        require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+        for name in worker_names:
+            name_no_spaces = name.replace(" ", "")
+            # Check text mention
+            if allow_mentions:
+                if content_lower.startswith(f"@{name}") or content_lower.startswith(f"@{name_no_spaces}"):
+                    worker_mentioned = True
+                    break
+                if not require_at:
+                    if content_lower.startswith(name) or content_lower.startswith(name_no_spaces):
+                        worker_mentioned = True
+                        break
             
-            agent_lower = agent_name.lower()
-            if agent_lower in transcription[:30] or f"@{agent_lower}" in transcription[:30]:
-                return True
+            # Check audio mention
+            if allow_audio_mentions and '\n[Transcription]: ' in content:
+                transcription = content.split('\n[Transcription]: ', 1)[1].strip().lower()
+                if name in transcription[:30] or f"@{name}" in transcription[:30] or \
+                   name_no_spaces in transcription[:30] or f"@{name_no_spaces}" in transcription[:30]:
+                    worker_mentioned = True
+                    break
+
+    if worker_mentioned:
+        return True
 
     if is_group:
-        # For groups, if it didn't match the mention checks above, we MUST ignore it.
-        # Otherwise, the bot would respond to every audio sent by allowed users in the group!
+        # For groups, if no worker was mentioned, we MUST ignore the message
         return False
 
     clean_sender = str(sender_id).split('@')[0] if sender_id else ''
@@ -70,32 +151,42 @@ def should_process_wa_message(sender_id, content="", is_group=False):
             
     return True
 
-def clean_mention(content, agent_name):
+def clean_mention(content, agent_name=None):
     """
-    Remove the @AgentName mention prefix from the start of the message content.
+    Remove the @WorkerName mention prefix from the start of the message content.
     Returns the cleaned string.
     """
     if not content:
         return ""
     
     cleaned_content = content.strip()
-    if agent_name:
-        agent_name_lower = agent_name.lower()
-        mention_prefix = f"@{agent_name_lower}"
+    
+    worker = resolve_worker_from_content(content)
+    if worker:
+        worker_name_clean = worker['worker_name'].strip().lower()
+        worker_name_no_spaces = worker_name_clean.replace(" ", "")
         
-        if cleaned_content.lower().startswith(mention_prefix):
-            cleaned_content = cleaned_content[len(mention_prefix):].strip()
+        from database import get_config
+        require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+        
+        prefixes = [f"@{worker_name_clean}", f"@{worker_name_no_spaces}"]
+        if not require_at:
+            prefixes.extend([worker_name_clean, worker_name_no_spaces])
+            
+        for prefix in prefixes:
+            if cleaned_content.lower().startswith(prefix):
+                cleaned_content = cleaned_content[len(prefix):].strip()
+                break
             
         if '\n[Transcription]: ' in cleaned_content:
             parts = cleaned_content.split('\n[Transcription]: ', 1)
             original_text = parts[0]
             transcription = parts[1].strip()
             
-            # Remove agent name from transcription start if it's there
-            if transcription.lower().startswith(mention_prefix):
-                transcription = transcription[len(mention_prefix):].strip()
-            elif transcription.lower().startswith(agent_name_lower):
-                transcription = transcription[len(agent_name_lower):].strip()
+            for prefix in [f"@{worker_name_clean}", f"@{worker_name_no_spaces}", worker_name_clean, worker_name_no_spaces]:
+                if transcription.lower().startswith(prefix):
+                    transcription = transcription[len(prefix):].strip()
+                    break
                 
             cleaned_content = f"{original_text}\n[Transcription]: {transcription}"
             

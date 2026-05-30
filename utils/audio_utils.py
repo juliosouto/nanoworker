@@ -170,9 +170,23 @@ def transcribe_audio(file_path):
         
     try:
         try:
-            from database import get_config
+            from database import get_db, get_config
             agent_name = get_config('agent_name', '')
-            prompt = f"{agent_name}, " if agent_name else None
+            
+            hotwords = []
+            if agent_name:
+                hotwords.extend([agent_name, f"@{agent_name}"])
+                
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('SELECT worker_name FROM workers_config')
+            worker_names = [row['worker_name'].strip() for row in cursor.fetchall() if row['worker_name']]
+            conn.close()
+            
+            for name in worker_names:
+                hotwords.extend([name, f"@{name}", name.replace(" ", ""), f"@{name.replace(' ', '')}"])
+                
+            prompt = ", ".join(hotwords) if hotwords else None
         except Exception:
             prompt = None
 

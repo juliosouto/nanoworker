@@ -13,6 +13,10 @@ def get_agent_name_api():
     cursor = conn.cursor()
     cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
+    
+    # Query all worker names
+    cursor.execute('SELECT worker_name FROM workers_config')
+    worker_names = [row['worker_name'].strip() for row in cursor.fetchall()]
     conn.close()
     
     try:
@@ -25,10 +29,18 @@ def get_agent_name_api():
     except (IndexError, KeyError):
         allow_audio_mentions = False
         
+    from utils.message_utils import get_default_worker
+    default_worker = get_default_worker()
+    agent_name = default_worker['worker_name'] if default_worker else ''
+    
+    require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+    
     return jsonify({
-        "agent_name": get_config('agent_name', ''),
+        "agent_name": agent_name,
+        "worker_names": worker_names,
         "allow_mentions": allow_mentions,
-        "allow_audio_mentions": allow_audio_mentions
+        "allow_audio_mentions": allow_audio_mentions,
+        "require_at_prefix": require_at_prefix
     })
 
 @api_settings_bp.route('/api/settings', methods=['POST'])
@@ -56,7 +68,6 @@ def save_settings():
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'system_prompt': 'SYSTEM_PROMPT',
         'ide_prompt': 'IDE_PROMPT',
-        'agent_name': 'agent_name',
         'whisper_model': 'WHISPER_MODEL'
     }
     
@@ -65,8 +76,7 @@ def save_settings():
             set_config(db_key, data[json_key])
             
     bool_mapping = {
-        'thinking_enabled': 'THINKING_ENABLED',
-        'add_datetime_enabled': 'ADD_DATETIME_ENABLED',
+        'require_at_prefix': 'REQUIRE_AT_PREFIX',
         'perm_terminal': 'PERM_TERMINAL',
         'perm_playwright': 'PERM_PLAYWRIGHT',
         'perm_safari': 'PERM_SAFARI',

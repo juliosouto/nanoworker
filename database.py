@@ -586,6 +586,23 @@ def init_db():
     )
     ''')
 
+    # Workers Config Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS workers_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        worker_name TEXT NOT NULL,
+        worker_model TEXT NOT NULL,
+        worker_instructions TEXT,
+        is_default BOOLEAN DEFAULT 0,
+        thinking_enabled BOOLEAN DEFAULT 0
+    )
+    ''')
+
+    try:
+        cursor.execute("ALTER TABLE workers_config ADD COLUMN thinking_enabled BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     conn.commit()
     conn.close()
 
