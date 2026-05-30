@@ -39,8 +39,9 @@ def route_inbound_message(channel_id, content, sender_id=None, image_base64=None
     ''', (message_id, session_id, content, sender_id, image_base64, file_mime_type, file_name))
     conn.commit()
     
-    # Check for /new command to reset history (supporting mentions like "@AgentName /new")
-    agent_name = get_config('agent_name', '')
+    from utils.message_utils import get_default_worker
+    default_worker = get_default_worker()
+    agent_name = default_worker['worker_name'] if default_worker else ''
     cleaned_content = clean_mention(content, agent_name)
 
     if cleaned_content == "/new":

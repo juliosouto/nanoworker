@@ -25,8 +25,12 @@ def get_agent_name_api():
     except (IndexError, KeyError):
         allow_audio_mentions = False
         
+    from utils.message_utils import get_default_worker
+    default_worker = get_default_worker()
+    agent_name = default_worker['worker_name'] if default_worker else ''
+    
     return jsonify({
-        "agent_name": get_config('agent_name', ''),
+        "agent_name": agent_name,
         "allow_mentions": allow_mentions,
         "allow_audio_mentions": allow_audio_mentions
     })
@@ -56,7 +60,6 @@ def save_settings():
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'system_prompt': 'SYSTEM_PROMPT',
         'ide_prompt': 'IDE_PROMPT',
-        'agent_name': 'agent_name',
         'whisper_model': 'WHISPER_MODEL'
     }
     
@@ -65,8 +68,7 @@ def save_settings():
             set_config(db_key, data[json_key])
             
     bool_mapping = {
-        'thinking_enabled': 'THINKING_ENABLED',
-        'add_datetime_enabled': 'ADD_DATETIME_ENABLED',
+        'require_at_prefix': 'REQUIRE_AT_PREFIX',
         'perm_terminal': 'PERM_TERMINAL',
         'perm_playwright': 'PERM_PLAYWRIGHT',
         'perm_safari': 'PERM_SAFARI',

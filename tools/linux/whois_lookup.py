@@ -10,7 +10,7 @@ def get_whois_rdap(domain: str) -> str:
     
     Args:
         domain: The domain to look up (e.g., 'google.com').
-        
+    
     Returns:
         A JSON string containing the full RDAP response data, or an error message if the lookup fails.
     """

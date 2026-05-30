@@ -154,3 +154,68 @@ def toggle_llm_model(model_id):
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
+
+# Workers API Routes
+@api_llm_bp.route('/api/workers', methods=['POST'])
+def add_worker():
+    data = request.json
+    if not data or 'worker_name' not in data or 'worker_model' not in data:
+        return jsonify({"error": "Missing worker_name or worker_model"}), 400
+        
+    is_default = 1 if data.get('is_default') else 0
+    thinking_enabled = 1 if data.get('thinking_enabled') else 0
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        if is_default:
+            cursor.execute('UPDATE workers_config SET is_default = 0')
+        cursor.execute('''
+            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled) VALUES (?, ?, ?, ?, ?)
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled))
+        conn.commit()
+        return jsonify({"status": "success", "message": "Worker added"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@api_llm_bp.route('/api/workers/<int:worker_id>', methods=['PUT'])
+def update_worker(worker_id):
+    data = request.json
+    if not data or 'worker_name' not in data or 'worker_model' not in data:
+        return jsonify({"error": "Missing worker_name or worker_model"}), 400
+        
+    is_default = 1 if data.get('is_default') else 0
+    thinking_enabled = 1 if data.get('thinking_enabled') else 0
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        if is_default:
+            cursor.execute('UPDATE workers_config SET is_default = 0 WHERE id != ?', (worker_id,))
+        cursor.execute('''
+            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ? WHERE id = ?
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, worker_id))
+        conn.commit()
+        if cursor.rowcount == 0:
+            return jsonify({"error": "Worker not found"}), 404
+        return jsonify({"status": "success", "message": "Worker updated"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@api_llm_bp.route('/api/workers/<int:worker_id>', methods=['DELETE'])
+def delete_worker(worker_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('DELETE FROM workers_config WHERE id = ?', (worker_id,))
+        conn.commit()
+        if cursor.rowcount > 0:
+            return jsonify({"status": "success", "message": "Worker deleted"}), 200
+        else:
+            return jsonify({"error": "Worker not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()

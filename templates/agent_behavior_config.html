@@ -23,57 +23,29 @@
                 Configure how the AI agent behaves during conversations.
             </small>
             <div class="settings-form" style="margin-top: 8px; flex: 1; display: flex; flex-direction: column;">
-                <div style="margin-bottom: 16px;">
-                    <label style="display: block; margin-bottom: 4px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Agent Name</label>
-                    <input type="text" id="agentNameInput" value="{{ agent_name }}" placeholder="Agent-000000"
-                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.9rem;">
-                </div>
-
-                <div style="margin-bottom: 16px;">
-                    <label
-                        style="display: block; margin-bottom: 4px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">System
-                        Prompt</label>
-                    <textarea id="systemPromptInput" rows="3" placeholder="Enter the system prompt for the agent..."
-                        style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ system_prompt }}</textarea>
-                </div>
+                <input type="hidden" id="systemPromptInput" value="">
 
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div>
                         <label
-                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Enable
-                            Thinking</label>
-                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Allow the LLM to
-                            reason step-by-step before responding.</small>
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Require "@" Mention Prefix</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Require users to write @ before the worker name to trigger a response.</small>
                     </div>
                     <label
                         style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
-                        <input type="checkbox" id="thinkingToggle" {% if thinking_enabled %}checked{% endif %}
+                        <input type="checkbox" id="requireAtToggle" {% if require_at_prefix %}checked{% endif %}
                             style="opacity: 0; width: 0; height: 0;">
                         <span
                             style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
                         <span
                             style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
-                            id="toggleKnob"></span>
+                            id="requireAtKnob"></span>
                     </label>
                 </div>
 
-                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
-                        <label
-                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Add current datetime</label>
-                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Automatically prepend the current date and time to the system prompt.</small>
-                    </div>
-                    <label
-                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
-                        <input type="checkbox" id="datetimeToggle" {% if add_datetime_enabled %}checked{% endif %}
-                            style="opacity: 0; width: 0; height: 0;">
-                        <span
-                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
-                        <span
-                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
-                            id="datetimeToggleKnob"></span>
-                    </label>
-                </div>
+
+
+
 
             </div>
         </div>
@@ -151,25 +123,20 @@
         }
     }
 
-    setupToggle('thinkingToggle', 'toggleKnob');
-    setupToggle('datetimeToggle', 'datetimeToggleKnob');
+    setupToggle('requireAtToggle', 'requireAtKnob');
 
     function saveAgentSettings() {
-        const agentName = document.getElementById('agentNameInput').value;
         const systemPrompt = document.getElementById('systemPromptInput').value;
-        const thinkingEnabled = document.getElementById('thinkingToggle').checked;
-        const addDatetimeEnabled = document.getElementById('datetimeToggle').checked;
         const idePrompt = document.getElementById('idePromptInput').value;
+        const requireAtPrefix = document.getElementById('requireAtToggle').checked;
 
         fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                agent_name: agentName,
                 system_prompt: systemPrompt,
-                thinking_enabled: thinkingEnabled,
-                add_datetime_enabled: addDatetimeEnabled,
-                ide_prompt: idePrompt
+                ide_prompt: idePrompt,
+                require_at_prefix: requireAtPrefix
             })
         }).then(res => res.json()).then(data => {
             if (data.status === 'success') {

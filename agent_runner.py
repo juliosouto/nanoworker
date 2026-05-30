@@ -266,6 +266,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     """
     Runs the LLM agent, providing it with tools and conversation history.
     """
+    original_content = content
     # Wait a bit to debounce multiple rapid messages (like multiple images from WhatsApp)
     time.sleep(2)
 
@@ -351,6 +352,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     # Ensure client is available for fallback handling
     client = None
 
+    from utils.message_utils import resolve_worker_from_content, clean_mention
+    worker = resolve_worker_from_content(original_content)
+    
+    # Clean worker mention from content
+    content = clean_mention(original_content)
+
     if is_wa_group:
         content = truncate_message(content, 1000)
 
@@ -373,13 +380,21 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         last_user = history.pop()
         send_content = last_user.parts + send_content
 
-    preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
-    models_to_try = [m for m in preferences if m and m.strip()]
-    if not models_to_try:
-        models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
+    models_to_try = []
+    if worker and worker.get('worker_model'):
+        models_to_try = [worker['worker_model']]
+    else:
+        preferences = [get_config(f"LLM_PREF_{i}") for i in range(1, 6)]
+        models_to_try = [m for m in preferences if m and m.strip()]
+        if not models_to_try:
+            models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
     
     try:
-        system_prompt = get_config("SYSTEM_PROMPT", "")
+        system_prompt = ""
+        if worker and worker.get('worker_instructions'):
+            system_prompt = worker['worker_instructions']
+        else:
+            system_prompt = ""
         
         cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
         session_row = cursor.fetchone()
@@ -389,13 +404,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat. However, if you need to send an image or file (like a screenshot), you MUST use the send_whatsapp_file tool (with phone_number='self').\n\n{system_prompt}"
             elif channel_id.startswith('web-chat'):
                 system_prompt = f"This message comes from the web chat (HTML). You must reply via the web chat.\n\n{system_prompt}"
-        thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
-        add_datetime_enabled = get_config("ADD_DATETIME_ENABLED", "false").lower() == "true"
-        
-        if add_datetime_enabled:
-            import datetime
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            system_prompt = f"Current Datetime: {current_time}\n\n{system_prompt}"
+        thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
             
         from database import get_ide_config
         project_path = get_ide_config('CURRENT_PROJECT_PATH')
@@ -421,7 +430,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             "temperature": 0.0,
         }
         
-        system_prompt = standard_prompts.apply_standard_rules(system_prompt)
+        worker_name = worker['worker_name'] if worker else None
+        system_prompt = standard_prompts.apply_standard_rules(system_prompt, worker_name=worker_name)
         
         if current_image_base64:
             system_prompt = standard_prompts.apply_image_document_rules(system_prompt)

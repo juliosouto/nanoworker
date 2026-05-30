@@ -175,11 +175,13 @@ def general_config_page():
 
 @views_bp.route('/settings/agent_behavior')
 def agent_behavior_config_page():
+    from utils.message_utils import get_default_worker
+    default_worker = get_default_worker()
+    agent_name = default_worker['worker_name'] if default_worker else ''
     return render_template('agent_behavior_config.html',
-        agent_name=get_config('agent_name', ''),
+        agent_name=agent_name,
         system_prompt=get_config('SYSTEM_PROMPT', ''),
-        thinking_enabled=get_config('THINKING_ENABLED', 'false').lower() == 'true',
-        add_datetime_enabled=get_config('ADD_DATETIME_ENABLED', 'false').lower() == 'true',
+        require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')
@@ -365,6 +367,21 @@ def llm_config_page():
         llm_pref_5=llm_pref_5,
         models=model_list)
 
+@views_bp.route('/workers')
+def workers_page():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled FROM workers_config')
+    workers = cursor.fetchall()
+    
+    cursor.execute('SELECT model_name, provider FROM llm_config WHERE enabled = 1')
+    models = cursor.fetchall()
+    conn.close()
+
+    worker_list = [dict(w) for w in workers]
+    model_list = [dict(m) for m in models]
+    return render_template('workers.html', workers=worker_list, models=model_list)
+
 @views_bp.route('/cron')
 def cron_jobs_page():
     conn = get_db()
@@ -401,11 +418,12 @@ def dashboard_page():
     if project_path:
         memory_block += f"\n\nIMPORTANT: You are currently operating in the workspace directory: {project_path}\n"
         
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    memory_block += f"\nCurrent Datetime: {current_time}\n\n"
     
-    system_prompt = get_config('SYSTEM_PROMPT', '')
-    full_system_prompt = apply_standard_rules(system_prompt)
+    from utils.message_utils import get_default_worker
+    default_worker = get_default_worker()
+    system_prompt = default_worker['worker_instructions'] if default_worker else ''
+    default_name = default_worker['worker_name'] if default_worker else None
+    full_system_prompt = apply_standard_rules(system_prompt, worker_name=default_name)
     full_system_prompt = f"{memory_block}\n{full_system_prompt}"
     system_tokens = len(full_system_prompt) // 4
     
