@@ -26,9 +26,27 @@
                         <span>System Prompt:</span>
                         <span style="font-family: monospace;">{{ system_tokens }}</span>
                     </li>
-                    <li style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <span>OS Tools:</span>
-                        <span style="font-family: monospace;">{{ tools_tokens }}</span>
+                    <li style="margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>OS Tools (Recipes Enabled):</span>
+                            <div>
+                                {% if use_recipes %}
+                                <span style="font-size: 0.75rem; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: 600;">ACTIVE</span>
+                                {% endif %}
+                                <span style="font-family: monospace;">{{ tools_tokens_recipes }}</span>
+                            </div>
+                        </div>
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>OS Tools (Recipes Disabled):</span>
+                            <div>
+                                {% if not use_recipes %}
+                                <span style="font-size: 0.75rem; color: #f59e0b; background: rgba(245, 158, 11, 0.15); padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: 600;">ACTIVE</span>
+                                {% endif %}
+                                <span style="font-family: monospace;">{{ tools_tokens_full }}</span>
+                            </div>
+                        </div>
                     </li>
                     {% if double_check_tokens > 0 %}
                     <li style="display: flex; justify-content: space-between; margin-bottom: 8px;">
@@ -38,10 +56,18 @@
                     {% endif %}
                 </ul>
             </div>
-
-            <div style="margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; font-weight: 600; color: var(--text-main);">
-                <span>Total Estimate:</span>
-                <span style="font-family: monospace; color: #3b82f6;">~{{ total_min }} to {{ total_max }}</span>
+ 
+            <div style="margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+                <div style="display: flex; justify-content: space-between; font-weight: 600; color: var(--text-main); margin-bottom: 4px;">
+                    <span>Active Total Estimate:</span>
+                    <span style="font-family: monospace; color: #3b82f6;">~{{ total_min }} to {{ total_max }}</span>
+                </div>
+                {% if tools_tokens_full > tools_tokens_recipes %}
+                <div style="font-size: 0.75rem; color: #10b981; display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                    <span>Savings with Recipes:</span>
+                    <span style="font-weight: 600;">-{{ tools_tokens_full - tools_tokens_recipes }} tokens (~{{ (((tools_tokens_full - tools_tokens_recipes) / (total_min_full or 1)) * 100) | round | int }}% of total)</span>
+                </div>
+                {% endif %}
             </div>
         </div>
 

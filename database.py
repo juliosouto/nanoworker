@@ -330,6 +330,12 @@ def init_db():
         default_name = f"Agent-{random_id}"
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('agent_name', ?)", (default_name,))
 
+    # Default Use Recipes as Tools Config
+    cursor.execute("SELECT value FROM app_config WHERE key = 'USE_RECIPES_AS_TOOLS'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('USE_RECIPES_AS_TOOLS', 'true')")
+
     # LLM Config Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS llm_config (

@@ -34,13 +34,15 @@ def get_agent_name_api():
     agent_name = default_worker['worker_name'] if default_worker else ''
     
     require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+    use_recipes_as_tools = get_config("USE_RECIPES_AS_TOOLS", "true").lower() == "true"
     
     return jsonify({
         "agent_name": agent_name,
         "worker_names": worker_names,
         "allow_mentions": allow_mentions,
         "allow_audio_mentions": allow_audio_mentions,
-        "require_at_prefix": require_at_prefix
+        "require_at_prefix": require_at_prefix,
+        "use_recipes_as_tools": use_recipes_as_tools
     })
 
 @api_settings_bp.route('/api/settings', methods=['POST'])
@@ -77,6 +79,7 @@ def save_settings():
             
     bool_mapping = {
         'require_at_prefix': 'REQUIRE_AT_PREFIX',
+        'use_recipes_as_tools': 'USE_RECIPES_AS_TOOLS',
         'perm_terminal': 'PERM_TERMINAL',
         'perm_playwright': 'PERM_PLAYWRIGHT',
         'perm_safari': 'PERM_SAFARI',

@@ -10,7 +10,7 @@ import standard_prompts
 from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.session import current_session_id
-from utils.message_utils import truncate_message
+from utils.message_utils import truncate_message, process_tools_for_llm
 
 load_dotenv(override=True)
 
@@ -103,7 +103,7 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
     
     # 2. Convert raw python functions into OpenAI tool schemas
-    permitted_tools = get_permitted_tools() if config_kwargs.get("tools") else []
+    permitted_tools = process_tools_for_llm(get_permitted_tools()) if config_kwargs.get("tools") else []
     openai_tools = [convert_to_openai_tool(f) for f in permitted_tools] if permitted_tools else None
     
     # Normalize model name for reasoning detection
@@ -695,7 +695,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             "temperature": 0.0,
         }
         if tools_enabled:
-            config_kwargs["tools"] = get_permitted_tools()
+            config_kwargs["tools"] = process_tools_for_llm(get_permitted_tools())
         
         worker_name = worker['worker_name'] if worker else None
         system_prompt = standard_prompts.apply_standard_rules(system_prompt, worker_name=worker_name, include_tool_rules=include_tool_rules)
@@ -803,7 +803,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             logging.error(f"Error fetching user memory: {e}")
 
         config_kwargs = {
-            "tools": get_permitted_tools(),
+            "tools": process_tools_for_llm(get_permitted_tools()),
             "temperature": 0.0,
         }
 
