@@ -49,7 +49,8 @@ class TestGroqRouting(unittest.TestCase):
             session_id,
             message_in_id,
             'messages_out',
-            'decrypted_api_key'
+            'decrypted_api_key',
+            None
         )
 
 if __name__ == '__main__':
