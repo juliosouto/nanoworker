@@ -119,3 +119,72 @@ def save_tool_setting():
         return jsonify({"status": "success", "message": f"Tool {tool_name} saved"}), 200
     
     return jsonify({"status": "error", "message": "Invalid payload"}), 400
+
+@api_settings_bp.route('/api/setup', methods=['POST'])
+def run_setup():
+    data = request.json or {}
+    gemini_key = data.get('gemini_api_key')
+    openai_key = data.get('openai_api_key')
+    groq_key = data.get('groq_api_key')
+    qwen_key = data.get('qwen_api_key')
+
+    # Import setup utilities
+    from utils.setup_utils import (
+        backup_database,
+        setup_app_config,
+        setup_ide_prompt,
+        setup_ide_settings,
+        setup_llm_config,
+        setup_agents,
+        setup_whatsapp_config,
+        setup_workers_config
+    )
+    from database import encrypt_value
+
+    try:
+        # Backup the database before any destructive operations
+        backup_path = backup_database()
+
+        # Run all setup utilities
+        setup_app_config()
+        setup_ide_prompt()
+        setup_ide_settings()
+        setup_llm_config()
+        setup_agents()
+        setup_whatsapp_config()
+        setup_workers_config()
+
+        # Update API keys in app_config if provided
+        if gemini_key:
+            set_config('GEMINI_API_KEY', gemini_key)
+        if openai_key:
+            set_config('OPENAI_API_KEY', openai_key)
+        if groq_key:
+            set_config('GROQ_API_KEY', groq_key)
+        if qwen_key:
+            set_config('QWEN_API_KEY', qwen_key)
+
+        # Also update the newly seeded models in llm_config
+        conn = get_db()
+        cursor = conn.cursor()
+        try:
+            if gemini_key:
+                enc_gemini = encrypt_value(gemini_key)
+                cursor.execute("UPDATE llm_config SET api_key = ? WHERE provider = 'Google'", (enc_gemini,))
+            if openai_key:
+                enc_openai = encrypt_value(openai_key)
+                cursor.execute("UPDATE llm_config SET api_key = ? WHERE provider = 'OpenAI' OR provider = 'openai'", (enc_openai,))
+            if groq_key:
+                enc_groq = encrypt_value(groq_key)
+                cursor.execute("UPDATE llm_config SET api_key = ? WHERE provider = 'Groq' OR provider = 'groq'", (enc_groq,))
+            if qwen_key:
+                enc_qwen = encrypt_value(qwen_key)
+                cursor.execute("UPDATE llm_config SET api_key = ? WHERE provider = 'DashScope' OR provider = 'Qwen'", (enc_qwen,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        return jsonify({"status": "success", "message": "Setup completed successfully!"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
