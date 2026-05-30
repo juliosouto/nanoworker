@@ -153,9 +153,71 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: 
     )
     return response.choices[0].message.content
 
+def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
+    """
+    Realiza uma chamada para a API do Groq.
+    
+    Argumentos:
+        model_name (str): O nome do modelo Groq.
+        history (list): O histórico da conversa.
+        config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
+        content (any): O conteúdo da mensagem do usuário atual.
+        cursor (sqlite3.Cursor): O cursor do banco de dados.
+        session_id (str): ID da sessão.
+        message_in_id (str): ID da mensagem de entrada.
+        table (str): Nome da tabela de saída.
+        api_key (str, opcional): Chave de API do Groq. Levanta exceção se ausente.
+        
+    Retorna:
+        str: O texto da resposta gerada pelo modelo.
+    """
+    from groq import Groq
+    if not api_key:
+        raise ValueError("API Key for Groq model is not set.")
+    
+    client = Groq(api_key=api_key)
+    
+    messages = []
+    if "system_instruction" in config_kwargs:
+        messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
+        
+    for msg in history:
+        role = "user" if msg.role == "user" else "assistant"
+        text_parts = [p.text for p in msg.parts if getattr(p, 'text', None)]
+        messages.append({"role": role, "content": " ".join(text_parts)})
+        
+    if isinstance(content, list):
+        text_parts = []
+        for p in content:
+            if isinstance(p, str):
+                text_parts.append(p)
+            elif getattr(p, 'text', None):
+                text_parts.append(p.text)
+    else:
+        text_parts = [content]
+    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
+    
+    limit_tokens = max_output_tokens if max_output_tokens else 1024
+    completion = client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+        temperature=1,
+        max_completion_tokens=limit_tokens,
+        top_p=1,
+        stream=True,
+        stop=None
+    )
+    
+    full_response = []
+    for chunk in completion:
+        if chunk.choices and chunk.choices[0].delta.content:
+            full_response.append(chunk.choices[0].delta.content)
+            
+    return "".join(full_response)
+
 def route_llm_call(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, is_ide: bool) -> str:
     """
-    Roteia a chamada do LLM para o provedor apropriado (Qwen ou Gemini) 
+    Roteia a chamada do LLM para o provedor apropriado (Qwen, Groq ou Gemini) 
     com base nas configurações armazenadas no banco de dados para o modelo solicitado.
     
     Argumentos:
@@ -176,18 +238,20 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content:
     from database import get_db, decrypt_value
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT provider, api_key, thinking FROM llm_config WHERE model_name = ?", (model_name,))
+    c.execute("SELECT provider, api_key, thinking, max_output_tokens FROM llm_config WHERE model_name = ?", (model_name,))
     row = c.fetchone()
     conn.close()
     
     provider = None
     api_key = None
     model_thinking = False
+    max_output_tokens = None
     if row:
         provider = row['provider'].lower() if row['provider'] else None
         if row['api_key']:
             api_key = decrypt_value(row['api_key'])
         model_thinking = bool(row['thinking'])
+        max_output_tokens = row['max_output_tokens']
             
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
@@ -195,6 +259,8 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content:
         
     if provider == "qwen" or model_name.lower().startswith("qwen"):
         return call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+    elif provider == "groq" or model_name.lower().startswith("groq/"):
+        return call_groq_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
     else:
         return call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
 
@@ -390,6 +456,18 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             models_to_try = [get_config("GEMINI_MODEL", "gemini-2.5-flash")]
     
     try:
+        tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
+
+        # Check if the primary model's provider is Google/Gemini
+        is_google_model = True
+        if models_to_try:
+            cursor.execute("SELECT provider FROM llm_config WHERE model_name = ?", (models_to_try[0],))
+            row_prov = cursor.fetchone()
+            if row_prov:
+                is_google_model = row_prov['provider'].lower() in ['google', 'gemini']
+
+        include_tool_rules = tools_enabled and is_google_model
+
         system_prompt = ""
         if worker and worker.get('worker_instructions'):
             system_prompt = worker['worker_instructions']
@@ -401,7 +479,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if session_row:
             channel_id = session_row['channel_id']
             if channel_id.startswith('whatsapp:') or channel_id.startswith('wa_web:'):
-                system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat. However, if you need to send an image or file (like a screenshot), you MUST use the send_whatsapp_file tool (with phone_number='self').\n\n{system_prompt}"
+                if include_tool_rules:
+                    system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. Do NOT use the send_whatsapp_message tool for standard replies. The system will automatically forward your text to the chat. However, if you need to send an image or file (like a screenshot), you MUST use the send_whatsapp_file tool (with phone_number='self').\n\n{system_prompt}"
+                else:
+                    system_prompt = f"This message comes from WhatsApp. To reply to the current conversation, simply output your text directly. The system will automatically forward your text to the chat.\n\n{system_prompt}"
             elif channel_id.startswith('web-chat'):
                 system_prompt = f"This message comes from the web chat (HTML). You must reply via the web chat.\n\n{system_prompt}"
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
@@ -426,12 +507,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             logging.error(f"Error fetching user memory: {e}")
 
         config_kwargs = {
-            "tools": get_permitted_tools(),
             "temperature": 0.0,
         }
+        if tools_enabled:
+            config_kwargs["tools"] = get_permitted_tools()
         
         worker_name = worker['worker_name'] if worker else None
-        system_prompt = standard_prompts.apply_standard_rules(system_prompt, worker_name=worker_name)
+        system_prompt = standard_prompts.apply_standard_rules(system_prompt, worker_name=worker_name, include_tool_rules=include_tool_rules)
         
         if current_image_base64:
             system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
