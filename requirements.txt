@@ -16,3 +16,5 @@ trafilatura
 curl_cffi
 ddgs
 langdetect
+groq
+

@@ -164,14 +164,15 @@ def add_worker():
         
     is_default = 1 if data.get('is_default') else 0
     thinking_enabled = 1 if data.get('thinking_enabled') else 0
+    tools_enabled = 0 if data.get('tools_enabled') is False else 1
     conn = get_db()
     cursor = conn.cursor()
     try:
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0')
         cursor.execute('''
-            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled) VALUES (?, ?, ?, ?, ?)
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled))
+            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled) VALUES (?, ?, ?, ?, ?, ?)
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled))
         conn.commit()
         return jsonify({"status": "success", "message": "Worker added"})
     except Exception as e:
@@ -187,14 +188,15 @@ def update_worker(worker_id):
         
     is_default = 1 if data.get('is_default') else 0
     thinking_enabled = 1 if data.get('thinking_enabled') else 0
+    tools_enabled = 0 if data.get('tools_enabled') is False else 1
     conn = get_db()
     cursor = conn.cursor()
     try:
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0 WHERE id != ?', (worker_id,))
         cursor.execute('''
-            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ? WHERE id = ?
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, worker_id))
+            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, tools_enabled = ? WHERE id = ?
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, worker_id))
         conn.commit()
         if cursor.rowcount == 0:
             return jsonify({"error": "Worker not found"}), 404

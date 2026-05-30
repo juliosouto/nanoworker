@@ -371,7 +371,7 @@ def llm_config_page():
 def workers_page():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled FROM workers_config')
     workers = cursor.fetchall()
     
     cursor.execute('SELECT model_name, provider FROM llm_config WHERE enabled = 1')

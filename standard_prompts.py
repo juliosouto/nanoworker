@@ -1,6 +1,6 @@
 import datetime
 
-def apply_standard_rules(system_prompt: str, worker_name: str = None) -> str:
+def apply_standard_rules(system_prompt: str, worker_name: str = None, include_tool_rules: bool = True) -> str:
     """
     Appends standard rules to the beginning of the system prompt.
     Currently, the rules are empty as requested, but can be updated here.
@@ -12,15 +12,15 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None) -> str:
     3. Current Datetime: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     4. The final answer to the end user must have up to one paragraph, between 50 and 150 characters, unless other number is explicitly requested.
     5. If the user requested detailed information or data, your response could have up to 10000 characters.
-    6. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>.
-    7. I am sending a list of tools you can use.
-    8. Check if there is a tool that can solve the user's request. If not, inform the user about it.
-    """
+    6. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>."""
 
-    #print('**********************************************', flush=True)
-    #print(standard_rules, flush=True)
-    #print('**********************************************', flush=True)
+    if include_tool_rules:
+        standard_rules += """
+    7. I am sending a list of tools you can use.
+    8. Check if there is a tool that can solve the user's request. If not, inform the user about it."""
     
+    standard_rules += "\n    "
+
     if standard_rules:
         if system_prompt:
             return f"{standard_rules}\n{system_prompt}"

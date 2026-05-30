@@ -38,7 +38,7 @@
     }
 </style>
 
-<div style="max-width: 1000px; margin: 0 auto; padding: 20px;">
+<div style="max-width: 1400px; margin: 0 auto; padding: 20px;">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px;">
         <div style="display: flex; align-items: center;">
             <a href="/settings"
@@ -70,9 +70,10 @@
                 <thead>
                     <tr
                         style="border-bottom: 1px solid rgba(255,255,255,0.08); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.8px;">
-                        <th style="padding: 14px 16px;">Worker Name</th>
+                        <th style="padding: 14px 16px; white-space: nowrap;">Worker Name</th>
                         <th style="padding: 14px 16px;">Worker Model</th>
                         <th style="padding: 14px 16px;">Thinking</th>
+                        <th style="padding: 14px 16px;">Tools</th>
                         <th style="padding: 14px 16px;">Worker Instructions</th>
                         <th style="padding: 14px 16px; text-align: right; width: 150px;">Actions</th>
                     </tr>
@@ -83,7 +84,7 @@
                     <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;"
                         onmouseover="this.style.background='rgba(255,255,255,0.02)'"
                         onmouseout="this.style.background='none'">
-                        <td style="padding: 16px; font-weight: 600; color: var(--text-main);">
+                        <td style="padding: 16px; font-weight: 600; color: var(--text-main); white-space: nowrap;">
                             {{ w.worker_name }}
                             {% if w.is_default %}
                             <span style="background: rgba(46, 204, 113, 0.15); color: #2ecc71; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 8px; font-weight: 500;">Default</span>
@@ -93,6 +94,13 @@
                         <td style="padding: 16px;">
                             {% if w.thinking_enabled %}
                             <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Enabled</span>
+                            {% else %}
+                            <span style="background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Disabled</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 16px;">
+                            {% if w.tools_enabled %}
+                            <span style="background: rgba(46, 204, 113, 0.15); color: #2ecc71; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Enabled</span>
                             {% else %}
                             <span style="background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Disabled</span>
                             {% endif %}
@@ -196,6 +204,11 @@
                 <label for="thinking_enabled" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Enable Thinking (step-by-step reasoning)</label>
             </div>
 
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <input type="checkbox" id="tools_enabled" style="cursor: pointer; width: 16px; height: 16px;" checked>
+                <label for="tools_enabled" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Enable Tools (allow LLM to call database, terminal, browser, etc.)</label>
+            </div>
+
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 24px;">
                 <input type="checkbox" id="is_default" style="cursor: pointer; width: 16px; height: 16px;">
                 <label for="is_default" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Set as Default Worker</label>
@@ -252,6 +265,7 @@
         document.getElementById('workerForm').reset();
         document.getElementById('is_default').checked = false;
         document.getElementById('thinking_enabled').checked = false;
+        document.getElementById('tools_enabled').checked = true;
         document.getElementById('modalTitle').innerText = 'Add New Worker';
         currentEditWorkerId = null;
     }
@@ -265,6 +279,7 @@
             document.getElementById('worker_instructions').value = worker.worker_instructions || '';
             document.getElementById('is_default').checked = !!worker.is_default;
             document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
+            document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
             document.getElementById('modalTitle').innerText = 'Edit Worker';
             openWorkerModal();
         } else {
@@ -278,7 +293,8 @@
             worker_model: document.getElementById('worker_model').value,
             worker_instructions: document.getElementById('worker_instructions').value,
             is_default: document.getElementById('is_default').checked,
-            thinking_enabled: document.getElementById('thinking_enabled').checked
+            thinking_enabled: document.getElementById('thinking_enabled').checked,
+            tools_enabled: document.getElementById('tools_enabled').checked
         };
 
         if (!payload.worker_name || !payload.worker_model) {
