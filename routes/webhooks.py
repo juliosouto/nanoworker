@@ -88,7 +88,8 @@ def webhook():
         image_base64=file_path,
         file_mime_type=data.get('file_mime_type'),
         file_name=data.get('file_name'),
-        on_complete=on_complete
+        on_complete=on_complete,
+        client_message_id=data.get('message_id')
     )
     
     # /new command is synchronous — return immediate response

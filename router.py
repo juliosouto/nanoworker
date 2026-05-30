@@ -8,13 +8,22 @@ from utils.message_utils import clean_mention
 
 logger = logging.getLogger(__name__)
 
-def route_inbound_message(channel_id, content, sender_id=None, image_base64=None, file_mime_type=None, file_name=None, on_complete=None):
+def route_inbound_message(channel_id, content, sender_id=None, image_base64=None, file_mime_type=None, file_name=None, on_complete=None, client_message_id=None):
     """
     Finds/creates a session, writes to messages_in, and dispatches
     processing in a background thread. Returns immediately.
     """
     conn = get_db()
     cursor = conn.cursor()
+
+    # Deduplicate based on client_message_id
+    if client_message_id:
+        cursor.execute('SELECT id, session_id FROM messages_in WHERE client_message_id = ? LIMIT 1', (client_message_id,))
+        existing = cursor.fetchone()
+        if existing:
+            conn.close()
+            logger.info(f"Duplicate message ignored: client_message_id={client_message_id}")
+            return existing['id'], existing['session_id'], False
 
     # 1. Resolve agent for this channel (for MVP, just pick agent-1)
     agent_id = 'agent-1'
@@ -34,9 +43,9 @@ def route_inbound_message(channel_id, content, sender_id=None, image_base64=None
     # 3. Write to messages_in
     message_id = f"msg-in-{uuid.uuid4().hex[:8]}"
     cursor.execute('''
-        INSERT INTO messages_in (id, session_id, content, sender_id, image_base64, file_mime_type, file_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (message_id, session_id, content, sender_id, image_base64, file_mime_type, file_name))
+        INSERT INTO messages_in (id, session_id, content, sender_id, image_base64, file_mime_type, file_name, client_message_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (message_id, session_id, content, sender_id, image_base64, file_mime_type, file_name, client_message_id))
     conn.commit()
     
     from utils.message_utils import get_default_worker

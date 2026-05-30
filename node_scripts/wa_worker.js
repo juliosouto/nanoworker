@@ -256,7 +256,8 @@ async function connectToWhatsApp() {
                     sender_id: senderId,
                     sender_jid: actualSenderJid,
                     remote_jid: remoteJid,
-                    content: text
+                    content: text,
+                    message_id: msg.key.id
                 };
                 if (audioBase64) {
                     payload.audio_base64 = audioBase64;
