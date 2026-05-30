@@ -433,6 +433,7 @@ def init_db():
         file_mime_type TEXT,
         file_name TEXT,
         gemini_file_uri TEXT,
+        client_message_id TEXT,
         processed BOOLEAN DEFAULT 0,
         process_after TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         recurrence TEXT,
@@ -469,6 +470,11 @@ def init_db():
             pass
     try:
         cursor.execute("ALTER TABLE messages_in ADD COLUMN gemini_file_uri TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
+    try:
+        cursor.execute("ALTER TABLE messages_in ADD COLUMN client_message_id TEXT")
     except sqlite3.OperationalError as e:
         if "duplicate column name" not in str(e).lower():
             pass

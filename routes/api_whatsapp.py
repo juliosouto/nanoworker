@@ -127,7 +127,8 @@ def whatsapp_inbound():
             channel_id=channel_id,
             content=content,
             sender_id=sender_id,
-            on_complete=make_wa_callback(sender_id)
+            on_complete=make_wa_callback(sender_id),
+            client_message_id=msg["message_id"]
         )
 
     return jsonify({"status": "ok"}), 200
