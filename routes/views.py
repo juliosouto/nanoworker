@@ -1,6 +1,6 @@
 import os
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, redirect, url_for
 
 import state
 from database import get_config, get_db
@@ -8,6 +8,10 @@ from database import get_config, get_db
 views_bp = Blueprint('views', __name__)
 
 @views_bp.route('/')
+def index():
+    return redirect(url_for('views.dashboard_page'))
+
+@views_bp.route('/chat')
 def chat():
     conn = get_db()
     cursor = conn.cursor()
