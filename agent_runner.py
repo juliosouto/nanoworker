@@ -14,6 +14,218 @@ from utils.message_utils import truncate_message
 
 load_dotenv(override=True)
 
+def convert_to_openai_tool(func) -> dict:
+    """
+    Converte uma função Python em um esquema de ferramenta compatível com OpenAI.
+    """
+    import inspect
+    name = func.__name__
+    
+    # Docstring parsing for description
+    doc = func.__doc__ or ""
+    description = doc.strip().split("\n\n")[0].strip() if doc else f"Executa a função {name}"
+    
+    sig = inspect.signature(func)
+    properties = {}
+    required = []
+    
+    # Type map Python to JSON Schema
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object"
+    }
+    
+    for param_name, param in sig.parameters.items():
+        if param_name in ["self", "args", "kwargs"]:
+            continue
+            
+        param_type = type_map.get(param.annotation, "string")
+        
+        # Simple extraction of parameter description from docstring if present
+        param_desc = f"Parâmetro {param_name}"
+        if doc:
+            for line in doc.split("\n"):
+                if f"{param_name}:" in line or f"{param_name} " in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        param_desc = parts[1].strip()
+                        break
+                        
+        properties[param_name] = {
+            "type": param_type,
+            "description": param_desc
+        }
+        
+        if param.default == inspect.Parameter.empty:
+            required.append(param_name)
+            
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description[:1024],
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        }
+    }
+
+def execute_openai_compatible_llm(client, model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, limit_tokens: int = None) -> str:
+    """
+    Unified recursive executor loop for OpenAI-compatible LLM providers that dynamically
+    converts tools and executes python function calls.
+    """
+    # 1. Map history and content to OpenAI format
+    messages = []
+    if "system_instruction" in config_kwargs:
+        messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
+        
+    for msg in history:
+        role = "user" if msg.role == "user" else "assistant"
+        text_parts = [p.text for p in msg.parts if getattr(p, 'text', None)]
+        messages.append({"role": role, "content": " ".join(text_parts)})
+        
+    if isinstance(content, list):
+        text_parts = []
+        for p in content:
+            if isinstance(p, str):
+                text_parts.append(p)
+            elif getattr(p, 'text', None):
+                text_parts.append(p.text)
+    else:
+        text_parts = [content]
+    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
+    
+    # 2. Convert raw python functions into OpenAI tool schemas
+    permitted_tools = get_permitted_tools() if config_kwargs.get("tools") else []
+    openai_tools = [convert_to_openai_tool(f) for f in permitted_tools] if permitted_tools else None
+    
+    # Normalize model name for reasoning detection
+    model_lower = model_name.lower()
+    model_base = model_lower.split("/")[-1] if "/" in model_lower else model_lower
+    is_reasoning = model_base.startswith("o1") or model_base.startswith("o3") or "nano" in model_base
+    
+    # 3. Tool execution loop (max 10 iterations)
+    for iteration in range(10):
+        call_args = {
+            "model": model_name,
+            "messages": messages,
+        }
+        if openai_tools:
+            call_args["tools"] = openai_tools
+            
+        if not is_reasoning:
+            call_args["temperature"] = 1.0
+            if limit_tokens:
+                call_args["max_tokens"] = limit_tokens
+        else:
+            if limit_tokens:
+                call_args["max_completion_tokens"] = limit_tokens
+                
+        try:
+            response = client.chat.completions.create(**call_args)
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "max_tokens" in err_msg or "unsupported" in err_msg or "parameter" in err_msg:
+                fallback_args = {
+                    "model": model_name,
+                    "messages": messages,
+                }
+                if openai_tools:
+                    fallback_args["tools"] = openai_tools
+                if limit_tokens:
+                    fallback_args["max_completion_tokens"] = limit_tokens
+                response = client.chat.completions.create(**fallback_args)
+            else:
+                raise e
+                
+        message = response.choices[0].message
+        tool_calls = getattr(message, 'tool_calls', None)
+        
+        if not tool_calls:
+            # We reached the final text answer, return it
+            return message.content or ""
+            
+        # We have tool calls!
+        # A. Append assistant message with tool calls to standard OpenAI history
+        serialized_tool_calls = []
+        for tc in tool_calls:
+            serialized_tool_calls.append({
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments
+                }
+            })
+        messages.append({
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": serialized_tool_calls
+        })
+        
+        # B. Execute the tools in Python and log feedback in the output table
+        tools_used = []
+        tool_results = []
+        for tc in tool_calls:
+            tool_name = tc.function.name
+            arguments_str = tc.function.arguments
+            
+            import json
+            try:
+                args = json.loads(arguments_str) if arguments_str else {}
+            except Exception:
+                args = {}
+                
+            # Log execution starting
+            feedback_msg = f"⚙️ Executando ferramenta local: {tool_name}..."
+            cursor.execute(f'''
+                INSERT INTO {table} (id, session_id, in_reply_to, content)
+                VALUES (?, ?, ?, ?)
+            ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback_msg))
+            cursor.connection.commit()
+            
+            # Execute Python function
+            result = "Tool not found"
+            for f in permitted_tools:
+                if f.__name__ == tool_name:
+                    try:
+                        result = f(**args)
+                    except Exception as ex:
+                        result = f"Error executing {tool_name}: {str(ex)}"
+                    break
+                    
+            if tool_name not in tools_used:
+                tools_used.append(tool_name)
+            tool_results.append(str(result))
+            
+            # Append tool response message to OpenAI history
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "name": tool_name,
+                "content": str(result)
+            })
+            
+        # Log execution finished
+        if tools_used:
+            tools_str = ", ".join(tools_used)
+            results_str = "\n\nResultados:\n- " + "\n- ".join([r[:500] + '...' if len(r) > 500 else r for r in tool_results])
+            feedback_done = f"⚙️ Executadas ferramentas: {tools_str}{results_str}"
+            cursor.execute(f'''
+                INSERT INTO {table} (id, session_id, in_reply_to, content)
+                VALUES (?, ?, ?, ?)
+            ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback_done))
+            cursor.connection.commit()
+            
+    return "Error: Tool execution loop exceeded maximum iterations."
+
 def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
     """
     Realiza uma chamada para a API do Google Gemini.
@@ -109,7 +321,7 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: 
         history (list): O histórico da conversa.
         config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
         content (any): O conteúdo da mensagem do usuário atual.
-        cursor (sqlite3.Cursor): O cursor do banco de dados (não utilizado ativamente nesta função, mantido para assinatura padrão).
+        cursor (sqlite3.Cursor): O cursor do banco de dados.
         session_id (str): ID da sessão.
         message_in_id (str): ID da mensagem de entrada.
         table (str): Nome da tabela de saída.
@@ -126,32 +338,7 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: 
         api_key=api_key,
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     )
-    
-    messages = []
-    if "system_instruction" in config_kwargs:
-        messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
-        
-    for msg in history:
-        role = "user" if msg.role == "user" else "assistant"
-        text_parts = [p.text for p in msg.parts if getattr(p, 'text', None)]
-        messages.append({"role": role, "content": " ".join(text_parts)})
-        
-    if isinstance(content, list):
-        text_parts = []
-        for p in content:
-            if isinstance(p, str):
-                text_parts.append(p)
-            elif getattr(p, 'text', None):
-                text_parts.append(p.text)
-    else:
-        text_parts = [content]
-    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
-    
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=messages
-    )
-    return response.choices[0].message.content
+    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table)
 
 def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
     """
@@ -167,6 +354,7 @@ def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content: 
         message_in_id (str): ID da mensagem de entrada.
         table (str): Nome da tabela de saída.
         api_key (str, opcional): Chave de API do Groq. Levanta exceção se ausente.
+        max_output_tokens (int, opcional): Limite máximo de tokens de saída.
         
     Retorna:
         str: O texto da resposta gerada pelo modelo.
@@ -176,48 +364,39 @@ def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content: 
         raise ValueError("API Key for Groq model is not set.")
     
     client = Groq(api_key=api_key)
-    
-    messages = []
-    if "system_instruction" in config_kwargs:
-        messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
-        
-    for msg in history:
-        role = "user" if msg.role == "user" else "assistant"
-        text_parts = [p.text for p in msg.parts if getattr(p, 'text', None)]
-        messages.append({"role": role, "content": " ".join(text_parts)})
-        
-    if isinstance(content, list):
-        text_parts = []
-        for p in content:
-            if isinstance(p, str):
-                text_parts.append(p)
-            elif getattr(p, 'text', None):
-                text_parts.append(p.text)
-    else:
-        text_parts = [content]
-    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
-    
     limit_tokens = max_output_tokens if max_output_tokens else 1024
-    completion = client.chat.completions.create(
-        model=model_name,
-        messages=messages,
-        temperature=1,
-        max_completion_tokens=limit_tokens,
-        top_p=1,
-        stream=True,
-        stop=None
-    )
+    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
+
+def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
+    """
+    Realiza uma chamada para a API da OpenAI.
     
-    full_response = []
-    for chunk in completion:
-        if chunk.choices and chunk.choices[0].delta.content:
-            full_response.append(chunk.choices[0].delta.content)
-            
-    return "".join(full_response)
+    Argumentos:
+        model_name (str): O nome do modelo OpenAI.
+        history (list): O histórico da conversa.
+        config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
+        content (any): O conteúdo da mensagem do usuário atual.
+        cursor (sqlite3.Cursor): O cursor do banco de dados.
+        session_id (str): ID da sessão.
+        message_in_id (str): ID da mensagem de entrada.
+        table (str): Nome da tabela de saída.
+        api_key (str, opcional): Chave de API da OpenAI. Levanta exceção se ausente.
+        max_output_tokens (int, opcional): Limite máximo de tokens de saída.
+        
+    Retorna:
+        str: O texto da resposta gerada pelo modelo.
+    """
+    import openai
+    if not api_key:
+        raise ValueError("API Key for OpenAI model is not set.")
+    
+    client = openai.OpenAI(api_key=api_key)
+    limit_tokens = max_output_tokens if max_output_tokens else None
+    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
 
 def route_llm_call(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, is_ide: bool) -> str:
     """
-    Roteia a chamada do LLM para o provedor apropriado (Qwen, Groq ou Gemini) 
+    Roteia a chamada do LLM para o provedor apropriado (Qwen, Groq, OpenAI ou Gemini) 
     com base nas configurações armazenadas no banco de dados para o modelo solicitado.
     
     Argumentos:
@@ -247,11 +426,23 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content:
     model_thinking = False
     max_output_tokens = None
     if row:
-        provider = row['provider'].lower() if row['provider'] else None
-        if row['api_key']:
-            api_key = decrypt_value(row['api_key'])
-        model_thinking = bool(row['thinking'])
-        max_output_tokens = row['max_output_tokens']
+        try:
+            provider = row['provider'].lower() if row['provider'] else None
+        except (KeyError, IndexError, TypeError):
+            provider = None
+        try:
+            if row['api_key']:
+                api_key = decrypt_value(row['api_key'])
+        except (KeyError, IndexError, TypeError):
+            api_key = None
+        try:
+            model_thinking = bool(row['thinking'])
+        except (KeyError, IndexError, TypeError):
+            model_thinking = False
+        try:
+            max_output_tokens = row['max_output_tokens']
+        except (KeyError, IndexError, TypeError):
+            max_output_tokens = None
             
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
@@ -261,6 +452,8 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content:
         return call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
     elif provider == "groq" or model_name.lower().startswith("groq/"):
         return call_groq_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
+    elif provider == "openai" or model_name.lower().startswith("openai/"):
+        return call_openai_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
     else:
         return call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
 
@@ -458,15 +651,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     try:
         tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
 
-        # Check if the primary model's provider is Google/Gemini
-        is_google_model = True
-        if models_to_try:
-            cursor.execute("SELECT provider FROM llm_config WHERE model_name = ?", (models_to_try[0],))
-            row_prov = cursor.fetchone()
-            if row_prov:
-                is_google_model = row_prov['provider'].lower() in ['google', 'gemini']
-
-        include_tool_rules = tools_enabled and is_google_model
+        include_tool_rules = tools_enabled
 
         system_prompt = ""
         if worker and worker.get('worker_instructions'):
