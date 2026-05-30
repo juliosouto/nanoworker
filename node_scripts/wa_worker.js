@@ -37,8 +37,10 @@ function clearTyping(jid) {
 }
 
 let currentAgentName = null;
+let workerNames = [];
 let allowMentions = true;
 let allowAudioMentions = false;
+let requireAtPrefix = true;
 let lastAgentNameFetch = 0;
 
 async function getAgentName() {
@@ -48,15 +50,18 @@ async function getAgentName() {
             const res = await axios.get('http://127.0.0.1:5000/api/config/agent_name');
             if (res.data) {
                 currentAgentName = res.data.agent_name ? res.data.agent_name.toLowerCase() : null;
+                workerNames = res.data.worker_names ? res.data.worker_names.map(name => name.toLowerCase()) : [];
                 allowMentions = res.data.allow_mentions !== false;
                 allowAudioMentions = res.data.allow_audio_mentions === true;
+                requireAtPrefix = res.data.require_at_prefix !== false;
             }
         } catch (e) {
             // ignore
         }
         lastAgentNameFetch = now;
     }
-    return { name: currentAgentName, allowMentions: allowMentions, allowAudioMentions: allowAudioMentions };
+    const names = workerNames.length > 0 ? workerNames : (currentAgentName ? [currentAgentName] : []);
+    return { name: currentAgentName, workerNames: names, allowMentions: allowMentions, allowAudioMentions: allowAudioMentions, requireAtPrefix: requireAtPrefix };
 }
 
 async function connectToWhatsApp() {
@@ -152,7 +157,26 @@ async function connectToWhatsApp() {
             }
 
             const agentConfig = await getAgentName();
-            const isMention = agentConfig.allowMentions && agentConfig.name && earlyText.toLowerCase().startsWith(`@${agentConfig.name}`);
+            
+            let isMention = false;
+            if (agentConfig.allowMentions && agentConfig.workerNames && agentConfig.workerNames.length > 0) {
+                const textLower = earlyText.toLowerCase().trim();
+                for (const name of agentConfig.workerNames) {
+                    const nameClean = name.trim();
+                    const nameNoSpaces = nameClean.replace(/\s+/g, '');
+                    if (textLower.startsWith(`@${nameClean}`) || textLower.startsWith(`@${nameNoSpaces}`)) {
+                        isMention = true;
+                        break;
+                    }
+                    if (!agentConfig.requireAtPrefix) {
+                        if (textLower.startsWith(nameClean) || textLower.startsWith(nameNoSpaces)) {
+                            isMention = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
             const isAudio = msgContent.audioMessage !== undefined || msgContent.audioMessage !== null;
             const allowAudioMentions = agentConfig.allowAudioMentions;
 

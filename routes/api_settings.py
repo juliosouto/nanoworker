@@ -13,6 +13,10 @@ def get_agent_name_api():
     cursor = conn.cursor()
     cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
+    
+    # Query all worker names
+    cursor.execute('SELECT worker_name FROM workers_config')
+    worker_names = [row['worker_name'].strip() for row in cursor.fetchall()]
     conn.close()
     
     try:
@@ -29,10 +33,14 @@ def get_agent_name_api():
     default_worker = get_default_worker()
     agent_name = default_worker['worker_name'] if default_worker else ''
     
+    require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+    
     return jsonify({
         "agent_name": agent_name,
+        "worker_names": worker_names,
         "allow_mentions": allow_mentions,
-        "allow_audio_mentions": allow_audio_mentions
+        "allow_audio_mentions": allow_audio_mentions,
+        "require_at_prefix": require_at_prefix
     })
 
 @api_settings_bp.route('/api/settings', methods=['POST'])
