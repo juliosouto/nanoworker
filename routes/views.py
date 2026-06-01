@@ -141,7 +141,7 @@ def whatsapp_settings_page():
     
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions, allow_audio_mentions, rate_limit_per_minute FROM whatsapp_config WHERE id = 1')
+    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions, allow_audio_mentions, rate_limit_per_minute, allow_group_tools, allow_private_tools FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
     conn.close()
     
@@ -163,6 +163,16 @@ def whatsapp_settings_page():
         rate_limit = int(config['rate_limit_per_minute']) if config else 0
     except (IndexError, KeyError, TypeError, ValueError):
         rate_limit = 0
+
+    try:
+        allow_group_tools = bool(config['allow_group_tools']) if config else False
+    except (IndexError, KeyError):
+        allow_group_tools = False
+
+    try:
+        allow_private_tools = bool(config['allow_private_tools']) if config else False
+    except (IndexError, KeyError):
+        allow_private_tools = False
     
     return render_template('whatsapp_settings.html', 
                            has_wa_web_session=has_wa_web_session,
@@ -171,7 +181,9 @@ def whatsapp_settings_page():
                            bot_enabled=bot_enabled,
                            allow_mentions=allow_mentions,
                            allow_audio_mentions=allow_audio_mentions,
-                           rate_limit=rate_limit)
+                           rate_limit=rate_limit,
+                           allow_group_tools=allow_group_tools,
+                           allow_private_tools=allow_private_tools)
 
 @views_bp.route('/settings/general')
 def general_config_page():
