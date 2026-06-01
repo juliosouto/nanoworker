@@ -552,12 +552,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
     session_row = cursor.fetchone()
     is_wa_group = False
+    is_wa_private = False
     if session_row:
         channel_id = session_row['channel_id']
         if channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:'):
             clean_channel = channel_id.replace('wa_web:', '').replace('whatsapp:', '')
             if '-' in clean_channel or clean_channel.startswith('120363'):
                 is_wa_group = True
+            else:
+                is_wa_private = True
     
     # Fetch history
     cursor.execute('''
@@ -650,6 +653,23 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     
     try:
         tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
+
+        if is_wa_group:
+            cursor.execute('SELECT allow_group_tools FROM whatsapp_config WHERE id = 1')
+            wa_config = cursor.fetchone()
+            try:
+                if wa_config and not wa_config['allow_group_tools']:
+                    tools_enabled = False
+            except (IndexError, KeyError):
+                pass
+        elif is_wa_private:
+            cursor.execute('SELECT allow_private_tools FROM whatsapp_config WHERE id = 1')
+            wa_config = cursor.fetchone()
+            try:
+                if wa_config and not wa_config['allow_private_tools']:
+                    tools_enabled = False
+            except (IndexError, KeyError):
+                pass
 
         include_tool_rules = tools_enabled
 

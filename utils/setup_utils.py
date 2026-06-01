@@ -191,7 +191,7 @@ def setup_agents():
 def setup_whatsapp_config():
     """
     Populates the whatsapp_config table with standard settings, targeting only the requested fields.
-    Scope is limited to: bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions.
+    Scope is limited to: bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions, allow_group_tools, allow_private_tools.
     Old configurations for these specific fields are directly overwritten/cleared.
     """
     conn = get_db()
@@ -203,16 +203,16 @@ def setup_whatsapp_config():
             # Overwrite only the scoped fields, leaving other fields intact
             cursor.execute('''
                 UPDATE whatsapp_config
-                SET bot_enabled = ?, allow_mentions = ?, rate_limit_per_minute = ?, allow_audio_mentions = ?
+                SET bot_enabled = ?, allow_mentions = ?, rate_limit_per_minute = ?, allow_audio_mentions = ?, allow_group_tools = ?, allow_private_tools = ?
                 WHERE id = 1
-            ''', (1, 1, 6, 1))
+            ''', (1, 1, 6, 1, 0, 0))
         else:
             cursor.execute('''
                 INSERT INTO whatsapp_config (
-                    id, bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions
+                    id, bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions, allow_group_tools, allow_private_tools
                 )
-                VALUES (?, ?, ?, ?, ?)
-            ''', (1, 1, 1, 6, 1))
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (1, 1, 1, 6, 1, 0, 0))
         conn.commit()
     finally:
         conn.close()

@@ -79,14 +79,14 @@
 
             <form id="wa-config-form">
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
+                    <div style="flex: 1; padding-right: 16px;">
                         <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Bot
                             Active</label>
                         <small style="display: block; margin-top: 2px; color: var(--text-muted);">Enable or pause bot
                             responses on WhatsApp.</small>
                     </div>
                     <label
-                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0;">
                         <input type="checkbox" id="bot-enabled" {% if bot_enabled %}checked{% endif %}
                             style="opacity: 0; width: 0; height: 0;">
                         <span
@@ -98,7 +98,7 @@
                 </div>
 
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
+                    <div style="flex: 1; padding-right: 16px;">
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Allow
                             Mentions</label>
@@ -106,7 +106,7 @@
                             anyone if they start with @agent_name.</small>
                     </div>
                     <label
-                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0;">
                         <input type="checkbox" id="allow-mentions" {% if allow_mentions %}checked{% endif %}
                             style="opacity: 0; width: 0; height: 0;">
                         <span
@@ -118,14 +118,14 @@
                 </div>
                 
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
+                    <div style="flex: 1; padding-right: 16px;">
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Allow
                             Audio Mentions</label>
                         <small style="display: block; margin-top: 2px; color: var(--text-muted);">Transcribe group audios to check for @agent_name.</small>
                     </div>
                     <label
-                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0;">
                         <input type="checkbox" id="allow-audio-mentions" {% if allow_audio_mentions %}checked{% endif %}
                             style="opacity: 0; width: 0; height: 0;">
                         <span
@@ -133,6 +133,44 @@
                         <span
                             style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
                             id="audioMentionsToggleKnob"></span>
+                    </label>
+                </div>
+
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="flex: 1; padding-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Allow
+                            Group Tools</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Enable or disable sending tools from messages coming from whatsapp groups.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0;">
+                        <input type="checkbox" id="allow-group-tools" {% if allow_group_tools %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="groupToolsToggleKnob"></span>
+                    </label>
+                </div>
+
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="flex: 1; padding-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Allow
+                            Private Tools</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Enable or disable sending tools from messages coming from direct (private) whatsapp chats.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0;">
+                        <input type="checkbox" id="allow-private-tools" {% if allow_private_tools %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="privateToolsToggleKnob"></span>
                     </label>
                 </div>
 
@@ -291,6 +329,8 @@
     setupToggle('bot-enabled', 'botToggleKnob');
     setupToggle('allow-mentions', 'mentionsToggleKnob');
     setupToggle('allow-audio-mentions', 'audioMentionsToggleKnob');
+    setupToggle('allow-group-tools', 'groupToolsToggleKnob');
+    setupToggle('allow-private-tools', 'privateToolsToggleKnob');
 
     function updateAllowedFieldsState() {
         const allowMentions = document.getElementById('allow-mentions');
@@ -322,6 +362,8 @@
             bot_enabled: document.getElementById('bot-enabled').checked,
             allow_mentions: document.getElementById('allow-mentions').checked,
             allow_audio_mentions: document.getElementById('allow-audio-mentions').checked,
+            allow_group_tools: document.getElementById('allow-group-tools').checked,
+            allow_private_tools: document.getElementById('allow-private-tools').checked,
             allowed_from: document.getElementById('allowed-from').value,
             allowed_to: document.getElementById('allowed-to').value,
             rate_limit_per_minute: document.getElementById('rate-limit').value

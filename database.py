@@ -568,6 +568,16 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_group_tools BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_private_tools BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
     # Rate Limit Usage Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS rate_limit_usage (
