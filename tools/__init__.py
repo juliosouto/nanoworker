@@ -3,7 +3,7 @@ import os
 import inspect
 import importlib
 import sys
-from database import get_config
+from database import get_config, get_tool_config
 from utils.file_utils import read_file, write_file
 
 OS_PLATFORM = platform.system()
@@ -59,8 +59,8 @@ try:
 except Exception:
     pass
 
-def get_permitted_tools():
-    """Returns a list of tools filtered by the user's specific tool settings."""
+def get_permitted_tools(is_admin=False, is_group=False, is_direct=False):
+    """Returns a list of tools filtered by the user's specific tool settings and context."""
     tools = []
     
     for tool_func in list(AVAILABLE_TOOLS):
@@ -75,8 +75,18 @@ def get_permitted_tools():
                         continue
 
         tool_name = tool_func.__name__
-        # Se for verdadeiro (default = 'true'), a ferramenta é disponibilizada
-        if get_config(f'TOOL_{tool_name.upper()}', 'true').lower() == 'true':
-            tools.append(tool_func)
+        config = get_tool_config(tool_name)
+        if config.get('enabled', True):
+            if is_admin:
+                tools.append(tool_func)
+            elif is_group:
+                if config.get('allow_others_from_group_msgs'):
+                    tools.append(tool_func)
+            elif is_direct:
+                if config.get('allow_others_from_direct_msgs'):
+                    tools.append(tool_func)
+            else:
+                # If it's not a WhatsApp context (e.g. IDE or web chat), we default to allowing if enabled
+                tools.append(tool_func)
             
     return tools

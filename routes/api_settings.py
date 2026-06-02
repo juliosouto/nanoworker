@@ -3,7 +3,7 @@ import subprocess
 
 from flask import Blueprint, jsonify, request
 
-from database import get_config, get_db, set_config
+from database import get_config, get_db, set_config, update_tool_config
 
 api_settings_bp = Blueprint('api_settings', __name__)
 
@@ -68,7 +68,6 @@ def save_settings():
         'whatsapp_access_token': 'WHATSAPP_ACCESS_TOKEN',
         'whatsapp_phone_number_id': 'WHATSAPP_PHONE_NUMBER_ID',
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
-        'system_prompt': 'SYSTEM_PROMPT',
         'ide_prompt': 'IDE_PROMPT',
         'whisper_model': 'WHISPER_MODEL'
     }
@@ -110,12 +109,17 @@ def save_settings():
 def save_tool_setting():
     data = request.json
     tool_name = data.get('tool_name')
-    is_enabled = data.get('enabled')
     
-    if tool_name is not None and is_enabled is not None:
-        db_key = f"TOOL_{tool_name.upper()}"
-        val = 'true' if is_enabled else 'false'
-        set_config(db_key, val)
+    if tool_name is not None:
+        updates = {}
+        if 'enabled' in data:
+            updates['enabled'] = data['enabled']
+        if 'allow_others_from_direct_msgs' in data:
+            updates['allow_others_from_direct_msgs'] = data['allow_others_from_direct_msgs']
+        if 'allow_others_from_group_msgs' in data:
+            updates['allow_others_from_group_msgs'] = data['allow_others_from_group_msgs']
+            
+        update_tool_config(tool_name, updates)
         return jsonify({"status": "success", "message": f"Tool {tool_name} saved"}), 200
     
     return jsonify({"status": "error", "message": "Invalid payload"}), 400
@@ -137,7 +141,8 @@ def run_setup():
         setup_llm_config,
         setup_agents,
         setup_whatsapp_config,
-        setup_workers_config
+        setup_workers_config,
+        setup_tools_config
     )
     from database import encrypt_value
 
@@ -153,6 +158,7 @@ def run_setup():
         setup_agents()
         setup_whatsapp_config()
         setup_workers_config()
+        setup_tools_config()
 
         # Update API keys in app_config if provided
         if gemini_key:

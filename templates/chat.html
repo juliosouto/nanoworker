@@ -32,7 +32,7 @@
             {% set s_id = s['channel_id'].replace('web-chat-', '') if s['channel_id'].startswith('web-chat-') else
             'default' %}
             <li id="sidebar-item-{{ s_id }}">
-                <a href="/?chat_id={{ s_id }}"
+                <a href="/chat?chat_id={{ s_id }}"
                     style="text-decoration: none; color: inherit; display: block; padding: 10px; border-radius: 8px; background: {% if chat_id == s_id %}rgba(255,255,255,0.1){% else %}rgba(255,255,255,0.02){% endif %}; transition: background 0.2s; {% if chat_id == s_id %}border-left: 3px solid var(--accent);{% endif %}"
                     onmouseover="this.style.background='rgba(255,255,255,0.1)'"
                     onmouseout="this.style.background='{% if chat_id == s_id %}rgba(255,255,255,0.1){% else %}rgba(255,255,255,0.02){% endif %}'">
@@ -159,7 +159,7 @@
 <script>
     function startNewChat() {
         const newId = Math.random().toString(36).substring(2, 9);
-        window.location.href = '/?chat_id=' + newId + '&focus=true';
+        window.location.href = '/chat?chat_id=' + newId + '&focus=true';
     }
 
     function handleKeyPress(event) {
@@ -284,7 +284,7 @@
             const newLi = document.createElement('li');
             newLi.id = 'sidebar-item-' + chatId;
             newLi.innerHTML = `
-                <a href="/?chat_id=${chatId}" style="text-decoration: none; color: inherit; display: block; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.1); border-left: 3px solid var(--accent);">
+                <a href="/chat?chat_id=${chatId}" style="text-decoration: none; color: inherit; display: block; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.1); border-left: 3px solid var(--accent);">
                     <strong>Chat: ${chatId}</strong>
                     <div class="sidebar-time" style="font-size: 0.8em; color: var(--text-muted); margin-top: 4px;">Just now</div>
                 </a>
@@ -456,7 +456,7 @@
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    window.location.href = '/';
+                    window.location.href = '/chat';
                 } else {
                     alert('Failed to delete chat.');
                 }

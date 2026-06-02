@@ -271,6 +271,83 @@ def update_user_memory(memory_id: int, instruction: str) -> bool:
     conn.close()
     return success
 
+def get_tool_enabled(tool_name: str) -> bool:
+    """
+    Returns whether a tool is enabled or not based on tools_config.
+    Defaults to True.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT enabled FROM tools_config WHERE tool_name = ?', (tool_name.lower(),))
+        row = cursor.fetchone()
+        conn.close()
+        if row is not None:
+            return bool(row['enabled'])
+    except sqlite3.OperationalError:
+        conn.close()
+    return True
+
+def get_tool_config(tool_name: str) -> dict:
+    """
+    Returns the full configuration for a tool from tools_config.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT enabled, allow_others_from_direct_msgs, allow_others_from_group_msgs FROM tools_config WHERE tool_name = ?', (tool_name.lower(),))
+        row = cursor.fetchone()
+        conn.close()
+        if row is not None:
+            return {
+                'enabled': bool(row['enabled']),
+                'allow_others_from_direct_msgs': bool(row['allow_others_from_direct_msgs']),
+                'allow_others_from_group_msgs': bool(row['allow_others_from_group_msgs'])
+            }
+    except sqlite3.OperationalError:
+        conn.close()
+        
+    return {
+        'enabled': True,
+        'allow_others_from_direct_msgs': False,
+        'allow_others_from_group_msgs': False
+    }
+
+def update_tool_config(tool_name: str, updates: dict):
+    """
+    Updates one or more configuration fields for a tool.
+    """
+    if not updates:
+        return
+        
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        tool_name_lower = tool_name.lower()
+        cursor.execute('SELECT COUNT(*) FROM tools_config WHERE tool_name = ?', (tool_name_lower,))
+        exists = cursor.fetchone()[0] > 0
+        
+        if not exists:
+            cursor.execute('INSERT INTO tools_config (tool_name) VALUES (?)', (tool_name_lower,))
+            
+        set_clauses = []
+        values = []
+        for key, value in updates.items():
+            if key in ['enabled', 'allow_others_from_direct_msgs', 'allow_others_from_group_msgs']:
+                set_clauses.append(f"{key} = ?")
+                values.append(value)
+                
+        if set_clauses:
+            values.append(tool_name_lower)
+            query = f"UPDATE tools_config SET {', '.join(set_clauses)} WHERE tool_name = ?"
+            cursor.execute(query, tuple(values))
+            
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
 def init_db():
     """
     Inicializa o banco de dados SQLite, criando as tabelas necessárias caso
@@ -568,16 +645,6 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    try:
-        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_group_tools BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_private_tools BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
     # Rate Limit Usage Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS rate_limit_usage (
@@ -630,6 +697,52 @@ def init_db():
         cursor.execute("ALTER TABLE workers_config ADD COLUMN tools_enabled BOOLEAN DEFAULT 1")
     except sqlite3.OperationalError:
         pass  # Column already exists
+
+    # Tools Config Table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tools_config (
+        tool_name TEXT PRIMARY KEY,
+        private_key TEXT,
+        config_data TEXT,
+        enabled BOOLEAN DEFAULT 1,
+        allow_others_from_direct_msgs BOOLEAN DEFAULT 0,
+        allow_others_from_group_msgs BOOLEAN DEFAULT 0
+    )
+    ''')
+
+    try:
+        cursor.execute("ALTER TABLE tools_config ADD COLUMN enabled BOOLEAN DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    try:
+        cursor.execute("ALTER TABLE tools_config ADD COLUMN allow_others_from_direct_msgs BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE tools_config ADD COLUMN allow_others_from_group_msgs BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Migrate tool configurations from app_config to tools_config
+    cursor.execute("SELECT key, value FROM app_config WHERE key LIKE 'TOOL_%'")
+    tools_app_configs = cursor.fetchall()
+    for row in tools_app_configs:
+        key = row['key']
+        # Convert the value string to boolean
+        val_bool = 1 if str(row['value']).lower() == 'true' else 0
+        tool_name = key[5:].lower()  # strip 'TOOL_' and lower it
+        
+        # Insert or update in tools_config
+        cursor.execute('SELECT COUNT(*) FROM tools_config WHERE tool_name = ?', (tool_name,))
+        if cursor.fetchone()[0] > 0:
+            cursor.execute('UPDATE tools_config SET enabled = ? WHERE tool_name = ?', (val_bool, tool_name))
+        else:
+            cursor.execute('INSERT INTO tools_config (tool_name, enabled) VALUES (?, ?)', (tool_name, val_bool))
+            
+        # Delete old key from app_config
+        cursor.execute('DELETE FROM app_config WHERE key = ?', (key,))
 
     conn.commit()
     conn.close()

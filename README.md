@@ -4,24 +4,36 @@ NanoWorker is an Artificial Intelligence agent inspired by the OpenClaw and Nano
 
 It is built in **Python** using the **Flask** microframework, and features a **Node.js** bridge for native integration with **WhatsApp**. Impressively, **90% of the codebase was written with the assistance of Google Antigravity**.
 
-⚠️ **Notice:** This project was developed and **tested only on MacOS**. Furthermore, in this initial version, the language model (LLM) integration exclusively supports the **Google Gemini** and **Alibaba Qwen** APIs.
+⚠️ **Notice:** This project was originally developed for **MacOS**, but now includes **experimental support for Windows and Linux**. Furthermore, in this initial version, the language model (LLM) integration exclusively supports the **Google Gemini** and **Alibaba Qwen** APIs.
 
 ## 🚀 Features
 
 - **Web Chat:** Native web chat interface with multimodal support for text, images, and files.
 - **Built-in IDE:** A simple, integrated development environment that allows you to develop software with AI and continuously improve the NanoWorker project itself.
-- **WhatsApp Integration:** Node.js bridge (using libraries like Baileys) to connect the agent to WhatsApp, allowing it to send and receive text messages, audio, and media.
+- **WhatsApp Integration:** Node.js bridge (using libraries like Baileys) to connect the agent to WhatsApp, allowing it to send and receive text messages, audio, and media. Includes advanced permission logic for administrators and group chats.
 - **Multimodal Processing with Gemini or Qwen:** Utilizes the **Google Gemini** or **Alibaba Qwen** APIs to understand text, images, and documents.
 - **Local Audio Processing:**
   - **Speech-to-Text (STT):** Uses `faster-whisper` to transcribe received audio (e.g., WhatsApp voice messages) locally.
-  - **Text-to-Speech (TTS):** Uses `kokoro-onnx` for local audio generation.
+  - **Text-to-Speech (TTS):** Uses `kokoro-onnx` for local audio generation, supporting automated voice notes responses via `<audio>` tags.
 - **Security:** API keys are encrypted before being saved in the local database (SQLite).
-- **Permissions Management:** Granular control over the agent's capabilities, allowing you to explicitly grant or deny specific system permissions via the settings interface.
+- **Permissions Management:** Granular control over the agent's capabilities, allowing you to explicitly grant or deny specific system permissions and manage allowed contacts via the settings interface.
 - **Task Scheduling:** Execution of scheduled routines (Cron) to perform tasks in the background.
-- **MacOS Ecosystem Integration:** Deep integration and support for native macOS applications including **Mail, Messages, Photos, Calendar, Reminders, Notes, Terminal**, and **iCloud Drive**.
-- **Tool Calling:** The agent has the ability to search the web, navigate pages, and much more (using `playwright`, etc).
+- **Cross-Platform & Native Integrations:** Deep integration with native macOS applications, with growing support for Linux and Windows ecosystems.
+- **Dynamic Tool Calling:** The agent has the ability to search the web, navigate pages, and dynamically load OS-specific or **self-developed tools** at runtime.
 
 ## Interface Overview
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/10a1a5f2-b361-43ba-8d84-77507287958c" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/4a338792-65c1-4df2-a7af-50159a86640a" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/801a2153-4f4b-4df9-891a-9ce174ddc9e3" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/777e9369-c649-44c6-9364-8de241232e02" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/74d52e85-e1d8-44d9-889e-b7d73e0fcae3" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/e095d8fa-2ec1-4a63-b818-4761881e73d4" />
 
 <img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/c3e57797-dfc5-4998-9c1e-c4c6f333281c" />
 
@@ -29,15 +41,15 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 
 <img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/d2e567bd-4596-4238-8729-8b412200efb8" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/9d3d1083-9ce9-4279-b5bc-d71a6282239a" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/322bb9ef-bc34-4751-845d-cdf4c081d793" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/af104c79-9512-4465-8b42-39c2dec87b73" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/70306870-e9ac-4e42-aee4-74040ffcc69a" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/82eb4eb1-0efa-461a-81e2-f31f27060cd0" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/075cde69-ed35-4e47-a12f-23346f110be3" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/7ce7d702-2de1-49fc-9a1c-d8107d9c9515" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/066b3373-404f-48d2-bea6-ac4981287515" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/439a0b9f-bf59-4739-8aa7-d6e240a51928" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/5e005b9b-235e-490c-98a3-efa25a9bd134" />
 
 ## 🛠️ System Requirements
 
@@ -200,7 +212,7 @@ By using NanoWorker, you acknowledge and agree to the following risks:
 - **API Costs:** Autonomous agents can consume tokens rapidly, especially when processing large files, images, or getting stuck in a loop. You are entirely responsible for monitoring your Google Gemini API usage and covering any associated costs.
 
 ## 🤝 Contributing
-Feel free to submit *Pull Requests* aiming to expand support to new OSs (like Linux and Windows) or integrate new LLM APIs.
+Feel free to submit *Pull Requests* aiming to improve cross-platform support (Linux and Windows), enhance self-developed tools, or integrate new LLM APIs.
 
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
