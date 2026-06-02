@@ -23,21 +23,33 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 
 ## Interface Overview
 
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/10a1a5f2-b361-43ba-8d84-77507287958c" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/4a338792-65c1-4df2-a7af-50159a86640a" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/801a2153-4f4b-4df9-891a-9ce174ddc9e3" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/777e9369-c649-44c6-9364-8de241232e02" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/74d52e85-e1d8-44d9-889e-b7d73e0fcae3" />
+
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/e095d8fa-2ec1-4a63-b818-4761881e73d4" />
+
 <img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/c3e57797-dfc5-4998-9c1e-c4c6f333281c" />
 
 <img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/986f3791-a927-4811-9ed7-958377e5b06f" />
 
 <img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/d2e567bd-4596-4238-8729-8b412200efb8" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/9d3d1083-9ce9-4279-b5bc-d71a6282239a" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/322bb9ef-bc34-4751-845d-cdf4c081d793" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/af104c79-9512-4465-8b42-39c2dec87b73" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/70306870-e9ac-4e42-aee4-74040ffcc69a" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/82eb4eb1-0efa-461a-81e2-f31f27060cd0" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/075cde69-ed35-4e47-a12f-23346f110be3" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/7ce7d702-2de1-49fc-9a1c-d8107d9c9515" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/066b3373-404f-48d2-bea6-ac4981287515" />
 
-<img width="1512" height="862" alt="image" src="https://github.com/user-attachments/assets/439a0b9f-bf59-4739-8aa7-d6e240a51928" />
+<img width="1512" height="861" alt="image" src="https://github.com/user-attachments/assets/5e005b9b-235e-490c-98a3-efa25a9bd134" />
 
 ## 🛠️ System Requirements
 
