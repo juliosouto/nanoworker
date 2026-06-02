@@ -191,7 +191,7 @@ def setup_agents():
 def setup_whatsapp_config():
     """
     Populates the whatsapp_config table with standard settings, targeting only the requested fields.
-    Scope is limited to: bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions, allow_group_tools, allow_private_tools.
+    Scope is limited to: bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions.
     Old configurations for these specific fields are directly overwritten/cleared.
     """
     conn = get_db()
@@ -203,16 +203,16 @@ def setup_whatsapp_config():
             # Overwrite only the scoped fields, leaving other fields intact
             cursor.execute('''
                 UPDATE whatsapp_config
-                SET bot_enabled = ?, allow_mentions = ?, rate_limit_per_minute = ?, allow_audio_mentions = ?, allow_group_tools = ?, allow_private_tools = ?
+                SET bot_enabled = ?, allow_mentions = ?, rate_limit_per_minute = ?, allow_audio_mentions = ?
                 WHERE id = 1
-            ''', (1, 1, 6, 1, 0, 0))
+            ''', (1, 1, 6, 1))
         else:
             cursor.execute('''
                 INSERT INTO whatsapp_config (
-                    id, bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions, allow_group_tools, allow_private_tools
+                    id, bot_enabled, allow_mentions, rate_limit_per_minute, allow_audio_mentions
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (1, 1, 1, 6, 1, 0, 0))
+                VALUES (?, ?, ?, ?, ?)
+            ''', (1, 1, 1, 6, 1))
         conn.commit()
     finally:
         conn.close()
@@ -242,6 +242,32 @@ def setup_workers_config():
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', worker)
+        conn.commit()
+    finally:
+        conn.close()
+
+def setup_tools_config():
+    """
+    Populates the tools_config table with default configuration values for all available tools.
+    By default, all tools are enabled, but access from groups and direct messages by other users is disabled.
+    """
+    from database import get_db
+    from tools import AVAILABLE_TOOLS
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        # Clear all existing configs
+        cursor.execute("DELETE FROM tools_config")
+        
+        for tool in AVAILABLE_TOOLS:
+            tool_name = getattr(tool, '__name__', str(tool))
+            cursor.execute('''
+                INSERT INTO tools_config (
+                    tool_name, enabled, allow_others_from_group_msgs, allow_others_from_direct_msgs
+                )
+                VALUES (?, 1, 0, 0)
+            ''', (tool_name,))
         conn.commit()
     finally:
         conn.close()

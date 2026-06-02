@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 BAILEYS_URL = "http://127.0.0.1:3000/send"
 
-def is_allowed_to(phone_number: str) -> bool:
+def _is_allowed_to(phone_number: str) -> bool:
     if not phone_number or phone_number.lower() == "self":
         return True
 
@@ -83,7 +83,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
     from utils.audio_utils import extract_and_generate_audio
     text_to_send, audio_path = extract_and_generate_audio(message)
     
-    if not is_allowed_to(phone_number):
+    if not _is_allowed_to(phone_number):
         return (f"Error: Access Denied. Sending messages to {phone_number} is blocked. "
                 f"You MUST reply to the user EXACTLY with this English sentence: "
                 f"'You must add the number {phone_number} to the Allowed To list in the WhatsApp Settings page before I can send messages to it.'")
@@ -154,7 +154,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     import uuid
     import mimetypes
 
-    if not is_allowed_to(phone_number):
+    if not _is_allowed_to(phone_number):
         return (f"Error: Access Denied. Sending files to {phone_number} is blocked. "
                 f"You MUST reply to the user EXACTLY with this English sentence: "
                 f"'You must add the number {phone_number} to the Allowed To list in the WhatsApp Settings page before I can send files to it.'")

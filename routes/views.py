@@ -3,7 +3,7 @@ import os
 from flask import Blueprint, render_template, request, redirect, url_for
 
 import state
-from database import get_config, get_db
+from database import get_config, get_db, get_tool_config
 
 views_bp = Blueprint('views', __name__)
 
@@ -130,9 +130,7 @@ def settings_page():
         agents=agents, sessions=sessions, 
         current_model=current_model, has_api_key=has_api_key,
         has_wa_token=has_wa_token, wa_phone_id=wa_phone_id, 
-        wa_verify_token=wa_verify_token, has_wa_web_session=has_wa_web_session,
-        system_prompt=get_config('SYSTEM_PROMPT', ''),
-        thinking_enabled=get_config('THINKING_ENABLED', 'false').lower() == 'true')
+        wa_verify_token=wa_verify_token, has_wa_web_session=has_wa_web_session)
 
 @views_bp.route('/settings/whatsapp')
 def whatsapp_settings_page():
@@ -141,7 +139,7 @@ def whatsapp_settings_page():
     
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions, allow_audio_mentions, rate_limit_per_minute, allow_group_tools, allow_private_tools FROM whatsapp_config WHERE id = 1')
+    cursor.execute('SELECT allowed_from, allowed_to, bot_enabled, allow_mentions, allow_audio_mentions, rate_limit_per_minute FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
     conn.close()
     
@@ -164,16 +162,6 @@ def whatsapp_settings_page():
     except (IndexError, KeyError, TypeError, ValueError):
         rate_limit = 0
 
-    try:
-        allow_group_tools = bool(config['allow_group_tools']) if config else False
-    except (IndexError, KeyError):
-        allow_group_tools = False
-
-    try:
-        allow_private_tools = bool(config['allow_private_tools']) if config else False
-    except (IndexError, KeyError):
-        allow_private_tools = False
-    
     return render_template('whatsapp_settings.html', 
                            has_wa_web_session=has_wa_web_session,
                            allowed_from=allowed_from,
@@ -181,9 +169,7 @@ def whatsapp_settings_page():
                            bot_enabled=bot_enabled,
                            allow_mentions=allow_mentions,
                            allow_audio_mentions=allow_audio_mentions,
-                           rate_limit=rate_limit,
-                           allow_group_tools=allow_group_tools,
-                           allow_private_tools=allow_private_tools)
+                           rate_limit=rate_limit)
 
 @views_bp.route('/settings/general')
 def general_config_page():
@@ -196,7 +182,6 @@ def agent_behavior_config_page():
     agent_name = default_worker['worker_name'] if default_worker else ''
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
-        system_prompt=get_config('SYSTEM_PROMPT', ''),
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
         use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
         ide_prompt=get_config('IDE_PROMPT', ''))
@@ -278,7 +263,7 @@ def tools_management_page():
 
         tool_name = tool_func.__name__
         # Default is true if not set
-        is_enabled = get_config(f'TOOL_{tool_name.upper()}', 'true').lower() == 'true'
+        tool_config = get_tool_config(tool_name)
         
         doc = tool_func.__doc__ or "No description available."
         short_doc = doc.strip().split('\n')[0] # Get first line of docstring
@@ -300,7 +285,9 @@ def tools_management_page():
         
         sections[get_tool_category(tool_func)].append({
             'name': tool_name,
-            'enabled': is_enabled,
+            'enabled': tool_config['enabled'],
+            'allow_others_from_direct_msgs': tool_config['allow_others_from_direct_msgs'],
+            'allow_others_from_group_msgs': tool_config['allow_others_from_group_msgs'],
             'description': short_doc,
             'tokens': tool_tokens
         })

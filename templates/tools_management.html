@@ -50,10 +50,23 @@
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
                     <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px; word-break: break-word;">{{
                         tool.name|replace('_', ' ')|title }}</h3>
-                    <span
-                        style="font-size: 0.75rem; background: rgba(255, 255, 255, 0.1); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); white-space: nowrap;">
-                        ~{{ tool.tokens }} tokens
-                    </span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span
+                            style="font-size: 0.75rem; background: rgba(255, 255, 255, 0.1); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); white-space: nowrap;">
+                            ~{{ tool.tokens }} tokens
+                        </span>
+                        <button class="tool-settings-btn" 
+                            data-tool="{{ tool.name }}" 
+                            data-direct="{{ 'true' if tool.allow_others_from_direct_msgs else 'false' }}"
+                            data-group="{{ 'true' if tool.allow_others_from_group_msgs else 'false' }}"
+                            onclick="openToolModal(this)"
+                            style="background: none; border: none; cursor: pointer; color: var(--text-muted); display: flex; align-items: center; justify-content: center; padding: 4px; border-radius: 4px; transition: color 0.2s;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <small
                     style="display: -webkit-box; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 42px;">
@@ -83,9 +96,46 @@
     </div>
     {% endfor %}
 </div>
+
+<div id="toolSettingsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px);">
+    <div style="background: var(--bg-card, #1e1e1e); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 24px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <h3 id="modalToolTitle" style="margin-top: 0; margin-bottom: 16px; font-size: 1.25rem;">Tool Settings</h3>
+        
+        <input type="hidden" id="modalToolName">
+        
+        <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+            <label style="font-size: 0.95rem;">Allow others from Direct Msgs</label>
+            <label style="position: relative; display: inline-block; width: 50px; height: 26px; cursor: pointer;">
+                <input type="checkbox" id="modalDirectToggle" style="opacity: 0; width: 0; height: 0;" onchange="updateModalVisuals()">
+                <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 26px; transition: 0.3s;" class="modal-slider"></span>
+                <span style="position: absolute; content: ''; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;" class="modal-knob"></span>
+            </label>
+        </div>
+
+        <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+            <label style="font-size: 0.95rem;">Allow others from Group Msgs</label>
+            <label style="position: relative; display: inline-block; width: 50px; height: 26px; cursor: pointer;">
+                <input type="checkbox" id="modalGroupToggle" style="opacity: 0; width: 0; height: 0;" onchange="updateModalVisuals()">
+                <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 26px; transition: 0.3s;" class="modal-slider"></span>
+                <span style="position: absolute; content: ''; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;" class="modal-knob"></span>
+            </label>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+            <button onclick="closeToolModal()" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: var(--text-main); padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
+            <button onclick="saveToolModal()" style="background: var(--primary-color, #3b82f6); border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">Save</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
+<style>
+    .tool-settings-btn:hover {
+        color: var(--text-main) !important;
+        background: rgba(255,255,255,0.1) !important;
+    }
+</style>
 <script>
     function setupToolToggle(toolName) {
         const toggle = document.getElementById(`toggle_${toolName}`);
@@ -131,6 +181,83 @@
             showToast(`Error saving ${toolName}`);
         });
     }
+
+    function updateModalVisuals() {
+        ['modalDirectToggle', 'modalGroupToggle'].forEach(id => {
+            const toggle = document.getElementById(id);
+            const knob = toggle.nextElementSibling.nextElementSibling;
+            const slider = toggle.nextElementSibling;
+            if (toggle.checked) {
+                knob.style.transform = 'translateX(24px)';
+                slider.style.backgroundColor = 'rgba(59, 130, 246, 0.6)';
+            } else {
+                knob.style.transform = 'translateX(0)';
+                slider.style.backgroundColor = 'rgba(255,255,255,0.15)';
+            }
+        });
+    }
+
+    function openToolModal(btn) {
+        const toolName = btn.getAttribute('data-tool');
+        const allowDirect = btn.getAttribute('data-direct') === 'true';
+        const allowGroup = btn.getAttribute('data-group') === 'true';
+
+        document.getElementById('modalToolTitle').textContent = `Settings: ${toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
+        document.getElementById('modalToolName').value = toolName;
+        
+        document.getElementById('modalDirectToggle').checked = allowDirect;
+        document.getElementById('modalGroupToggle').checked = allowGroup;
+        
+        updateModalVisuals();
+        
+        const modal = document.getElementById('toolSettingsModal');
+        modal.style.display = 'flex';
+        // Add current button reference so we can update its data attributes later
+        modal.dataset.triggerBtnId = toolName; 
+    }
+
+    function closeToolModal() {
+        document.getElementById('toolSettingsModal').style.display = 'none';
+    }
+
+    function saveToolModal() {
+        const toolName = document.getElementById('modalToolName').value;
+        const allowDirect = document.getElementById('modalDirectToggle').checked;
+        const allowGroup = document.getElementById('modalGroupToggle').checked;
+
+        fetch('/api/settings/tools', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tool_name: toolName,
+                allow_others_from_direct_msgs: allowDirect,
+                allow_others_from_group_msgs: allowGroup
+            })
+        }).then(res => res.json()).then(data => {
+            if (data.status === 'success') {
+                showToast(`Settings for ${toolName} saved`);
+                // Update button data attributes
+                const btn = document.querySelector(`.tool-settings-btn[data-tool="${toolName}"]`);
+                if(btn) {
+                    btn.setAttribute('data-direct', allowDirect ? 'true' : 'false');
+                    btn.setAttribute('data-group', allowGroup ? 'true' : 'false');
+                }
+                closeToolModal();
+            } else {
+                showToast(`Error saving settings`);
+            }
+        }).catch(err => {
+            console.error(err);
+            showToast(`Error saving settings`);
+        });
+    }
+
+    // Close modal on click outside
+    document.getElementById('toolSettingsModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeToolModal();
+        }
+    });
 
     // Initialize all toggles
     {% for section_name, section_tools in sections.items() %}

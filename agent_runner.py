@@ -103,7 +103,7 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
     
     # 2. Convert raw python functions into OpenAI tool schemas
-    permitted_tools = process_tools_for_llm(get_permitted_tools()) if config_kwargs.get("tools") else []
+    permitted_tools = config_kwargs.get("tools", [])
     openai_tools = [convert_to_openai_tool(f) for f in permitted_tools] if permitted_tools else None
     
     # Normalize model name for reasoning detection
@@ -654,21 +654,20 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     try:
         tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
 
-        if is_wa_group:
-            cursor.execute('SELECT allow_group_tools FROM whatsapp_config WHERE id = 1')
-            wa_config = cursor.fetchone()
+        # Determine if the sender is the bot admin (the logged-in number)
+        is_admin = False
+        if current_sender_id:
             try:
-                if wa_config and not wa_config['allow_group_tools']:
-                    tools_enabled = False
-            except (IndexError, KeyError):
-                pass
-        elif is_wa_private:
-            cursor.execute('SELECT allow_private_tools FROM whatsapp_config WHERE id = 1')
-            wa_config = cursor.fetchone()
-            try:
-                if wa_config and not wa_config['allow_private_tools']:
-                    tools_enabled = False
-            except (IndexError, KeyError):
+                import requests
+                res = requests.get('http://127.0.0.1:3000/me', timeout=2)
+                if res.status_code == 200:
+                    data = res.json()
+                    bot_number = str(data.get('number', ''))
+                    lid_number = str(data.get('lid_number', ''))
+                    clean_sender = str(current_sender_id).split('@')[0]
+                    if (bot_number and clean_sender == bot_number) or (lid_number and clean_sender == lid_number):
+                        is_admin = True
+            except Exception:
                 pass
 
         include_tool_rules = tools_enabled
@@ -715,7 +714,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             "temperature": 0.0,
         }
         if tools_enabled:
-            config_kwargs["tools"] = process_tools_for_llm(get_permitted_tools())
+            config_kwargs["tools"] = process_tools_for_llm(get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private))
         
         worker_name = worker['worker_name'] if worker else None
         system_prompt = standard_prompts.apply_standard_rules(system_prompt, worker_name=worker_name, include_tool_rules=include_tool_rules)
@@ -731,9 +730,17 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         
         mock_response = invoke_llm_with_fallback(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False)
         
-            
     except Exception as e:
-        mock_response = f"Error calling LLM API: {str(e)}"
+        error_str = str(e)
+        if "403" in error_str and "PERMISSION_DENIED" in error_str:
+            try:
+                cursor.execute('UPDATE messages_in SET gemini_file_uri = NULL WHERE session_id = ?', (session_id,))
+                conn.commit()
+            except Exception:
+                pass
+            mock_response = "⚠️ Ocorreu um erro de permissão com arquivos antigos do histórico (possível troca de API Key ou arquivo expirado). O cache de arquivos desta sessão foi limpo automaticamente para resolver o problema. Por favor, reenvie a sua mensagem para prosseguirmos!"
+        else:
+            mock_response = f"Error calling LLM API: {error_str}"
     
     # Write to messages_out
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
