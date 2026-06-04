@@ -180,10 +180,16 @@ def agent_behavior_config_page():
     from utils.message_utils import get_default_worker
     default_worker = get_default_worker()
     agent_name = default_worker['worker_name'] if default_worker else ''
+    try:
+        am_val = int(get_config('AUTONOMOUS_MODE', '1'))
+    except (ValueError, TypeError):
+        am_val = 1
+
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
         use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
+        autonomous_mode=am_val,
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')

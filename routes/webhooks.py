@@ -53,9 +53,9 @@ def webhook():
 
         channel_base = data['channel_id'].replace('wa_web:', '')
         is_group = '@g.us' in data.get('remote_jid', '') or '@g.us' in data['channel_id']
-        if not should_process_wa_message(channel_base, content, is_group) and \
-           not should_process_wa_message(data.get('sender_id'), content, is_group):
-            logging.info(f"Ignored message from {data.get('sender_id')} in channel {channel_base} due to WhatsApp config permissions.")
+        sender_id = data.get('sender_id')
+        if not should_process_wa_message(channel_base, sender_id, content, is_group):
+            logging.info(f"Ignored message from {sender_id} in channel {channel_base} due to WhatsApp config permissions.")
             return jsonify({"status": "ignored", "reason": "permissions_or_disabled"}), 200
 
         from utils.message_utils import check_rate_limit

@@ -35,6 +35,10 @@ def get_agent_name_api():
     
     require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
     use_recipes_as_tools = get_config("USE_RECIPES_AS_TOOLS", "true").lower() == "true"
+    try:
+        autonomous_mode = int(get_config("AUTONOMOUS_MODE", "1"))
+    except (ValueError, TypeError):
+        autonomous_mode = 1
     
     return jsonify({
         "agent_name": agent_name,
@@ -42,7 +46,8 @@ def get_agent_name_api():
         "allow_mentions": allow_mentions,
         "allow_audio_mentions": allow_audio_mentions,
         "require_at_prefix": require_at_prefix,
-        "use_recipes_as_tools": use_recipes_as_tools
+        "use_recipes_as_tools": use_recipes_as_tools,
+        "autonomous_mode": autonomous_mode
     })
 
 @api_settings_bp.route('/api/settings', methods=['POST'])
@@ -69,7 +74,8 @@ def save_settings():
         'whatsapp_phone_number_id': 'WHATSAPP_PHONE_NUMBER_ID',
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'ide_prompt': 'IDE_PROMPT',
-        'whisper_model': 'WHISPER_MODEL'
+        'whisper_model': 'WHISPER_MODEL',
+        'autonomous_mode': 'AUTONOMOUS_MODE'
     }
     
     for json_key, db_key in mapping.items():

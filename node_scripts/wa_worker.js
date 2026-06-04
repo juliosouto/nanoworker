@@ -64,6 +64,87 @@ async function getAgentName() {
     return { name: currentAgentName, workerNames: names, allowMentions: allowMentions, allowAudioMentions: allowAudioMentions, requireAtPrefix: requireAtPrefix };
 }
 
+// --- Modular Message Parsing Helpers ---
+function extractMessageContent(msg) {
+    if (!msg.message) return null;
+    let content = msg.message;
+    if (content?.ephemeralMessage?.message) return content.ephemeralMessage.message;
+    if (content?.viewOnceMessage?.message) return content.viewOnceMessage.message;
+    if (content?.documentWithCaptionMessage?.message) return content.documentWithCaptionMessage.message;
+    if (content?.viewOnceMessageV2?.message) return content.viewOnceMessageV2.message;
+    return content;
+}
+
+function getMessageType(msgContent) {
+    if (!msgContent) return 'unknown';
+    if (msgContent.audioMessage) return 'audio';
+    if (msgContent.imageMessage) return 'image';
+    if (msgContent.videoMessage) return 'video';
+    if (msgContent.documentMessage) return 'document';
+    if (msgContent.conversation || (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text)) return 'text';
+    return 'other';
+}
+
+function extractTextContent(msgContent) {
+    if (!msgContent) return '';
+    if (msgContent.conversation) return msgContent.conversation;
+    if (msgContent.extendedTextMessage?.text) return msgContent.extendedTextMessage.text;
+    if (msgContent.imageMessage?.caption) return msgContent.imageMessage.caption;
+    if (msgContent.videoMessage?.caption) return msgContent.videoMessage.caption;
+    if (msgContent.documentMessage?.caption) return msgContent.documentMessage.caption;
+    return '';
+}
+
+function isGroupChat(remoteJid) {
+    if (!remoteJid) return false;
+    return remoteJid.includes('-') || remoteJid.startsWith('120363');
+}
+
+function isNoteToSelf(remoteJid, ownJid, ownLid) {
+    return remoteJid === ownJid || remoteJid === ownLid;
+}
+
+function checkMentions(text, agentConfig) {
+    if (!text || !agentConfig.allowMentions || !agentConfig.workerNames || agentConfig.workerNames.length === 0) {
+        return false;
+    }
+    const textLower = text.toLowerCase().trim();
+    for (const name of agentConfig.workerNames) {
+        const nameClean = name.trim();
+        const nameNoSpaces = nameClean.replace(/\s+/g, '');
+        if (textLower.startsWith(`@${nameClean}`) || textLower.startsWith(`@${nameNoSpaces}`)) {
+            return true;
+        }
+        if (!agentConfig.requireAtPrefix) {
+            if (textLower.startsWith(nameClean) || textLower.startsWith(nameNoSpaces)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function shouldForwardMessage(context, agentConfig) {
+    // A única exceção: chat com si mesmo
+    if (context.isSelf) {
+        return true;
+    }
+    
+    // Se possui menção, passa (texto já tem a menção)
+    if (context.hasMention) {
+        return true;
+    }
+    
+    // Se for áudio, permitimos o envio para o backend caso configurado,
+    // para que a transcrição avalie a menção do lado de lá.
+    if (context.isAudio && agentConfig.allowAudioMentions) {
+        return true;
+    }
+    
+    return false;
+}
+// ----------------------------------------
+
 async function connectToWhatsApp() {
     const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -119,16 +200,8 @@ async function connectToWhatsApp() {
         for (const msg of m.messages) {
             if (!msg.message) continue;
 
-            let msgContent = msg.message;
-            if (msgContent?.ephemeralMessage?.message) {
-                msgContent = msgContent.ephemeralMessage.message;
-            } else if (msgContent?.viewOnceMessage?.message) {
-                msgContent = msgContent.viewOnceMessage.message;
-            } else if (msgContent?.documentWithCaptionMessage?.message) {
-                msgContent = msgContent.documentWithCaptionMessage.message;
-            } else if (msgContent?.viewOnceMessageV2?.message) {
-                msgContent = msgContent.viewOnceMessageV2.message;
-            }
+            const msgContent = extractMessageContent(msg);
+            if (!msgContent) continue;
 
             const remoteJid = msg.key.remoteJid;
             console.log(`[DEBUG] Received message from remoteJid: ${remoteJid}, type: ${m.type}, fromMe: ${msg.key.fromMe}`);
@@ -146,46 +219,19 @@ async function connectToWhatsApp() {
                 continue;
             }
 
-            // Extract text early to check for @agent_name mentions
-            let earlyText = '';
-            if (msgContent.conversation) {
-                earlyText = msgContent.conversation;
-            } else if (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text) {
-                earlyText = msgContent.extendedTextMessage.text;
-            } else if (msgContent.imageMessage && msgContent.imageMessage.caption) {
-                earlyText = msgContent.imageMessage.caption;
-            }
-
             const agentConfig = await getAgentName();
+            const textContent = extractTextContent(msgContent);
+            const msgType = getMessageType(msgContent);
             
-            let isMention = false;
-            if (agentConfig.allowMentions && agentConfig.workerNames && agentConfig.workerNames.length > 0) {
-                const textLower = earlyText.toLowerCase().trim();
-                for (const name of agentConfig.workerNames) {
-                    const nameClean = name.trim();
-                    const nameNoSpaces = nameClean.replace(/\s+/g, '');
-                    if (textLower.startsWith(`@${nameClean}`) || textLower.startsWith(`@${nameNoSpaces}`)) {
-                        isMention = true;
-                        break;
-                    }
-                    if (!agentConfig.requireAtPrefix) {
-                        if (textLower.startsWith(nameClean) || textLower.startsWith(nameNoSpaces)) {
-                            isMention = true;
-                            break;
-                        }
-                    }
-                }
-            }
+            const context = {
+                isGroup: isGroupChat(remoteJid),
+                isSelf: isNoteToSelf(remoteJid, ownJid, ownLid),
+                isAudio: msgType === 'audio',
+                hasMention: checkMentions(textContent, agentConfig)
+            };
 
-            const isAudio = msgContent.audioMessage !== undefined || msgContent.audioMessage !== null;
-            const allowAudioMentions = agentConfig.allowAudioMentions;
-
-            // Only process messages sent in the chat with oneself, OR if it's a mention, OR if it's an audio we should forward
-            const isDirectMessage = (remoteJid === ownJid || remoteJid === ownLid);
-            if (!isDirectMessage && !isMention) {
-                if (!(msgContent.audioMessage && allowAudioMentions)) {
-                    continue;
-                }
+            if (!shouldForwardMessage(context, agentConfig)) {
+                continue;
             }
 
             // In personal chat, msg.key.fromMe might be true for messages we send,
