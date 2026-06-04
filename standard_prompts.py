@@ -13,14 +13,13 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
     4. The final answer to the end user must have up to one paragraph, between 50 and 150 characters, unless other number is explicitly requested.
     5. If the user requested detailed information or data, your response could have up to 10000 characters.
     6. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>.
-    7. If the user's prompt has any kind of temporal question, search the web.
     """
 
     if include_tool_rules:
         standard_rules += """
-    8. I am sending a list of tools you can use. It's a big list.
-    9. Always use a tool to fulfill the user's request.
-    10. Always make sure your answer is precise and fulfills completely the user's request.
+    7. I am sending a list of tools you can use. It's a big list.
+    8. Always use a tool to fulfill the user's request.
+    9. Always make sure your answer is precise and fulfills completely the user's request.
     """
     
     standard_rules += "\n    "

@@ -835,7 +835,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             if memories:
                 memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"[ID: {r['id']}] {r['instruction']}" for r in memories)
                 if system_prompt:
-                    system_prompt = f"{memory_block}\n\n{system_prompt}"
+                    system_prompt = f"{system_prompt}\n\n{memory_block}"
                 else:
                     system_prompt = memory_block
         except Exception as e:
@@ -975,7 +975,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             if memories:
                 memory_block = "User Memory / Persistent Instructions:\n" + "\n".join(f"[ID: {r['id']}] {r['instruction']}" for r in memories)
                 if system_prompt:
-                    system_prompt = f"{memory_block}\n\n{system_prompt}"
+                    system_prompt = f"{system_prompt}\n\n{memory_block}"
                 else:
                     system_prompt = memory_block
         except Exception as e:
