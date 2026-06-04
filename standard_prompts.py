@@ -21,6 +21,7 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
     8. Always use a tool to fulfill the user's request.
     9. Always make sure your answer is precise and fulfills completely the user's request.
     10. Whenever a query involves facts, current events, or verifiable data, you are strictly prohibited from answering based solely on your internal training. You must obligatorily invoke the search tool before generating any response.
+    11. Do not rely on your internal knowledge for factual data. If the information is not present in the tool output, state that you do not have updated information after performing the search.
     """
     
     standard_rules += "\n    "
