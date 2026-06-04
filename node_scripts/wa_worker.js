@@ -177,15 +177,28 @@ async function connectToWhatsApp() {
                 }
             }
 
-            const isAudio = msgContent.audioMessage !== undefined || msgContent.audioMessage !== null;
-            const allowAudioMentions = agentConfig.allowAudioMentions;
+            const isNoteToSelf = (remoteJid === ownJid || remoteJid === ownLid);
+            const isGroup = remoteJid.includes('-') || remoteJid.startsWith('120363');
 
-            // Only process messages sent in the chat with oneself, OR if it's a mention, OR if it's an audio we should forward
-            const isDirectMessage = (remoteJid === ownJid || remoteJid === ownLid);
-            if (!isDirectMessage && !isMention) {
-                if (!(msgContent.audioMessage && allowAudioMentions)) {
-                    continue;
+            let shouldForward = false;
+            if (isNoteToSelf) {
+                shouldForward = true;
+            } else if (agentConfig.allowMentions) {
+                if (isMention) {
+                    shouldForward = true;
+                } else if (msgContent.audioMessage && agentConfig.allowAudioMentions) {
+                    shouldForward = true;
                 }
+            } else {
+                // If allowMentions is false, we are in Private DM mode.
+                // We forward all DMs (Flask will check allowed_from) and ignore groups.
+                if (!isGroup) {
+                    shouldForward = true;
+                }
+            }
+
+            if (!shouldForward) {
+                continue;
             }
 
             // In personal chat, msg.key.fromMe might be true for messages we send,

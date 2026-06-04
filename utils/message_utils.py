@@ -118,15 +118,9 @@ def should_process_wa_message(sender_id, content="", is_group=False):
                     worker_mentioned = True
                     break
 
-    if worker_mentioned:
-        return True
-
-    if is_group:
-        # For groups, if no worker was mentioned, we MUST ignore the message
-        return False
-
     clean_sender = str(sender_id).split('@')[0] if sender_id else ''
 
+    is_chat_with_oneself = False
     try:
         resp = requests.get('http://127.0.0.1:3000/me', timeout=2)
         if resp.status_code == 200:
@@ -134,18 +128,36 @@ def should_process_wa_message(sender_id, content="", is_group=False):
             own_number = data.get('number')
             lid_number = data.get('lid_number')
             if own_number and clean_sender == str(own_number):
-                return True
+                is_chat_with_oneself = True
             if lid_number and clean_sender == str(lid_number):
-                return True
+                is_chat_with_oneself = True
     except Exception:
         pass
+
+    if is_chat_with_oneself:
+        return True
         
+    if allow_mentions:
+        # Mode: Mentions Enabled (Public/Mention Mode)
+        # We strictly require a mention if not chatting with oneself.
+        if worker_mentioned:
+            return True
+        return False
+        
+    # Mode: Mentions Disabled (Private Allowlist Mode)
+    # We ignore groups completely.
+    if is_group:
+        return False
+        
+    # Check allowed_from list for DMs
     allowed_from = config['allowed_from']
     if not allowed_from or not allowed_from.strip():
         return False
         
+    if allowed_from.strip() == '*':
+        return True
+        
     allowed_list = [num.strip() for num in allowed_from.split(',') if num.strip()]
-    clean_sender = str(sender_id).split('@')[0] if sender_id else ''
     if clean_sender not in allowed_list:
         return False
             
