@@ -61,7 +61,11 @@ def resolve_worker_from_content(content):
 
     return get_default_worker(workers)
 
-def should_process_wa_message(sender_id, content="", is_group=False):
+def should_process_wa_message(channel_base, sender_id, content="", is_group=False):
+    """
+    Determines if a WhatsApp message should be processed based on config.
+    It expects the channel_base and sender_id to accurately determine note-to-self.
+    """
     from database import get_db, get_config
     conn = get_db()
     cursor = conn.cursor()
@@ -100,6 +104,8 @@ def should_process_wa_message(sender_id, content="", is_group=False):
         require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
         for name in worker_names:
             name_no_spaces = name.replace(" ", "")
+            if not name: continue
+            
             # Check text mention
             if allow_mentions:
                 if content_lower.startswith(f"@{name}") or content_lower.startswith(f"@{name_no_spaces}"):
@@ -119,6 +125,7 @@ def should_process_wa_message(sender_id, content="", is_group=False):
                     break
 
     clean_sender = str(sender_id).split('@')[0] if sender_id else ''
+    clean_channel = str(channel_base).split('@')[0] if channel_base else ''
 
     is_chat_with_oneself = False
     try:
@@ -127,9 +134,9 @@ def should_process_wa_message(sender_id, content="", is_group=False):
             data = resp.json()
             own_number = data.get('number')
             lid_number = data.get('lid_number')
-            if own_number and clean_sender == str(own_number):
+            if own_number and clean_channel == str(own_number):
                 is_chat_with_oneself = True
-            if lid_number and clean_sender == str(lid_number):
+            if lid_number and clean_channel == str(lid_number):
                 is_chat_with_oneself = True
     except Exception:
         pass
@@ -137,24 +144,14 @@ def should_process_wa_message(sender_id, content="", is_group=False):
     if is_chat_with_oneself:
         return True
         
-    if allow_mentions:
-        # Mode: Mentions Enabled (Public/Mention Mode)
-        # We strictly require a mention if not chatting with oneself.
-        if worker_mentioned:
-            return True
+    # As per user explicit requirement: The ONLY exception to process messages without mentions is chat with oneself.
+    # Therefore, if we are here and no worker was mentioned, we MUST discard the message.
+    if not worker_mentioned:
         return False
         
-    # Mode: Mentions Disabled (Private Allowlist Mode)
-    # We ignore groups completely.
-    if is_group:
-        return False
-        
-    # Check allowed_from list for DMs
+    # If a worker WAS mentioned, we must check if the sender is allowed to interact with the bot.
     allowed_from = config['allowed_from']
-    if not allowed_from or not allowed_from.strip():
-        return False
-        
-    if allowed_from.strip() == '*':
+    if not allowed_from or not allowed_from.strip() or allowed_from.strip() == '*':
         return True
         
     allowed_list = [num.strip() for num in allowed_from.split(',') if num.strip()]
