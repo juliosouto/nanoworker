@@ -16,14 +16,14 @@ load_dotenv(override=True)
 
 def convert_to_openai_tool(func) -> dict:
     """
-    Converte uma função Python em um esquema de ferramenta compatível com OpenAI.
+    Converts a Python function into an OpenAI compatible tool schema.
     """
     import inspect
     name = func.__name__
     
     # Docstring parsing for description
     doc = func.__doc__ or ""
-    description = doc.strip().split("\n\n")[0].strip() if doc else f"Executa a função {name}"
+    description = doc.strip().split("\n\n")[0].strip() if doc else f"Executes function {name}"
     
     sig = inspect.signature(func)
     properties = {}
@@ -46,7 +46,7 @@ def convert_to_openai_tool(func) -> dict:
         param_type = type_map.get(param.annotation, "string")
         
         # Simple extraction of parameter description from docstring if present
-        param_desc = f"Parâmetro {param_name}"
+        param_desc = f"Parameter {param_name}"
         if doc:
             for line in doc.split("\n"):
                 if f"{param_name}:" in line or f"{param_name} " in line:
@@ -184,7 +184,7 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 args = {}
                 
             # Log execution starting
-            feedback_msg = f"⚙️ Executando ferramenta local: {tool_name}..."
+            feedback_msg = f"⚙️ Executing local tool: {tool_name}..."
             cursor.execute(f'''
                 INSERT INTO {table} (id, session_id, in_reply_to, content)
                 VALUES (?, ?, ?, ?)
@@ -216,8 +216,8 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
         # Log execution finished
         if tools_used:
             tools_str = ", ".join(tools_used)
-            results_str = "\n\nResultados:\n- " + "\n- ".join([r[:500] + '...' if len(r) > 500 else r for r in tool_results])
-            feedback_done = f"⚙️ Executadas ferramentas: {tools_str}{results_str}"
+            results_str = "\n\nResults:\n- " + "\n- ".join([r[:500] + '...' if len(r) > 500 else r for r in tool_results])
+            feedback_done = f"⚙️ Executed tools: {tools_str}{results_str}"
             cursor.execute(f'''
                 INSERT INTO {table} (id, session_id, in_reply_to, content)
                 VALUES (?, ?, ?, ?)
@@ -228,28 +228,32 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
 
 def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
     """
-    Realiza uma chamada para a API do Google Gemini.
-    Suporta chamadas de ferramentas (function calling) e lida com retentativas 
-    em caso de falhas transitórias (como erro 503).
+    Makes a call to the Google Gemini API.
+    Supports tool calls (function calling) with a manual loop
+    to provide partial feedback to the user.
     
-    Argumentos:
-        model_name (str): O nome do modelo Gemini a ser utilizado.
-        history (list): O histórico da conversa no formato esperado pela API.
-        config_kwargs (dict): Configurações adicionais de geração.
-        content (any): O conteúdo da mensagem atual do usuário.
-        cursor (sqlite3.Cursor): O cursor do banco de dados para logs e feedbacks parciais.
-        session_id (str): ID da sessão de chat.
-        message_in_id (str): ID da mensagem de entrada sendo processada.
-        table (str): Nome da tabela para inserir feedbacks (ex: messages_out).
-        api_key (str, opcional): Chave de API do Gemini. Levanta exceção se não fornecida.
+    Arguments:
+        model_name (str): The name of the Gemini model to use.
+        history (list): The conversation history in the API's expected format.
+        config_kwargs (dict): Additional generation configurations.
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): Database cursor for logs and partial feedback.
+        session_id (str): Chat session ID.
+        message_in_id (str): ID of the input message being processed.
+        table (str): Table name to insert feedback (e.g. messages_out).
+        api_key (str, optional): Gemini API Key. Raises exception if not provided.
         
-    Retorna:
-        str: O texto da resposta gerada pelo modelo.
+    Returns:
+        str: The generated response text.
     """
     max_retries = 5
     if not api_key:
         raise ValueError("API Key for Gemini model is not set.")
     client = genai.Client(api_key=api_key)
+    
+    # Disable automatic function calling so we can handle it manually
+    if "tools" in config_kwargs and config_kwargs["tools"]:
+        config_kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
     
     chat = client.chats.create(
         model=model_name,
@@ -259,76 +263,116 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     
     success = False
     response_text = None
-    for attempt in range(max_retries):
-        try:
-            response = chat.send_message(content)
-            response_text = response.text
-            if not response_text:
-                tools_used = []
-                tool_results = []
-                if hasattr(response, 'automatic_function_calling_history') and response.automatic_function_calling_history:
-                    for h in response.automatic_function_calling_history:
-                        for p in getattr(h, 'parts', []):
-                            if getattr(p, 'function_call', None):
-                                tool_name = p.function_call.name
-                                if tool_name not in tools_used:
-                                    tools_used.append(tool_name)
-                            if getattr(p, 'function_response', None):
-                                resp_val = str(getattr(p.function_response, 'response', ''))
-                                if isinstance(getattr(p.function_response, 'response', None), dict):
-                                    resp_dict = p.function_response.response
-                                    if 'result' in resp_dict:
-                                        resp_val = str(resp_dict['result'])
-                                if resp_val:
-                                    tool_results.append(resp_val)
-                
-                if tools_used:
-                    tools_str = ", ".join(tools_used)
-                    results_str = ""
-                    if tool_results:
-                        results_str = "\n\nResultados internos:\n- " + "\n- ".join(tool_results)
-                    response_text = f"⚙️ Tarefa concluída.\nFerramentas utilizadas: {tools_str}{results_str}"
+    current_content = content
+    
+    # Tool execution loop (max 10 iterations)
+    for iteration in range(10):
+        response = None
+        for attempt in range(max_retries):
+            try:
+                response = chat.send_message(current_content)
+                break
+            except Exception as e:
+                error_str = str(e)
+                if "503" in error_str:
+                    feedback = f"⚠️ 503 Error on attempt {attempt + 1}/{max_retries}. Retrying..."
+                    cursor.execute(f'''
+                        INSERT INTO {table} (id, session_id, in_reply_to, content)
+                        VALUES (?, ?, ?, ?)
+                    ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback))
+                    cursor.connection.commit()
+                    time.sleep(2)
+                    continue
+                elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
+                    raise e
                 else:
-                    response_text = "Executed tool calls successfully."
+                    raise e
+                    
+        if not response:
+            break # All retries failed
+            
+        function_calls = getattr(response, 'function_calls', []) or []
+        if not function_calls and hasattr(response, 'candidates') and response.candidates:
+            for part in response.candidates[0].content.parts:
+                if getattr(part, 'function_call', None):
+                    function_calls.append(part.function_call)
+                    
+        if not function_calls:
+            response_text = response.text
             success = True
             break
-        except Exception as e:
-            error_str = str(e)
-            if "503" in error_str:
-                feedback = f"⚠️ Erro 503 na tentativa {attempt + 1}/5. Tentando novamente..."
-                cursor.execute(f'''
-                    INSERT INTO {table} (id, session_id, in_reply_to, content)
-                    VALUES (?, ?, ?, ?)
-                ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback))
-                cursor.connection.commit()
-                time.sleep(2)
-                continue
-            elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
-                raise e
-            else:
-                raise e
+            
+        permitted_tools = config_kwargs.get("tools", [])
+        tools_used = []
+        tool_results = []
+        function_responses = []
+        
+        for fc in function_calls:
+            tool_name = fc.name
+            args = dict(fc.args) if fc.args else {}
+            
+            # Log execution starting
+            feedback_msg = f"⚙️ Executing local tool: {tool_name}..."
+            cursor.execute(f'''
+                INSERT INTO {table} (id, session_id, in_reply_to, content)
+                VALUES (?, ?, ?, ?)
+            ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback_msg))
+            cursor.connection.commit()
+            
+            # Execute Python function
+            result = "Tool not found"
+            for f in permitted_tools:
+                if getattr(f, '__name__', '') == tool_name:
+                    try:
+                        result = f(**args)
+                    except Exception as ex:
+                        result = f"Error executing {tool_name}: {str(ex)}"
+                    break
+                    
+            if tool_name not in tools_used:
+                tools_used.append(tool_name)
+            tool_results.append(str(result))
+            
+            resp_dict = result if isinstance(result, dict) else {"result": result}
+            function_responses.append(types.Part.from_function_response(
+                name=tool_name,
+                response=resp_dict
+            ))
+            
+        # Log execution finished
+        if tools_used:
+            tools_str = ", ".join(tools_used)
+            results_str = "\n\nResults:\n- " + "\n- ".join([r[:500] + '...' if len(r) > 500 else r for r in tool_results])
+            feedback_done = f"⚙️ Executed tools: {tools_str}{results_str}"
+            cursor.execute(f'''
+                INSERT INTO {table} (id, session_id, in_reply_to, content)
+                VALUES (?, ?, ?, ?)
+            ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, feedback_done))
+            cursor.connection.commit()
+            
+        current_content = function_responses
                 
     if success:
-        return response_text
-    return "Error: Gemini model failed."
+        return response_text or "Executed tool calls successfully."
+    return "Error: Gemini model failed or exceeded maximum iterations."
 
 def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
     """
-    Realiza uma chamada para a API da OpenAI compatível com modelos Qwen (DashScope).
+    Makes a call to the OpenAI API compatible with Qwen models (DashScope).
     
-    Argumentos:
-        model_name (str): O nome do modelo Qwen.
-        history (list): O histórico da conversa.
-        config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
-        content (any): O conteúdo da mensagem do usuário atual.
-        cursor (sqlite3.Cursor): O cursor do banco de dados.
-        session_id (str): ID da sessão.
-        message_in_id (str): ID da mensagem de entrada.
-        table (str): Nome da tabela de saída.
-        api_key (str, opcional): Chave de API do Qwen. Levanta exceção se ausente.
+    Arguments:
+        model_name (str): The name of the Qwen model.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): Qwen API Key. Raises exception if missing.
         
-    Retorna:
-        str: O texto da resposta gerada pelo modelo.
+    Returns:
+        str: The generated response text.
     """
     import openai
     if not api_key:
@@ -342,22 +386,22 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content: 
 
 def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
     """
-    Realiza uma chamada para a API do Groq.
+    Makes a call to the Groq API.
     
-    Argumentos:
-        model_name (str): O nome do modelo Groq.
-        history (list): O histórico da conversa.
-        config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
-        content (any): O conteúdo da mensagem do usuário atual.
-        cursor (sqlite3.Cursor): O cursor do banco de dados.
-        session_id (str): ID da sessão.
-        message_in_id (str): ID da mensagem de entrada.
-        table (str): Nome da tabela de saída.
-        api_key (str, opcional): Chave de API do Groq. Levanta exceção se ausente.
-        max_output_tokens (int, opcional): Limite máximo de tokens de saída.
+    Arguments:
+        model_name (str): The name of the Groq model.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): Groq API Key. Raises exception if missing.
+        max_output_tokens (int, optional): Maximum limit for output tokens.
         
-    Retorna:
-        str: O texto da resposta gerada pelo modelo.
+    Returns:
+        str: The generated response text.
     """
     from groq import Groq
     if not api_key:
@@ -369,22 +413,22 @@ def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content: 
 
 def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
     """
-    Realiza uma chamada para a API da OpenAI.
+    Makes a call to the OpenAI API.
     
-    Argumentos:
-        model_name (str): O nome do modelo OpenAI.
-        history (list): O histórico da conversa.
-        config_kwargs (dict): Configurações adicionais de geração (ex: system_instruction).
-        content (any): O conteúdo da mensagem do usuário atual.
-        cursor (sqlite3.Cursor): O cursor do banco de dados.
-        session_id (str): ID da sessão.
-        message_in_id (str): ID da mensagem de entrada.
-        table (str): Nome da tabela de saída.
-        api_key (str, opcional): Chave de API da OpenAI. Levanta exceção se ausente.
-        max_output_tokens (int, opcional): Limite máximo de tokens de saída.
+    Arguments:
+        model_name (str): The name of the OpenAI model.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): OpenAI API Key. Raises exception if missing.
+        max_output_tokens (int, optional): Maximum limit for output tokens.
         
-    Retorna:
-        str: O texto da resposta gerada pelo modelo.
+    Returns:
+        str: The generated response text.
     """
     import openai
     if not api_key:
@@ -396,21 +440,21 @@ def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content
 
 def route_llm_call(model_name: str, history: list, config_kwargs: dict, content: any, cursor: any, session_id: str, message_in_id: str, is_ide: bool) -> str:
     """
-    Roteia a chamada do LLM para o provedor apropriado (Qwen, Groq, OpenAI ou Gemini) 
-    com base nas configurações armazenadas no banco de dados para o modelo solicitado.
+    Routes the LLM call to the appropriate provider (Qwen, Groq, OpenAI, or Gemini) 
+    based on the configurations stored in the database for the requested model.
     
-    Argumentos:
-        model_name (str): O nome do modelo selecionado.
-        history (list): Histórico da conversa.
-        config_kwargs (dict): Argumentos de configuração para o LLM.
-        content (any): Conteúdo da mensagem a ser processada.
-        cursor (sqlite3.Cursor): Cursor do banco de dados para operações de log.
-        session_id (str): Identificador da sessão.
-        message_in_id (str): Identificador da mensagem de origem.
-        is_ide (bool): Flag indicando se a requisição se originou da interface da IDE.
+    Arguments:
+        model_name (str): The name of the selected model.
+        history (list): The conversation history.
+        config_kwargs (dict): Configuration arguments for the LLM.
+        content (any): Content of the message to be processed.
+        cursor (sqlite3.Cursor): Database cursor for logging operations.
+        session_id (str): Session identifier.
+        message_in_id (str): Source message identifier.
+        is_ide (bool): Flag indicating if the request originated from the IDE interface.
         
-    Retorna:
-        str: Resposta processada pelo modelo selecionado.
+    Returns:
+        str: Response processed by the selected model.
     """
     table = "ide_messages_out" if is_ide else "messages_out"
     
@@ -459,21 +503,21 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content:
 
 def invoke_llm_with_fallback(history: list, config_kwargs: dict, content: any, models_to_try: list, cursor: any, session_id: str, message_in_id: str, is_ide: bool = False) -> str:
     """
-    Tenta invocar iterativamente uma lista de modelos preferenciais em caso de falha.
-    Registra mensagens de feedback no banco informando a troca de modelos.
+    Iteratively tries to invoke a list of preferred models in case of failure.
+    Logs feedback messages in the database informing model changes.
     
-    Argumentos:
-        history (list): O histórico da conversa.
-        config_kwargs (dict): Configurações para a geração.
-        content (any): O conteúdo da mensagem atual do usuário.
-        models_to_try (list): Uma lista ordenada com os nomes dos modelos para tentar.
-        cursor (sqlite3.Cursor): O cursor do banco de dados.
-        session_id (str): ID da sessão.
-        message_in_id (str): ID da mensagem de entrada associada.
-        is_ide (bool): Se verdadeiro, envia o feedback para ide_messages_out. Padrão é False.
+    Arguments:
+        history (list): The conversation history.
+        config_kwargs (dict): Configurations for generation.
+        content (any): The content of the current user message.
+        models_to_try (list): An ordered list of model names to try.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Associated input message ID.
+        is_ide (bool): If true, sends feedback to ide_messages_out. Default is False.
         
-    Retorna:
-        str: A resposta do primeiro modelo que obteve sucesso, ou uma mensagem de erro geral se todos falharem.
+    Returns:
+        str: The response from the first successful model, or a general error message if all fail.
     """
     table = "ide_messages_out" if is_ide else "messages_out"
     
@@ -520,6 +564,94 @@ def invoke_llm_with_fallback(history: list, config_kwargs: dict, content: any, m
                 raise e
                     
     return "Error: All models failed."
+
+def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None):
+    from database import get_config
+    import json
+    import re
+    from google.genai import types
+
+    try:
+        autonomous_limit = int(get_config("AUTONOMOUS_MODE", "1"))
+    except:
+        autonomous_limit = 1
+    if autonomous_limit < 1:
+        autonomous_limit = 1
+    elif autonomous_limit > 20:
+        autonomous_limit = 20
+
+    current_send_content = list(initial_content) if isinstance(initial_content, list) else [initial_content]
+    final_response = ""
+
+    for iteration in range(autonomous_limit):
+        mock_response_raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide)
+        
+        parsed_json = None
+        raw_text = mock_response_raw.strip()
+        
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.startswith("```"):
+            raw_text = raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        raw_text = raw_text.strip()
+            
+        try:
+            parsed_json = json.loads(raw_text)
+        except json.JSONDecodeError:
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                try:
+                    parsed_json = json.loads(match.group(0))
+                except:
+                    pass
+        
+        if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and "is_the_user_request_completely_satisfied" in parsed_json:
+            final_response = parsed_json["llm_response"]
+            is_satisfied = parsed_json.get("is_the_user_request_completely_satisfied")
+            user_prompt_val = parsed_json.get("user_prompt", "")
+            
+            if is_satisfied is True:
+                break
+            else:
+                if iteration < autonomous_limit - 1:
+                    feedback_text = f"Your response does not completely answer the user's prompt. Try a different approach or tool.\n{{\n  \"user_prompt\": {json.dumps(user_prompt_val)},\n  \"llm_response\": {json.dumps(final_response)},\n  \"is_the_user_request_completely_satisfied\": null\n}}\nPlease try again."
+                    
+                    import uuid
+                    table = "ide_messages_out" if is_ide else "messages_out"
+                    user_feedback_msg = f"🔄 Agent reflecting (Iteration {iteration + 1}/{autonomous_limit}): The request is not completely satisfied yet. Continuing..."
+                    try:
+                        cursor.execute(f'''
+                            INSERT INTO {table} (id, session_id, in_reply_to, content)
+                            VALUES (?, ?, ?, ?)
+                        ''', (f"msg-out-{uuid.uuid4().hex[:8]}", session_id, message_in_id, user_feedback_msg))
+                        cursor.connection.commit()
+                    except:
+                        pass
+                    
+                    if on_complete:
+                        try:
+                            on_complete(user_feedback_msg)
+                        except Exception as e:
+                            print(f"Failed to call on_complete: {e}")
+                    
+                    parts = []
+                    for p in current_send_content:
+                        if isinstance(p, str):
+                            parts.append(types.Part.from_text(text=p))
+                        else:
+                            parts.append(p)
+                    history.append(types.Content(role="user", parts=parts))
+                    history.append(types.Content(role="model", parts=[types.Part.from_text(text=mock_response_raw)]))
+                    current_send_content = [types.Part.from_text(text=feedback_text)]
+                else:
+                    break
+        else:
+            final_response = mock_response_raw
+            break
+            
+    return final_response
 
 def process_message(message_in_id, session_id, content, on_complete=None):
     """
@@ -722,13 +854,27 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if current_image_base64:
             system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
         
+        json_schema_prompt = """
+You MUST output your final response as a valid JSON object matching exactly this schema:
+{
+  "user_prompt": "<the user's original request>",
+  "llm_response": "<your complete response addressing the request>",
+  "is_the_user_request_completely_satisfied": <boolean>
+}
+Do not include any markdown formatting like ```json, just the raw JSON object.
+"""
+        if system_prompt:
+            system_prompt = f"{system_prompt}\n\n{json_schema_prompt}"
+        else:
+            system_prompt = json_schema_prompt
+
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
         
         if thinking_enabled:
             config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
         
-        mock_response = invoke_llm_with_fallback(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False)
+        mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete)
         
     except Exception as e:
         error_str = str(e)
@@ -738,21 +884,28 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 conn.commit()
             except Exception:
                 pass
-            mock_response = "⚠️ Ocorreu um erro de permissão com arquivos antigos do histórico (possível troca de API Key ou arquivo expirado). O cache de arquivos desta sessão foi limpo automaticamente para resolver o problema. Por favor, reenvie a sua mensagem para prosseguirmos!"
+            mock_response = "⚠️ A permission error occurred with old history files (possible API Key change or expired file). The file cache for this session was cleared automatically to resolve the issue. Please resend your message to proceed!"
         else:
             mock_response = f"Error calling LLM API: {error_str}"
     
-    # Write to messages_out
+    # Write to messages_out safely
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
-    cursor.execute('''
-        INSERT INTO messages_out (id, session_id, in_reply_to, content)
-        VALUES (?, ?, ?, ?)
-    ''', (message_out_id, session_id, message_in_id, mock_response))
-    
-    cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
-    
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute('''
+            INSERT INTO messages_out (id, session_id, in_reply_to, content)
+            VALUES (?, ?, ?, ?)
+        ''', (message_out_id, session_id, message_in_id, mock_response))
+        
+        cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
+        conn.commit()
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to save final response to DB: {e}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
     
     if on_complete:
         try:
@@ -836,13 +989,27 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
 
         system_prompt = standard_prompts.apply_standard_rules(system_prompt)
 
+        json_schema_prompt = """
+You MUST output your final response as a valid JSON object matching exactly this schema:
+{
+  "user_prompt": "<the user's original request>",
+  "llm_response": "<your complete response addressing the request>",
+  "is_the_user_request_completely_satisfied": <boolean>
+}
+Do not include any markdown formatting like ```json, just the raw JSON object.
+"""
+        if system_prompt:
+            system_prompt = f"{system_prompt}\n\n{json_schema_prompt}"
+        else:
+            system_prompt = json_schema_prompt
+
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
 
         if thinking_enabled:
             config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
 
-        mock_response = invoke_llm_with_fallback(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
+        mock_response = execute_autonomous_loop(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
 
     except Exception as e:
         mock_response = f"Error calling LLM API: {str(e)}"

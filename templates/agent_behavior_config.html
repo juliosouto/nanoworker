@@ -11,7 +11,6 @@
             </a>
             <h2 style="font-weight: 600; margin: 0;">Agent Behavior Configuration</h2>
         </div>
-        <button class="btn primary" style="padding: 10px 24px; font-size: 0.95rem;" onclick="saveAgentSettings()">Save Agent Config</button>
     </div>
 
     <style>
@@ -71,6 +70,21 @@
                             id="useRecipesKnob"></span>
                     </label>
                 </div>
+
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Autonomous Mode</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Set the autonomy level (1-20). Higher values allow more independent actions.</small>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                        <button type="button" id="autonomousModeMinus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">-</button>
+                        <input type="range" id="autonomousModeSlider" min="1" max="20" value="{{ autonomous_mode }}"
+                            style="width: 100px; cursor: pointer;">
+                        <button type="button" id="autonomousModePlus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">+</button>
+                        <span id="autonomousModeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 24px; text-align: center; margin-left: 4px;">{{ autonomous_mode }}</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -115,6 +129,9 @@
                         style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem; resize: vertical;">{{ ide_prompt }}</textarea>
                     <small style="display: block; margin-top: 6px; color: var(--text-muted);">Instructions for IDE tasks.</small>
                 </div>
+                <div style="margin-top: 12px; display: flex; justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--border-color);">
+                    <button class="btn primary" style="padding: 8px 20px; font-size: 0.9rem; border-radius: 6px;" onclick="saveIdeSettings()">Save</button>
+                </div>
             </div>
         </div>
 
@@ -150,24 +167,63 @@
     setupToggle('requireAtToggle', 'requireAtKnob');
     setupToggle('useRecipesToggle', 'useRecipesKnob');
 
-    function saveAgentSettings() {
-        const idePrompt = document.getElementById('idePromptInput').value;
+    document.getElementById('requireAtToggle').addEventListener('change', autoSaveToggles);
+    document.getElementById('useRecipesToggle').addEventListener('change', autoSaveToggles);
+    const slider = document.getElementById('autonomousModeSlider');
+    const sliderValue = document.getElementById('autonomousModeValue');
+    const minusBtn = document.getElementById('autonomousModeMinus');
+    const plusBtn = document.getElementById('autonomousModePlus');
+
+    function updateSlider(val) {
+        let newVal = parseInt(val);
+        if (isNaN(newVal)) return;
+        if (newVal < 1) newVal = 1;
+        if (newVal > 20) newVal = 20;
+        slider.value = newVal;
+        sliderValue.textContent = newVal;
+        autoSaveToggles();
+    }
+
+    slider.addEventListener('input', function() {
+        sliderValue.textContent = this.value;
+    });
+    slider.addEventListener('change', autoSaveToggles);
+
+    minusBtn.addEventListener('click', () => {
+        updateSlider(parseInt(slider.value) - 1);
+    });
+
+    plusBtn.addEventListener('click', () => {
+        updateSlider(parseInt(slider.value) + 1);
+    });
+
+    function autoSaveToggles() {
         const requireAtPrefix = document.getElementById('requireAtToggle').checked;
         const useRecipesAsTools = document.getElementById('useRecipesToggle').checked;
+        const autonomousMode = parseInt(document.getElementById('autonomousModeSlider').value) || 1;
 
         fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                ide_prompt: idePrompt,
                 require_at_prefix: requireAtPrefix,
-                use_recipes_as_tools: useRecipesAsTools
+                use_recipes_as_tools: useRecipesAsTools,
+                autonomous_mode: autonomousMode
             })
+        });
+    }
+
+    function saveIdeSettings() {
+        const idePrompt = document.getElementById('idePromptInput').value;
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ide_prompt: idePrompt })
         }).then(res => res.json()).then(data => {
             if (data.status === 'success') {
-                showToast('Agent settings saved successfully!');
+                showToast('IDE settings saved successfully!');
             } else {
-                showToast('Error saving agent settings.');
+                showToast('Error saving IDE settings.');
             }
         });
     }

@@ -413,6 +413,12 @@ def init_db():
     if not row:
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('USE_RECIPES_AS_TOOLS', 'true')")
 
+    # Default Autonomous Mode Config
+    cursor.execute("SELECT value FROM app_config WHERE key = 'AUTONOMOUS_MODE'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('AUTONOMOUS_MODE', '1')")
+
     # LLM Config Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS llm_config (
