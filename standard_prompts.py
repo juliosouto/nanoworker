@@ -1,15 +1,20 @@
-
 import datetime
-import geocoder
 
-try:
-    g = geocoder.ip('me')
-    if g.ok:
-        user_location = f"{g.city}, {g.state}, {g.country}"
-    else:
-        user_location = "Unknown"
-except Exception:
-    user_location = "Unknown"
+_cached_location = None
+
+def _get_user_location():
+    global _cached_location
+    if _cached_location is None:
+        try:
+            import geocoder
+            g = geocoder.ip('me')
+            if g.ok:
+                _cached_location = f"{g.city}, {g.state}, {g.country}"
+            else:
+                _cached_location = "Unknown"
+        except Exception:
+            _cached_location = "Unknown"
+    return _cached_location
 
 
 def apply_standard_rules(system_prompt: str, worker_name: str = None, include_tool_rules: bool = True) -> str:
@@ -17,6 +22,8 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
     Appends standard rules to the beginning of the system prompt.
     Currently, the rules are empty as requested, but can be updated here.
     """
+    
+    user_location = _get_user_location()
     
     standard_rules = f"""
     1. Your name is {worker_name}.

@@ -4,8 +4,6 @@ import time
 import uuid
 from datetime import datetime
 
-from croniter import croniter
-
 from agent_runner import process_message
 from database import get_db
 
@@ -79,6 +77,7 @@ def sweep():
     para o agente (LLM) processar num pool de threads. Atualiza as recorrências.
     """
     logger.info("Sweeper started. Polling for scheduled tasks...")
+    from croniter import croniter
     from concurrent.futures import ThreadPoolExecutor
     executor = ThreadPoolExecutor(max_workers=5)
     
