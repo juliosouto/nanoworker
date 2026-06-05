@@ -155,7 +155,8 @@ def setup_llm_config():
             ('qwen3.6-flash', 'Qwen', None, 0, 1, 1, 1, 991000, 983000, 1, 1, 0, 1, 0, None, None, None, 1, 0, 0, 0, 0),
             ('gemini-2.5-flash-lite', 'Google', None, 1, 1, 1, 1, 1048576, 65536, 1, 1, 1, 1, 0, None, None, None, 1, 0, 0, 0, 0),
             ('openai/gpt-oss-20b', 'Groq', None, 1, 1, 1, 1, None, None, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
-            ('gpt-5-nano', 'OpenAI', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0)
+            ('gpt-5-nano', 'OpenAI', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('ollama/llama3.1', 'Ollama', None, 1, 1, 1, 1, 128000, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0)
         ]
         for model in default_models:
             cursor.execute('''

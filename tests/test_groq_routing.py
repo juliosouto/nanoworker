@@ -11,7 +11,7 @@ from google.genai import types
 
 class TestGroqRouting(unittest.TestCase):
     @patch('database.get_db')
-    @patch('agent_runner.call_groq_llm')
+    @patch('agent.llm_providers.call_groq_llm')
     @patch('database.decrypt_value')
     def test_routing_to_groq(self, mock_decrypt, mock_call_groq, mock_get_db):
         # Setup mock db and cursor
