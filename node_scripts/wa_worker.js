@@ -6,7 +6,8 @@ const pino = require('pino');
 const fs = require('fs');
 
 const AUTH_DIR = path.join(__dirname, '..', '.store', 'auth');
-const FLASK_WEBHOOK_URL = 'http://127.0.0.1:5000/api/webhook';
+const FLASK_PORT = process.env.FLASK_PORT || 5000;
+const FLASK_WEBHOOK_URL = `http://127.0.0.1:${FLASK_PORT}/api/webhook`;
 const PORT = 3000;
 
 let sock = null;
@@ -47,7 +48,7 @@ async function getAgentName() {
     const now = Date.now();
     if (now - lastAgentNameFetch > 60000) {
         try {
-            const res = await axios.get('http://127.0.0.1:5000/api/config/agent_name');
+            const res = await axios.get(`http://127.0.0.1:${FLASK_PORT}/api/config/agent_name`);
             if (res.data) {
                 currentAgentName = res.data.agent_name ? res.data.agent_name.toLowerCase() : null;
                 workerNames = res.data.worker_names ? res.data.worker_names.map(name => name.toLowerCase()) : [];
