@@ -41,10 +41,8 @@ class TestToolCalling(unittest.TestCase):
         self.assertIn("path", func_schema["parameters"]["required"])
         self.assertNotIn("content", func_schema["parameters"]["required"])
 
-    @patch('agent_runner.get_permitted_tools')
-    def test_execute_openai_compatible_llm_loop(self, mock_get_permitted_tools):
+    def test_execute_openai_compatible_llm_loop(self):
         # Setup tools
-        mock_get_permitted_tools.return_value = [dummy_tool]
         
         mock_client = MagicMock()
         mock_completion_1 = MagicMock()
@@ -71,7 +69,7 @@ class TestToolCalling(unittest.TestCase):
         mock_client.chat.completions.create.side_effect = [mock_completion_1, mock_completion_2]
         
         history = [types.Content(role='user', parts=[types.Part.from_text(text='hello')])]
-        config_kwargs = {"tools": True}
+        config_kwargs = {"tools": [dummy_tool]}
         content = 'test'
         cursor = MagicMock()
         session_id = 'session-123'

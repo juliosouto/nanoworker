@@ -11,7 +11,7 @@ from google.genai import types
 
 class TestOpenAIRouting(unittest.TestCase):
     @patch('database.get_db')
-    @patch('agent_runner.call_openai_llm')
+    @patch('agent.llm_providers.call_openai_llm')
     @patch('database.decrypt_value')
     def test_routing_to_openai(self, mock_decrypt, mock_call_openai, mock_get_db):
         # Setup mock db and cursor
@@ -59,9 +59,10 @@ class TestOpenAIRouting(unittest.TestCase):
         mock_client = MagicMock()
         mock_openai_class.return_value = mock_client
         mock_completion = MagicMock()
-        mock_client.chat.completions.create.return_value = [mock_completion]
+        mock_client.chat.completions.create.return_value = mock_completion
         mock_completion.choices = [MagicMock()]
-        mock_completion.choices[0].delta.content = "reasoning response"
+        mock_completion.choices[0].message.content = "reasoning response"
+        mock_completion.choices[0].message.tool_calls = None
         
         history = [types.Content(role='user', parts=[types.Part.from_text(text='hello')])]
         config_kwargs = {}
@@ -88,14 +89,15 @@ class TestOpenAIRouting(unittest.TestCase):
         mock_openai_class.return_value = mock_client
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
-        mock_completion.choices[0].delta.content = "fallback response"
+        mock_completion.choices[0].message.content = "fallback response"
+        mock_completion.choices[0].message.tool_calls = None
         
         # Make the first call fail with a BadRequestError
         import openai
         def side_effect(*args, **kwargs):
             if kwargs.get('max_tokens') is not None:
                 raise openai.BadRequestError("Unsupported parameter: 'max_tokens'", response=MagicMock(), body={})
-            return [mock_completion]
+            return mock_completion
             
         mock_client.chat.completions.create.side_effect = side_effect
         
@@ -125,9 +127,10 @@ class TestOpenAIRouting(unittest.TestCase):
         mock_client = MagicMock()
         mock_openai_class.return_value = mock_client
         mock_completion = MagicMock()
-        mock_client.chat.completions.create.return_value = [mock_completion]
+        mock_client.chat.completions.create.return_value = mock_completion
         mock_completion.choices = [MagicMock()]
-        mock_completion.choices[0].delta.content = "default response"
+        mock_completion.choices[0].message.content = "default response"
+        mock_completion.choices[0].message.tool_calls = None
         
         history = [types.Content(role='user', parts=[types.Part.from_text(text='hello')])]
         config_kwargs = {}
