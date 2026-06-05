@@ -77,6 +77,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
     Args:
         phone_number: The recipient's phone number with country code, without '+' or spaces.
                       Example: '5511999998888' for a Brazilian number.
+                      For groups, pass the exact group ID including the suffix (e.g., '123456789-123@g.us').
                       If you want to send to the user's own number (the connected account), pass 'self'.
         message: The text message to send.
 
@@ -145,6 +146,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     Args:
         phone_number: The recipient's phone number with country code, without '+' or spaces.
                       Example: '5511999998888' for a Brazilian number.
+                      For groups, pass the exact group ID including the suffix (e.g., '123456789-123@g.us').
                       If you want to send to the user's own number (the connected account), pass 'self'.
         file_path: The absolute path to the local file to be sent.
         caption: Optional text caption to accompany the file.
