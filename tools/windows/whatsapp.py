@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 BAILEYS_URL = "http://127.0.0.1:3000/send"
 
-def _is_allowed_to(phone_number: str) -> bool:
+def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> bool:
     if not phone_number or phone_number.lower() == "self":
         return True
 
@@ -14,11 +14,14 @@ def _is_allowed_to(phone_number: str) -> bool:
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT allowed_to FROM whatsapp_config WHERE id = 1')
+        cursor.execute('SELECT allowed_to, allow_mentions FROM whatsapp_config WHERE id = 1')
         config = cursor.fetchone()
         conn.close()
         
         if not config:
+            return True
+            
+        if allow_mentions_override and config.get('allow_mentions'):
             return True
             
         allowed_to = config['allowed_to']
@@ -154,7 +157,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     import uuid
     import mimetypes
 
-    if not _is_allowed_to(phone_number):
+    if not _is_allowed_to(phone_number, allow_mentions_override=True):
         return (f"Error: Access Denied. Sending files to {phone_number} is blocked. "
                 f"You MUST reply to the user EXACTLY with this English sentence: "
                 f"'You must add the number {phone_number} to the Allowed To list in the WhatsApp Settings page before I can send files to it.'")
