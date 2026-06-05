@@ -98,11 +98,18 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
     
             if phone_number and phone_number.lower() != "self":
                 # Format as WhatsApp JID
-                jid = phone_number.strip().replace("+", "").replace(" ", "")
-                if "@" not in jid:
-                    jid = jid.replace("-", "")
+                jid = phone_number.strip().replace("wa_web:", "")
+            if "@" not in jid:
+                parts = jid.split("-")
+                if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
+                    jid = jid.replace("+", "").replace(" ", "")
+                    jid = f"{jid}@g.us"
+                else:
+                    jid = jid.replace("+", "").replace(" ", "").replace("-", "")
                     jid = f"{jid}@s.whatsapp.net"
-                payload["jid"] = jid
+            else:
+                jid = jid.replace("+", "").replace(" ", "")
+            payload["jid"] = jid
     
             response = requests.post(BAILEYS_URL, json=payload, timeout=15)
     
@@ -114,11 +121,18 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
         if audio_path:
             audio_payload = {"file_path": audio_path}
             if phone_number and phone_number.lower() != "self":
-                jid = phone_number.strip().replace("+", "").replace(" ", "")
-                if "@" not in jid:
-                    jid = jid.replace("-", "")
+                jid = phone_number.strip().replace("wa_web:", "")
+            if "@" not in jid:
+                parts = jid.split("-")
+                if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
+                    jid = jid.replace("+", "").replace(" ", "")
+                    jid = f"{jid}@g.us"
+                else:
+                    jid = jid.replace("+", "").replace(" ", "").replace("-", "")
                     jid = f"{jid}@s.whatsapp.net"
-                audio_payload["jid"] = jid
+            else:
+                jid = jid.replace("+", "").replace(" ", "")
+            audio_payload["jid"] = jid
                 
             audio_url = BAILEYS_URL.replace("/send", "/send_audio")
             audio_response = requests.post(audio_url, json=audio_payload, timeout=30)
@@ -192,11 +206,15 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
             # Format as WhatsApp JID
             jid = phone_number.strip().replace("wa_web:", "")
             if "@" not in jid:
-                if "-" in jid or jid.startswith("120363"):
+                parts = jid.split("-")
+                if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
+                    jid = jid.replace("+", "").replace(" ", "")
                     jid = f"{jid}@g.us"
                 else:
                     jid = jid.replace("+", "").replace(" ", "").replace("-", "")
                     jid = f"{jid}@s.whatsapp.net"
+            else:
+                jid = jid.replace("+", "").replace(" ", "")
             payload["jid"] = jid
 
         # Assuming Baileys is listening on the same host but endpoint is /send_file
