@@ -419,7 +419,7 @@ app.post('/send_file', async (req, res) => {
         res.json({ status: 'sent', target: targetJid });
     } catch (err) {
         console.error('Failed to send file via Baileys:', err);
-        res.status(500).json({ error: 'Failed to send file' });
+        res.status(500).json({ error: 'Failed to send file', details: err.message || err.toString() });
     }
 });
 

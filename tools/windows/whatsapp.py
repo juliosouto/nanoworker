@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 BAILEYS_URL = "http://127.0.0.1:3000/send"
 
-def _is_allowed_to(phone_number: str) -> bool:
+def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> bool:
     if not phone_number or phone_number.lower() == "self":
         return True
 
@@ -14,11 +14,14 @@ def _is_allowed_to(phone_number: str) -> bool:
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT allowed_to FROM whatsapp_config WHERE id = 1')
+        cursor.execute('SELECT allowed_to, allow_mentions FROM whatsapp_config WHERE id = 1')
         config = cursor.fetchone()
         conn.close()
         
         if not config:
+            return True
+            
+        if allow_mentions_override and config['allow_mentions']:
             return True
             
         allowed_to = config['allowed_to']
@@ -74,6 +77,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
     Args:
         phone_number: The recipient's phone number with country code, without '+' or spaces.
                       Example: '5511999998888' for a Brazilian number.
+                      For groups, pass the exact group ID including the suffix (e.g., '123456789-123@g.us').
                       If you want to send to the user's own number (the connected account), pass 'self'.
         message: The text message to send.
 
@@ -94,11 +98,18 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
     
             if phone_number and phone_number.lower() != "self":
                 # Format as WhatsApp JID
-                jid = phone_number.strip().replace("+", "").replace(" ", "")
-                if "@" not in jid:
-                    jid = jid.replace("-", "")
+                jid = phone_number.strip().replace("wa_web:", "")
+            if "@" not in jid:
+                parts = jid.split("-")
+                if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
+                    jid = jid.replace("+", "").replace(" ", "")
+                    jid = f"{jid}@g.us"
+                else:
+                    jid = jid.replace("+", "").replace(" ", "").replace("-", "")
                     jid = f"{jid}@s.whatsapp.net"
-                payload["jid"] = jid
+            else:
+                jid = jid.replace("+", "").replace(" ", "")
+            payload["jid"] = jid
     
             response = requests.post(BAILEYS_URL, json=payload, timeout=15)
     
@@ -110,11 +121,18 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
         if audio_path:
             audio_payload = {"file_path": audio_path}
             if phone_number and phone_number.lower() != "self":
-                jid = phone_number.strip().replace("+", "").replace(" ", "")
-                if "@" not in jid:
-                    jid = jid.replace("-", "")
+                jid = phone_number.strip().replace("wa_web:", "")
+            if "@" not in jid:
+                parts = jid.split("-")
+                if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
+                    jid = jid.replace("+", "").replace(" ", "")
+                    jid = f"{jid}@g.us"
+                else:
+                    jid = jid.replace("+", "").replace(" ", "").replace("-", "")
                     jid = f"{jid}@s.whatsapp.net"
-                audio_payload["jid"] = jid
+            else:
+                jid = jid.replace("+", "").replace(" ", "")
+            audio_payload["jid"] = jid
                 
             audio_url = BAILEYS_URL.replace("/send", "/send_audio")
             audio_response = requests.post(audio_url, json=audio_payload, timeout=30)
@@ -142,6 +160,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     Args:
         phone_number: The recipient's phone number with country code, without '+' or spaces.
                       Example: '5511999998888' for a Brazilian number.
+                      For groups, pass the exact group ID including the suffix (e.g., '123456789-123@g.us').
                       If you want to send to the user's own number (the connected account), pass 'self'.
         file_path: The absolute path to the local file to be sent.
         caption: Optional text caption to accompany the file.
@@ -154,7 +173,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     import uuid
     import mimetypes
 
-    if not _is_allowed_to(phone_number):
+    if not _is_allowed_to(phone_number, allow_mentions_override=True):
         return (f"Error: Access Denied. Sending files to {phone_number} is blocked. "
                 f"You MUST reply to the user EXACTLY with this English sentence: "
                 f"'You must add the number {phone_number} to the Allowed To list in the WhatsApp Settings page before I can send files to it.'")
@@ -185,10 +204,17 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
 
         if phone_number and phone_number.lower() != "self":
             # Format as WhatsApp JID
-            jid = phone_number.strip().replace("+", "").replace(" ", "")
+            jid = phone_number.strip().replace("wa_web:", "")
             if "@" not in jid:
-                jid = jid.replace("-", "")
-                jid = f"{jid}@s.whatsapp.net"
+                parts = jid.split("-")
+                if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
+                    jid = jid.replace("+", "").replace(" ", "")
+                    jid = f"{jid}@g.us"
+                else:
+                    jid = jid.replace("+", "").replace(" ", "").replace("-", "")
+                    jid = f"{jid}@s.whatsapp.net"
+            else:
+                jid = jid.replace("+", "").replace(" ", "")
             payload["jid"] = jid
 
         # Assuming Baileys is listening on the same host but endpoint is /send_file
