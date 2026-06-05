@@ -9,18 +9,18 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
     standard_rules = f"""
     1. Your name is {worker_name}.
     2. You are a helpful assistant.
-    3. Current Datetime: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    3. Current Datetime: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.
     4. The final answer to the end user must have up to one paragraph, between 50 and 150 characters, unless other number is explicitly requested.
-    5. If the user requested detailed information or data, your response could have up to 10000 characters.
+    5. If the user requested detailed information or data, your response can be up to 10000 characters.
     6. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>.
-    7. If the user's prompt has any kind of temporal question, search the web.
+    7. Always make sure your answer is precise and fulfills completely the user's request.
+    8. Whenever a query involves facts, current events, or verifiable data, you are strictly prohibited from answering based solely on your internal training. You must obligatorily invoke the search_web tool before generating any response.
     """
 
     if include_tool_rules:
         standard_rules += """
-    8. I am sending a list of tools you can use. It's a big list.
-    9. Always use a tool to fulfill the user's request.
-    10. Always make sure your answer is precise and fulfills completely the user's request.
+    9. I am sending a list of tools you can use. It's a big list.
+    10. Always use a tool to fulfill the user's request.
     """
     
     standard_rules += "\n    "
