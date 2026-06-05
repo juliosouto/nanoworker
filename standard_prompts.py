@@ -1,4 +1,16 @@
+
 import datetime
+import geocoder
+
+try:
+    g = geocoder.ip('me')
+    if g.ok:
+        user_location = f"{g.city}, {g.state}, {g.country}"
+    else:
+        user_location = "Unknown"
+except Exception:
+    user_location = "Unknown"
+
 
 def apply_standard_rules(system_prompt: str, worker_name: str = None, include_tool_rules: bool = True) -> str:
     """
@@ -10,17 +22,18 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
     1. Your name is {worker_name}.
     2. You are a helpful assistant.
     3. Current Datetime: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.
-    4. The final answer to the end user must have up to one paragraph, between 50 and 150 characters, unless other number is explicitly requested.
-    5. If the user requested detailed information or data, your response can be up to 10000 characters.
-    6. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>.
-    7. Always make sure your answer is precise and fulfills completely the user's request.
-    8. Whenever a query involves facts, current events, or verifiable data, you are strictly prohibited from answering based solely on your internal training. You must obligatorily invoke the search_web tool before generating any response.
+    4. User Location: {user_location}.
+    5. The final answer to the end user must have up to one paragraph, between 50 and 150 characters, unless other number is explicitly requested.
+    6. If the user requested detailed information or data, your response can be up to 10000 characters.
+    7. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>.
+    8. Always make sure your answer is precise and fulfills completely the user's request.
+    9. Whenever a query involves facts, current events, or verifiable data, you are strictly prohibited from answering based solely on your internal training. You must obligatorily invoke the search_web tool before generating any response.
     """
 
     if include_tool_rules:
         standard_rules += """
-    9. I am sending a list of tools you can use. It's a big list.
-    10. Always use a tool to fulfill the user's request.
+    10. I am sending a list of tools you can use. It's a big list.
+    11. Always use a tool to fulfill the user's request.
     """
     
     standard_rules += "\n    "
