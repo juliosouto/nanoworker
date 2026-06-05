@@ -21,7 +21,7 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
         if not config:
             return True
             
-        if allow_mentions_override and config.get('allow_mentions'):
+        if allow_mentions_override and config['allow_mentions']:
             return True
             
         allowed_to = config['allowed_to']
