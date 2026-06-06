@@ -304,6 +304,7 @@ async function connectToWhatsApp() {
                 const payload = {
                     channel_id: `wa_web:${channelIdBase}`,
                     sender_id: senderId,
+                    sender_name: msg.pushName || '',
                     sender_jid: actualSenderJid,
                     remote_jid: remoteJid,
                     content: text,
