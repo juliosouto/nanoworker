@@ -82,7 +82,22 @@ class AppleTVManager:
             logger.error(f"Apple TV connect error: {e}")
             return False, f"Failed to connect: {str(e)}"
 
-    async def _execute_command(self, command: str):
+    async def _launch_app(self, bundle_id: str):
+        logger.info(f"Launching app: {bundle_id}")
+        await self.atv.apps.launch_app(bundle_id)
+
+    async def _send_text(self, text: str):
+        logger.info(f"Typing text: {text}")
+        await self.atv.keyboard.send_text(text)
+
+    async def _search(self, text: str):
+        if not text:
+            raise ValueError("Search text cannot be empty.")
+        await self._launch_app("com.apple.TVSearch")
+        await asyncio.sleep(2.0)
+        await self._send_text(text)
+
+    async def _execute_command(self, command: str, text: str = None):
         success, msg = await self._connect()
         if not success:
             return msg
@@ -106,6 +121,14 @@ class AppleTVManager:
                 await self.atv.power.turn_on()
             elif command == "turn_off":
                 await self.atv.power.turn_off()
+            elif command == "type":
+                if not text:
+                    return "Command 'type' requires text to send."
+                await self._send_text(text)
+            elif command == "search":
+                if not text:
+                    return "Command 'search' requires text to search for."
+                await self._search(text)
             else:
                 return f"Command '{command}' not recognized."
             return f"Command '{command}' executed successfully."
@@ -119,10 +142,11 @@ class AppleTVManager:
 
 _manager = None
 
-def control_apple_tv(command: str) -> str:
+def control_apple_tv(command: str, text: str = None) -> str:
     """
     Controls an Apple TV on the local network. 
-    Supported commands: play, pause, next, previous, menu, volume_up, volume_down, turn_on, turn_off.
+    Supported commands: play, pause, next, previous, menu, volume_up, volume_down, turn_on, turn_off, type, search.
+    Note: 'type' and 'search' commands require the 'text' argument to specify the text to input/search.
     Requires the Apple TV to be paired in the UI tools settings first.
     """
     
@@ -130,7 +154,7 @@ def control_apple_tv(command: str) -> str:
     if _manager is None:
         _manager = AppleTVManager()
         
-    future = asyncio.run_coroutine_threadsafe(_manager._execute_command(command.lower()), _manager.loop)
+    future = asyncio.run_coroutine_threadsafe(_manager._execute_command(command.lower(), text), _manager.loop)
     try:
         result = future.result(timeout=15)
         return result
