@@ -103,7 +103,7 @@ def whatsapp_inbound():
     for msg in messages:
         sender_id = msg["sender"]
         
-        if not should_process_wa_message(sender_id):
+        if not should_process_wa_message(sender_id, sender_id, msg["content"]):
             logging.info(f"Ignored Cloud API message from {sender_id} due to WhatsApp config permissions.")
             continue
 
@@ -127,6 +127,7 @@ def whatsapp_inbound():
             channel_id=channel_id,
             content=content,
             sender_id=sender_id,
+            sender_name=msg.get("sender_name"),
             on_complete=make_wa_callback(sender_id),
             client_message_id=msg["message_id"]
         )

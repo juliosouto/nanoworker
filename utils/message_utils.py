@@ -343,3 +343,36 @@ def process_tools_for_llm(tools):
         processed.append(make_wrapper(func))
         
     return processed
+
+
+def resolve_target_jid(data):
+    """
+    Extract the target JID for replies from the webhook payload.
+    """
+    jid = data.get('remote_jid') or data.get('sender_jid')
+    if not jid:
+        jid = f"{data.get('sender_id')}@s.whatsapp.net"
+    return jid
+
+
+def check_wa_permissions(data, content):
+    """
+    Validate WhatsApp message permissions and rate limits.
+
+    Returns:
+        tuple: (allowed: bool, reason: str | None)
+    """
+    import logging
+    channel_base = data['channel_id'].replace('wa_web:', '')
+    is_group = '@g.us' in data.get('remote_jid', '') or '@g.us' in data['channel_id']
+    sender_id = data.get('sender_id')
+
+    if not should_process_wa_message(channel_base, sender_id, content, is_group):
+        logging.info(f"Ignored message from {sender_id} in channel {channel_base} due to WhatsApp config permissions.")
+        return False, "permissions_or_disabled"
+
+    if not check_rate_limit(sender_id):
+        logging.warning(f"Rate limit exceeded for {sender_id}")
+        return False, "rate_limit"
+
+    return True, None
