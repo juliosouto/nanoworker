@@ -93,6 +93,15 @@ def save_base64_attachment(b64_data: str, file_name: str = 'attachment') -> str 
         logger.error(f"Failed to save attachment to temp/: {e}")
         return None
 
+def save_webhook_attachment(data: dict) -> str | None:
+    """
+    Save a base64 file/image attachment from the webhook payload and return its path.
+    """
+    b64_data = data.get('file_base64') or data.get('image_base64')
+    if not b64_data:
+        return None
+    return save_base64_attachment(b64_data, data.get('file_name', 'attachment'))
+
 def get_file_tree(dir_path: str, base_dir: str) -> list:
     tree = []
     try:

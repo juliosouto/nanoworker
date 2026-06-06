@@ -220,3 +220,24 @@ def process_base64_audio_to_text(audio_base64: str, mimetype: str = '') -> str:
     except Exception as e:
         logger.error(f"Failed to process base64 audio: {e}")
         raise
+
+
+def transcribe_webhook_audio(content, audio_base64, mimetype=''):
+    """
+    Transcribe audio from a webhook payload and append the result to the message content.
+
+    Args:
+        content: The original message text.
+        audio_base64: Base64-encoded audio data.
+        mimetype: Optional MIME type of the audio.
+
+    Returns:
+        str: The content with the transcription appended.
+    """
+    try:
+        transcription = process_base64_audio_to_text(audio_base64, mimetype)
+        return f"{content}\n[Transcription]: {transcription}"
+    except Exception as e:
+        logger.error(f"Failed to process webhook audio: {e}")
+        return f"{content}\n[Internal error processing audio]"
+
