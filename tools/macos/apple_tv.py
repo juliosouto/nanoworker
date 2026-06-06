@@ -125,6 +125,7 @@ def control_apple_tv(command: str) -> str:
     Supported commands: play, pause, next, previous, menu, volume_up, volume_down, turn_on, turn_off.
     Requires the Apple TV to be paired in the UI tools settings first.
     """
+    
     global _manager
     if _manager is None:
         _manager = AppleTVManager()
