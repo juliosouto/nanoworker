@@ -7,12 +7,14 @@ def register_routes(app):
     from .api_permissions import api_permissions_bp
     from .api_settings import api_settings_bp
     from .api_whatsapp import api_whatsapp_bp
+    from .api_appletv import api_appletv_bp
     from .views import views_bp
     from .webhooks import webhooks_bp
 
     app.register_blueprint(views_bp)
     app.register_blueprint(api_files_bp)
     app.register_blueprint(api_whatsapp_bp)
+    app.register_blueprint(api_appletv_bp)
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(api_chat_bp)
     app.register_blueprint(api_permissions_bp)

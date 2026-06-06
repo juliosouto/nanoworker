@@ -127,6 +127,36 @@
         </div>
     </div>
 </div>
+
+<!-- Apple TV Modal -->
+<div id="appleTvSettingsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px);">
+    <div style="background: var(--bg-card, #1e1e1e); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 24px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <h3 style="margin-top: 0; margin-bottom: 16px; font-size: 1.25rem;">Apple TV Settings</h3>
+        
+        <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 16px;">Pair with your Apple TV to allow the agent to control it.</p>
+        
+        <div id="atvScanSection">
+            <button onclick="scanAppleTV()" id="scanAtvBtn" style="width: 100%; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: var(--text-main); padding: 10px; border-radius: 6px; cursor: pointer; margin-bottom: 16px;">Scan for Devices</button>
+            <div id="scanStatus" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; text-align: center;"></div>
+            
+            <div id="atvDeviceSelectContainer" style="display: none; margin-bottom: 16px;">
+                <label style="display: block; font-size: 0.9rem; margin-bottom: 8px;">Select Device:</label>
+                <select id="atvDeviceSelect" style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.2); color: white;"></select>
+                <button onclick="startAppleTVPairing()" style="width: 100%; background: var(--primary-color, #3b82f6); border: none; color: white; padding: 10px; border-radius: 6px; cursor: pointer; margin-top: 12px; font-weight: 500;">Start Pairing</button>
+            </div>
+        </div>
+
+        <div id="atvPairSection" style="display: none;">
+            <p style="font-size: 0.9rem; margin-bottom: 12px;">Look at your Apple TV screen and enter the PIN below:</p>
+            <input type="text" id="atvPinInput" placeholder="0000" maxlength="4" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.2); color: white; margin-bottom: 16px; font-size: 1.2rem; text-align: center; letter-spacing: 4px;">
+            <button onclick="finishAppleTVPairing()" id="finishPairBtn" style="width: 100%; background: #10b981; border: none; color: white; padding: 10px; border-radius: 6px; cursor: pointer; margin-bottom: 16px; font-weight: 500;">Complete Pairing</button>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+            <button onclick="closeAppleTvModal()" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: var(--text-main); padding: 8px 16px; border-radius: 6px; cursor: pointer;">Close</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -199,6 +229,16 @@
 
     function openToolModal(btn) {
         const toolName = btn.getAttribute('data-tool');
+        if (toolName === 'control_apple_tv') {
+            document.getElementById('atvScanSection').style.display = 'block';
+            document.getElementById('atvPairSection').style.display = 'none';
+            document.getElementById('atvDeviceSelectContainer').style.display = 'none';
+            document.getElementById('scanStatus').textContent = '';
+            document.getElementById('atvPinInput').value = '';
+            document.getElementById('appleTvSettingsModal').style.display = 'flex';
+            return;
+        }
+
         const allowDirect = btn.getAttribute('data-direct') === 'true';
         const allowGroup = btn.getAttribute('data-group') === 'true';
 
@@ -258,6 +298,112 @@
             closeToolModal();
         }
     });
+
+    document.getElementById('appleTvSettingsModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeAppleTvModal();
+        }
+    });
+
+    function closeAppleTvModal() {
+        document.getElementById('appleTvSettingsModal').style.display = 'none';
+    }
+
+    function scanAppleTV() {
+        const btn = document.getElementById('scanAtvBtn');
+        const status = document.getElementById('scanStatus');
+        const selectContainer = document.getElementById('atvDeviceSelectContainer');
+        const select = document.getElementById('atvDeviceSelect');
+        
+        btn.disabled = true;
+        btn.textContent = 'Scanning...';
+        status.textContent = 'Looking for Apple TV devices on the network...';
+        selectContainer.style.display = 'none';
+        
+        fetch('/api/tools/appletv/scan')
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.textContent = 'Scan Again';
+            if (data.status === 'success' && data.devices.length > 0) {
+                status.textContent = `Found ${data.devices.length} device(s).`;
+                select.innerHTML = '';
+                data.devices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.identifier;
+                    opt.textContent = `${d.name} (${d.address})`;
+                    select.appendChild(opt);
+                });
+                selectContainer.style.display = 'block';
+            } else {
+                status.textContent = 'No devices found. Ensure they are turned on and on the same network.';
+            }
+        }).catch(err => {
+            btn.disabled = false;
+            btn.textContent = 'Scan Again';
+            status.textContent = 'Error scanning for devices.';
+            console.error(err);
+        });
+    }
+
+    function startAppleTVPairing() {
+        const identifier = document.getElementById('atvDeviceSelect').value;
+        if(!identifier) return;
+        
+        const scanSection = document.getElementById('atvScanSection');
+        const pairSection = document.getElementById('atvPairSection');
+        
+        scanSection.style.display = 'none';
+        pairSection.style.display = 'block';
+        
+        fetch('/api/tools/appletv/start_pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier })
+        }).then(r => r.json()).then(data => {
+            if(data.status === 'success') {
+                document.getElementById('atvPairSection').dataset.sessionId = data.session_id;
+            } else {
+                alert('Failed to start pairing: ' + data.message);
+                scanSection.style.display = 'block';
+                pairSection.style.display = 'none';
+            }
+        }).catch(err => {
+            alert('Error starting pairing');
+            scanSection.style.display = 'block';
+            pairSection.style.display = 'none';
+        });
+    }
+
+    function finishAppleTVPairing() {
+        const sessionId = document.getElementById('atvPairSection').dataset.sessionId;
+        const pin = document.getElementById('atvPinInput').value;
+        const btn = document.getElementById('finishPairBtn');
+        
+        if(!pin) return;
+        
+        btn.disabled = true;
+        btn.textContent = 'Verifying...';
+        
+        fetch('/api/tools/appletv/finish_pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, pin: pin })
+        }).then(r => r.json()).then(data => {
+            btn.disabled = false;
+            btn.textContent = 'Complete Pairing';
+            if(data.status === 'success') {
+                alert('Apple TV paired successfully!');
+                closeAppleTvModal();
+            } else {
+                alert('Failed to pair: ' + data.message);
+            }
+        }).catch(err => {
+            btn.disabled = false;
+            btn.textContent = 'Complete Pairing';
+            alert('Error verifying PIN');
+        });
+    }
 
     // Initialize all toggles
     {% for section_name, section_tools in sections.items() %}
