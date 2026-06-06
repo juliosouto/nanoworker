@@ -12,3 +12,4 @@ from .scheduling import delete_scheduled_task, list_scheduled_tasks, schedule_ta
 from .web_scraper import extract_webpage_text
 from .web_search import search_web
 from .whatsapp import send_whatsapp_file, send_whatsapp_message
+from .apple_tv import control_apple_tv
