@@ -85,6 +85,21 @@
                         <span id="autonomousModeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 24px; text-align: center; margin-left: 4px;">{{ autonomous_mode }}</span>
                     </div>
                 </div>
+
+                <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Message Slice Size (Tokens)</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Truncate long WhatsApp group messages to a specific token limit.</small>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                        <button type="button" id="sliceSizeMinus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">-</button>
+                        <input type="range" id="sliceSizeSlider" min="200" max="2000" step="50" value="{{ message_slice_size_tokens }}"
+                            style="width: 100px; cursor: pointer;">
+                        <button type="button" id="sliceSizePlus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">+</button>
+                        <span id="sliceSizeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 32px; text-align: center; margin-left: 4px;">{{ message_slice_size_tokens }}</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -174,6 +189,11 @@
     const minusBtn = document.getElementById('autonomousModeMinus');
     const plusBtn = document.getElementById('autonomousModePlus');
 
+    const sliceSlider = document.getElementById('sliceSizeSlider');
+    const sliceSliderValue = document.getElementById('sliceSizeValue');
+    const sliceMinusBtn = document.getElementById('sliceSizeMinus');
+    const slicePlusBtn = document.getElementById('sliceSizePlus');
+
     function updateSlider(val) {
         let newVal = parseInt(val);
         if (isNaN(newVal)) return;
@@ -184,10 +204,26 @@
         autoSaveToggles();
     }
 
+    function updateSliceSlider(val) {
+        let newVal = parseInt(val);
+        if (isNaN(newVal)) return;
+        if (newVal < 200) newVal = 200;
+        if (newVal > 2000) newVal = 2000;
+        newVal = Math.round(newVal / 50) * 50;
+        sliceSlider.value = newVal;
+        sliceSliderValue.textContent = newVal;
+        autoSaveToggles();
+    }
+
     slider.addEventListener('input', function() {
         sliderValue.textContent = this.value;
     });
     slider.addEventListener('change', autoSaveToggles);
+
+    sliceSlider.addEventListener('input', function() {
+        sliceSliderValue.textContent = this.value;
+    });
+    sliceSlider.addEventListener('change', autoSaveToggles);
 
     minusBtn.addEventListener('click', () => {
         updateSlider(parseInt(slider.value) - 1);
@@ -197,10 +233,19 @@
         updateSlider(parseInt(slider.value) + 1);
     });
 
+    sliceMinusBtn.addEventListener('click', () => {
+        updateSliceSlider(parseInt(sliceSlider.value) - 50);
+    });
+
+    slicePlusBtn.addEventListener('click', () => {
+        updateSliceSlider(parseInt(sliceSlider.value) + 50);
+    });
+
     function autoSaveToggles() {
         const requireAtPrefix = document.getElementById('requireAtToggle').checked;
         const useRecipesAsTools = document.getElementById('useRecipesToggle').checked;
         const autonomousMode = parseInt(document.getElementById('autonomousModeSlider').value) || 1;
+        const sliceSizeTokens = parseInt(document.getElementById('sliceSizeSlider').value) || 250;
 
         fetch('/api/settings', {
             method: 'POST',
@@ -208,7 +253,8 @@
             body: JSON.stringify({
                 require_at_prefix: requireAtPrefix,
                 use_recipes_as_tools: useRecipesAsTools,
-                autonomous_mode: autonomousMode
+                autonomous_mode: autonomousMode,
+                message_slice_size_tokens: sliceSizeTokens
             })
         });
     }

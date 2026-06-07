@@ -66,7 +66,7 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
         msg_content = row['content']
         if role == 'user':
             if is_wa_group:
-                msg_content = truncate_message(msg_content, 1000)
+                msg_content = truncate_message(msg_content)
             if row['sender_id']:
                 sender_label = row['sender_name'] or row['sender_id']
                 msg_content = f"[Message from: {sender_label} ({row['sender_id']})]\n{msg_content}"
@@ -178,7 +178,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     content = clean_mention(original_content)
 
     if is_wa_group:
-        content = truncate_message(content, 1000)
+        content = truncate_message(content)
 
     if current_sender_id:
         sender_label = current_sender_name or current_sender_id
