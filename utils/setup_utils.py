@@ -156,7 +156,10 @@ def setup_llm_config():
             ('gemini-2.5-flash-lite', 'Google', None, 1, 1, 1, 1, 1048576, 65536, 1, 1, 1, 1, 0, None, None, None, 1, 0, 0, 0, 0),
             ('openai/gpt-oss-20b', 'Groq', None, 1, 1, 1, 1, None, None, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
             ('gpt-5-nano', 'OpenAI', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
-            ('ollama/llama3.1', 'Ollama', None, 1, 1, 1, 1, 128000, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0)
+            ('ollama/llama3.1', 'Ollama', None, 1, 1, 1, 1, 128000, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('openrouter/openai/gpt-4o', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('openrouter/anthropic/claude-3.5-sonnet', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('openrouter/meta-llama/llama-3.1-70b-instruct', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0)
         ]
         for model in default_models:
             cursor.execute('''

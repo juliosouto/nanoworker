@@ -72,6 +72,8 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
         from database import get_config
         ollama_base_url = get_config("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         return _providers.call_ollama_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, ollama_base_url, max_output_tokens)
+    elif provider == "openrouter" or model_name.lower().startswith("openrouter/"):
+        return _providers.call_openrouter_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
     else:
         return _providers.call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
 

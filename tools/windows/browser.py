@@ -1,10 +1,7 @@
-from browser.manager import BrowserManager
+from browser.manager import BrowserManager, get_session_browser
 
 from utils.security_utils import require_permission
 from utils.session import current_session_id
-
-# Dictionary mapping session_id -> BrowserManager instance
-_sessions = {}
 
 def get_browser_manager() -> BrowserManager:
     session_id = current_session_id.get()
@@ -12,9 +9,7 @@ def get_browser_manager() -> BrowserManager:
         # Fallback to a default session if not set (e.g., testing)
         session_id = "default"
         
-    if session_id not in _sessions:
-        _sessions[session_id] = BrowserManager()
-    return _sessions[session_id]
+    return get_session_browser(session_id)
 
 @require_permission('PERM_PLAYWRIGHT')
 def browser_navigate(url: str) -> str:

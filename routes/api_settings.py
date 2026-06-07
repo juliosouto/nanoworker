@@ -65,6 +65,8 @@ def save_settings():
         'openai_model': 'OPENAI_MODEL',
         'anthropic_api_key': 'ANTHROPIC_API_KEY',
         'anthropic_model': 'ANTHROPIC_MODEL',
+        'openrouter_api_key': 'OPENROUTER_API_KEY',
+        'openrouter_model': 'OPENROUTER_MODEL',
         'llm_pref_1': 'LLM_PREF_1',
         'llm_pref_2': 'LLM_PREF_2',
         'llm_pref_3': 'LLM_PREF_3',
@@ -138,6 +140,7 @@ def run_setup():
     openai_key = data.get('openai_api_key')
     groq_key = data.get('groq_api_key')
     qwen_key = data.get('qwen_api_key')
+    openrouter_key = data.get('openrouter_api_key')
 
     # Import setup utilities
     from utils.setup_utils import (
@@ -176,6 +179,8 @@ def run_setup():
             set_config('GROQ_API_KEY', groq_key)
         if qwen_key:
             set_config('QWEN_API_KEY', qwen_key)
+        if openrouter_key:
+            set_config('OPENROUTER_API_KEY', openrouter_key)
 
         # Also update the newly seeded models in llm_config
         conn = get_db()
@@ -193,6 +198,9 @@ def run_setup():
             if qwen_key:
                 enc_qwen = encrypt_value(qwen_key)
                 cursor.execute("UPDATE llm_config SET api_key = ? WHERE provider = 'DashScope' OR provider = 'Qwen'", (enc_qwen,))
+            if openrouter_key:
+                enc_or = encrypt_value(openrouter_key)
+                cursor.execute("UPDATE llm_config SET api_key = ? WHERE provider = 'OpenRouter' OR provider = 'openrouter'", (enc_or,))
             conn.commit()
         finally:
             conn.close()
