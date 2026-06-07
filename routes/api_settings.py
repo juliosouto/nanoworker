@@ -75,7 +75,8 @@ def save_settings():
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'ide_prompt': 'IDE_PROMPT',
         'whisper_model': 'WHISPER_MODEL',
-        'autonomous_mode': 'AUTONOMOUS_MODE'
+        'autonomous_mode': 'AUTONOMOUS_MODE',
+        'message_slice_size_tokens': 'MESSAGE_SLICE_SIZE_TOKENS'
     }
     
     for json_key, db_key in mapping.items():

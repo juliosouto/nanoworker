@@ -120,7 +120,7 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
         # Log execution finished
         if tools_used:
             tools_str = ", ".join(tools_used)
-            results_str = "\n\nResults:\n- " + "\n- ".join([r[:500] + '...' if len(r) > 500 else r for r in tool_results])
+            results_str = "\n\nResults:\n- " + "\n- ".join(tool_results)
             insert_feedback(cursor, table, session_id, message_in_id,
                             f"⚙️ Executed tools: {tools_str}{results_str}")
 

@@ -126,28 +126,28 @@ def build_system_prompt(
     # 3. Project path
     system_prompt = _inject_project_path(system_prompt)
 
-    # 4. User memory
+    # 4. Standard rules
+    system_prompt = standard_prompts.apply_standard_rules(
+        system_prompt, worker_name=worker_name, include_tool_rules=include_tool_rules
+    )
+
+    # 5. Image/document rules
+    if has_image:
+        system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
+
+    # 6. JSON schema prompt
+    if system_prompt:
+        system_prompt = f"{system_prompt}\n\n{JSON_SCHEMA_PROMPT}"
+    else:
+        system_prompt = JSON_SCHEMA_PROMPT
+
+    # 7. User memory
     memory_block = _fetch_user_memory(cursor)
     if memory_block:
         if system_prompt:
             system_prompt = f"{system_prompt}\n\n{memory_block}"
         else:
             system_prompt = memory_block
-
-    # 5. Standard rules
-    system_prompt = standard_prompts.apply_standard_rules(
-        system_prompt, worker_name=worker_name, include_tool_rules=include_tool_rules
-    )
-
-    # 6. Image/document rules
-    if has_image:
-        system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
-
-    # 7. JSON schema prompt
-    if system_prompt:
-        system_prompt = f"{system_prompt}\n\n{JSON_SCHEMA_PROMPT}"
-    else:
-        system_prompt = JSON_SCHEMA_PROMPT
 
     return system_prompt
 

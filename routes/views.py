@@ -185,11 +185,17 @@ def agent_behavior_config_page():
     except (ValueError, TypeError):
         am_val = 1
 
+    try:
+        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '250'))
+    except (ValueError, TypeError):
+        slice_tokens = 250
+
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
         use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
         autonomous_mode=am_val,
+        message_slice_size_tokens=slice_tokens,
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')

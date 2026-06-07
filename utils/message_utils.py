@@ -201,11 +201,20 @@ def clean_mention(content, agent_name=None):
             
     return cleaned_content
 
-def truncate_message(content, max_length=1000):
+def truncate_message(content, max_length=None):
     """
-    Truncates a message if it exceeds max_length, keeping the last max_length characters.
+    Truncates a message if it exceeds max_length characters, keeping the last max_length characters.
     Useful for very long messages in WhatsApp groups.
+    If max_length is not provided, fetches the token limit from the database and converts it to characters (1 token ≈ 4 chars).
     """
+    if max_length is None:
+        from database import get_config
+        try:
+            tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "250"))
+        except (ValueError, TypeError):
+            tokens = 250
+        max_length = tokens * 4
+
     if content and len(content) > max_length:
         return content[-max_length:]
     return content
