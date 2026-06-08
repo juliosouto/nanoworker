@@ -7,6 +7,7 @@ import json
 import uuid
 
 from agent.db_feedback import insert_feedback
+from database import get_config
 
 
 def convert_to_openai_tool(func) -> dict:
@@ -71,7 +72,7 @@ def convert_to_openai_tool(func) -> dict:
     }
 
 
-def execute_openai_compatible_llm(client, model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, limit_tokens: int = None) -> str:
+def execute_openai_compatible_llm(client, model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, limit_tokens: int = None, on_complete=None) -> str:
     """
     Unified recursive executor loop for OpenAI-compatible LLM providers that dynamically
     converts tools and executes python function calls.
@@ -178,8 +179,8 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 args = {}
 
             # Log execution starting
-            insert_feedback(cursor, table, session_id, message_in_id,
-                            f"⚙️ Executing local tool: {tool_name}...")
+            msg_start = f"⚙️ Executing local tool: {tool_name}..."
+            insert_feedback(cursor, table, session_id, message_in_id, msg_start)
 
             # Execute Python function
             result = "Tool not found"
@@ -206,8 +207,13 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
         # Log execution finished
         if tools_used:
             tools_str = ", ".join(tools_used)
-            results_str = "\n\nResults:\n- " + "\n- ".join(tool_results)
-            insert_feedback(cursor, table, session_id, message_in_id,
-                            f"⚙️ Executed tools: {tools_str}{results_str}")
+            results_str = "\nResults:\n- " + "\n- ".join(tool_results)
+            msg_end = f"⚙️ Executed tools: {tools_str}{results_str}"
+            insert_feedback(cursor, table, session_id, message_in_id, msg_end)
+            if on_complete and get_config("SHOW_TOOLS_RESULTS", "true").lower() == "true":
+                try:
+                    on_complete(msg_end)
+                except Exception:
+                    pass
 
     return "Error: Tool execution loop exceeded maximum iterations."

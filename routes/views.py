@@ -194,6 +194,7 @@ def agent_behavior_config_page():
         agent_name=agent_name,
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
         use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
+        show_tools_results=get_config('SHOW_TOOLS_RESULTS', 'true').lower() == 'true',
         autonomous_mode=am_val,
         message_slice_size_tokens=slice_tokens,
         ide_prompt=get_config('IDE_PROMPT', ''))

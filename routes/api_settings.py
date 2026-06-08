@@ -88,6 +88,7 @@ def save_settings():
     bool_mapping = {
         'require_at_prefix': 'REQUIRE_AT_PREFIX',
         'use_recipes_as_tools': 'USE_RECIPES_AS_TOOLS',
+        'show_tools_results': 'SHOW_TOOLS_RESULTS',
         'perm_terminal': 'PERM_TERMINAL',
         'perm_playwright': 'PERM_PLAYWRIGHT',
         'perm_safari': 'PERM_SAFARI',

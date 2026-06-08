@@ -46,7 +46,7 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
     table = "ide_messages_out" if is_ide else "messages_out"
 
     for iteration in range(autonomous_limit):
-        mock_response_raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide)
+        mock_response_raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide, on_complete=on_complete)
 
         parsed_json = None
         raw_text = mock_response_raw.strip()
