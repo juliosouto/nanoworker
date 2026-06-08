@@ -244,3 +244,42 @@ def call_ollama_llm(model_name: str, history: list, config_kwargs: dict, content
     client = openai.OpenAI(api_key="ollama", base_url=base_url)
     limit_tokens = max_output_tokens if max_output_tokens else None
     return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
+
+
+def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
+    """
+    Makes a call to the OpenRouter API.
+
+    Arguments:
+        model_name (str): The name of the OpenRouter model.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): OpenRouter API Key. Raises exception if missing.
+        max_output_tokens (int, optional): Maximum limit for output tokens.
+
+    Returns:
+        str: The generated response text.
+    """
+    import openai
+    if not api_key:
+        raise ValueError("API Key for OpenRouter model is not set.")
+
+    # Strip the "openrouter/" prefix if it exists
+    actual_model_name = model_name[11:] if model_name.lower().startswith("openrouter/") else model_name
+
+    # OpenRouter requires default headers for ranking, passing them here
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        default_headers={
+            "HTTP-Referer": "https://github.com/nanoworker", 
+            "X-OpenRouter-Title": "NanoWorker"
+        }
+    )
+    limit_tokens = max_output_tokens if max_output_tokens else None
+    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)

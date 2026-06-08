@@ -11,7 +11,7 @@ def extract_webpage_text(url: str) -> str:
     """
     try:
         # First attempt: curl_cffi with impersonate
-        response = requests.get(url, impersonate="chrome148", timeout=15)
+        response = requests.get(url, impersonate="chrome146", timeout=15)
         html = response.text
         text = trafilatura.extract(html)
         

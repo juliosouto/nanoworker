@@ -14,11 +14,48 @@ import subprocess
 # By defaulting close_fds=False on macOS, subprocess will use posix_spawn which
 # does not trigger Network.framework's atfork crash handler.
 if platform.system() == 'Darwin' and getattr(subprocess, '_USE_POSIX_SPAWN', False):
+    import shutil
     _original_popen_init = subprocess.Popen.__init__
     def _patched_popen_init(self, args, **kwargs):
         if 'close_fds' not in kwargs:
             kwargs['close_fds'] = False
-        return _original_popen_init(self, args, **kwargs)
+            
+        executable = kwargs.get('executable')
+        if executable is None:
+            if isinstance(args, (str, bytes, os.PathLike)):
+                cmd = args
+            else:
+                cmd = args[0] if args else None
+                
+            if cmd and isinstance(cmd, str) and not os.path.dirname(cmd):
+                resolved = shutil.which(cmd)
+                if resolved:
+                    if isinstance(args, list):
+                        args = list(args)
+                        args[0] = resolved
+                    elif isinstance(args, tuple):
+                        args = list(args)
+                        args[0] = resolved
+                        args = tuple(args)
+                    else:
+                        kwargs['executable'] = resolved
+
+        dups_to_close = []
+        for key, default_fd in [('stdin', 0), ('stdout', 1), ('stderr', 2)]:
+            val = kwargs.get(key)
+            if val == default_fd:
+                new_fd = os.dup(val)
+                kwargs[key] = new_fd
+                dups_to_close.append(new_fd)
+
+        try:
+            return _original_popen_init(self, args, **kwargs)
+        finally:
+            for fd in dups_to_close:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
     subprocess.Popen.__init__ = _patched_popen_init
 
 import threading

@@ -18,3 +18,4 @@ ddgs
 langdetect
 groq
 geocoder
+curl_cffi
