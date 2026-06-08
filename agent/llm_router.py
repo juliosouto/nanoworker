@@ -8,7 +8,7 @@ from agent.db_feedback import insert_feedback
 import agent.llm_providers as _providers
 
 
-def route_llm_call(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, is_ide: bool) -> str:
+def route_llm_call(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, is_ide: bool, on_complete=None) -> str:
     """
     Routes the LLM call to the appropriate provider (Qwen, Groq, OpenAI, or Gemini)
     based on the configurations stored in the database for the requested model.
@@ -22,6 +22,7 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
         session_id (str): Session identifier.
         message_in_id (str): Source message identifier.
         is_ide (bool): Flag indicating if the request originated from the IDE interface.
+        on_complete (callable, optional): Callback for real-time messages.
 
     Returns:
         str: Response processed by the selected model.
@@ -63,22 +64,22 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
         local_kwargs.pop('thinking_config', None)
 
     if provider == "qwen" or model_name.lower().startswith("qwen"):
-        return _providers.call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+        return _providers.call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, on_complete=on_complete)
     elif provider == "groq" or model_name.lower().startswith("groq/"):
-        return _providers.call_groq_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
+        return _providers.call_groq_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
     elif provider == "openai" or model_name.lower().startswith("openai/"):
-        return _providers.call_openai_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
+        return _providers.call_openai_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
     elif provider == "ollama" or model_name.lower().startswith("ollama/"):
         from database import get_config
         ollama_base_url = get_config("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        return _providers.call_ollama_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, ollama_base_url, max_output_tokens)
+        return _providers.call_ollama_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, ollama_base_url, max_output_tokens, on_complete=on_complete)
     elif provider == "openrouter" or model_name.lower().startswith("openrouter/"):
-        return _providers.call_openrouter_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens)
+        return _providers.call_openrouter_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
     else:
-        return _providers.call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key)
+        return _providers.call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, on_complete=on_complete)
 
 
-def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models_to_try: list, cursor, session_id: str, message_in_id: str, is_ide: bool = False) -> str:
+def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models_to_try: list, cursor, session_id: str, message_in_id: str, is_ide: bool = False, on_complete=None) -> str:
     """
     Iteratively tries to invoke a list of preferred models in case of failure.
     Logs feedback messages in the database informing model changes.
@@ -92,6 +93,7 @@ def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models
         session_id (str): Session ID.
         message_in_id (str): Associated input message ID.
         is_ide (bool): If true, sends feedback to ide_messages_out. Default is False.
+        on_complete (callable, optional): Callback for real-time messages.
 
     Returns:
         str: The response from the first successful model, or a general error message if all fail.
@@ -123,7 +125,7 @@ def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models
             insert_feedback(cursor, table, session_id, message_in_id, f"Changing to {model_name}")
 
         try:
-            response_text = route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide)
+            response_text = route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide, on_complete=on_complete)
             return response_text
         except Exception as e:
             error_str = str(e)

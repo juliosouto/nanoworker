@@ -34,7 +34,7 @@ def setup_app_config():
     cursor = conn.cursor()
     try:
         keys_to_clear = [
-            'agent_name', 'USE_RECIPES_AS_TOOLS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
+            'agent_name', 'USE_RECIPES_AS_TOOLS', 'SHOW_TOOLS_RESULTS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
             'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL'
         ]
         # Clear existing configs in scope
@@ -46,6 +46,7 @@ def setup_app_config():
         default_configs = [
             ('agent_name', 'Nano'),
             ('USE_RECIPES_AS_TOOLS', 'true'),
+            ('SHOW_TOOLS_RESULTS', 'true'),
             ('AUTONOMOUS_MODE', '1'),
             ('DEFAULT_LLM_PROVIDER', 'Google'),
             ('DEFAULT_LLM_MODEL', 'gemini-3.1-flash-lite'),

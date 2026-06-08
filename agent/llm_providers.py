@@ -10,9 +10,10 @@ from google.genai import types
 
 from agent.db_feedback import insert_feedback
 from agent.openai_tools import execute_openai_compatible_llm
+from database import get_config
 
 
-def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
+def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, on_complete=None) -> str:
     """
     Makes a call to the Google Gemini API.
     Supports tool calls (function calling) with a manual loop
@@ -94,8 +95,8 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
             args = dict(fc.args) if fc.args else {}
 
             # Log execution starting
-            insert_feedback(cursor, table, session_id, message_in_id,
-                            f"⚙️ Executing local tool: {tool_name}...")
+            msg_start = f"⚙️ Executing local tool: {tool_name}..."
+            insert_feedback(cursor, table, session_id, message_in_id, msg_start)
 
             # Execute Python function
             result = "Tool not found"
@@ -120,9 +121,14 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
         # Log execution finished
         if tools_used:
             tools_str = ", ".join(tools_used)
-            results_str = "\n\nResults:\n- " + "\n- ".join(tool_results)
-            insert_feedback(cursor, table, session_id, message_in_id,
-                            f"⚙️ Executed tools: {tools_str}{results_str}")
+            results_str = "\nResults:\n- " + "\n- ".join(tool_results)
+            msg_end = f"⚙️ Executed tools: {tools_str}{results_str}"
+            insert_feedback(cursor, table, session_id, message_in_id, msg_end)
+            if on_complete and get_config("SHOW_TOOLS_RESULTS", "true").lower() == "true":
+                try:
+                    on_complete(msg_end)
+                except Exception:
+                    pass
 
         current_content = function_responses
 
@@ -131,7 +137,7 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     return "Error: Gemini model failed or exceeded maximum iterations."
 
 
-def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None) -> str:
+def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, on_complete=None) -> str:
     """
     Makes a call to the OpenAI API compatible with Qwen models (DashScope).
 
@@ -157,10 +163,10 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content, 
         api_key=api_key,
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     )
-    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table)
+    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, on_complete=on_complete)
 
 
-def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
+def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
     """
     Makes a call to the Groq API.
 
@@ -185,10 +191,10 @@ def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content, 
 
     client = Groq(api_key=api_key)
     limit_tokens = max_output_tokens if max_output_tokens else 1024
-    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
+    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
 
 
-def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
+def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
     """
     Makes a call to the OpenAI API.
 
@@ -213,10 +219,10 @@ def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content
 
     client = openai.OpenAI(api_key=api_key)
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
+    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
 
 
-def call_ollama_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, base_url: str = "http://localhost:11434/v1", max_output_tokens: int = None) -> str:
+def call_ollama_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, base_url: str = "http://localhost:11434/v1", max_output_tokens: int = None, on_complete=None) -> str:
     """
     Makes a call to the Ollama API locally (OpenAI compatible).
 
@@ -243,10 +249,10 @@ def call_ollama_llm(model_name: str, history: list, config_kwargs: dict, content
     # We use a dummy API key because Ollama doesn't require one, but openai client does
     client = openai.OpenAI(api_key="ollama", base_url=base_url)
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
+    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
 
 
-def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None) -> str:
+def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
     """
     Makes a call to the OpenRouter API.
 
@@ -282,4 +288,4 @@ def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, con
         }
     )
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens)
+    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)

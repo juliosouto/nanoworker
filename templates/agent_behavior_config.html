@@ -71,6 +71,24 @@
                     </label>
                 </div>
 
+                <div style="margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Show Tools Results</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">When enabled, outputs of tools executed by the agent will be shown in real time.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">
+                        <input type="checkbox" id="showToolsResultsToggle" {% if show_tools_results %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="showToolsResultsKnob"></span>
+                    </label>
+                </div>
+
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div style="flex: 1; margin-right: 16px;">
                         <label
@@ -181,9 +199,11 @@
 
     setupToggle('requireAtToggle', 'requireAtKnob');
     setupToggle('useRecipesToggle', 'useRecipesKnob');
+    setupToggle('showToolsResultsToggle', 'showToolsResultsKnob');
 
     document.getElementById('requireAtToggle').addEventListener('change', autoSaveToggles);
     document.getElementById('useRecipesToggle').addEventListener('change', autoSaveToggles);
+    document.getElementById('showToolsResultsToggle').addEventListener('change', autoSaveToggles);
     const slider = document.getElementById('autonomousModeSlider');
     const sliderValue = document.getElementById('autonomousModeValue');
     const minusBtn = document.getElementById('autonomousModeMinus');
@@ -244,6 +264,7 @@
     function autoSaveToggles() {
         const requireAtPrefix = document.getElementById('requireAtToggle').checked;
         const useRecipesAsTools = document.getElementById('useRecipesToggle').checked;
+        const showToolsResults = document.getElementById('showToolsResultsToggle').checked;
         const autonomousMode = parseInt(document.getElementById('autonomousModeSlider').value) || 1;
         const sliceSizeTokens = parseInt(document.getElementById('sliceSizeSlider').value) || 250;
 
@@ -253,6 +274,7 @@
             body: JSON.stringify({
                 require_at_prefix: requireAtPrefix,
                 use_recipes_as_tools: useRecipesAsTools,
+                show_tools_results: showToolsResults,
                 autonomous_mode: autonomousMode,
                 message_slice_size_tokens: sliceSizeTokens
             })
