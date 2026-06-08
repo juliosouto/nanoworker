@@ -19,3 +19,4 @@ langdetect
 groq
 geocoder
 curl_cffi
+tradingview-ta
