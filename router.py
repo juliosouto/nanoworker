@@ -67,6 +67,51 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_name=None,
                 
         return message_id, session_id, True  # is_sync=True (immediate response)
 
+    if cleaned_content == "/list":
+        from database import get_all_workers_with_capabilities
+        workers = get_all_workers_with_capabilities()
+        
+        response_lines = ["📋 *Available Workers & Capabilities:*"]
+        if not workers:
+            response_lines.append("\nNenhum worker encontrado.")
+        else:
+            for w in workers:
+                name = w.get('worker_name', 'Unknown')
+                model = w.get('worker_model', 'Unknown')
+                
+                inputs = []
+                if w.get('text_input'): inputs.append("Text")
+                if w.get('image_input'): inputs.append("Image")
+                if w.get('audio_input'): inputs.append("Audio")
+                if w.get('video_input'): inputs.append("Video")
+                if w.get('document_input'): inputs.append("Document")
+                
+                outputs = []
+                if w.get('text_output'): outputs.append("Text")
+                if w.get('image_output'): outputs.append("Image")
+                if w.get('audio_output'): outputs.append("Audio")
+                if w.get('video_output'): outputs.append("Video")
+                if w.get('document_output'): outputs.append("Document")
+                
+                in_str = ", ".join(inputs) if inputs else "None"
+                out_str = ", ".join(outputs) if outputs else "None"
+                
+                response_lines.append(f"\n• *{name}* ({model})")
+                response_lines.append(f"  📥 Inputs: {in_str}")
+                response_lines.append(f"  📤 Outputs: {out_str}")
+            
+        final_message = "\n".join(response_lines)
+        
+        conn.close()
+        
+        if on_complete:
+            try:
+                on_complete(final_message)
+            except Exception as e:
+                logger.error(f"on_complete callback failed: {e}")
+                
+        return message_id, session_id, True  # is_sync=True (immediate response)
+
     conn.close()
 
     # 4. Dispatch processing in a background thread
