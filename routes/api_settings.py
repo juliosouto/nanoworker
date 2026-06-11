@@ -134,6 +134,39 @@ def save_tool_setting():
     
     return jsonify({"status": "error", "message": "Invalid payload"}), 400
 
+@api_settings_bp.route('/api/settings/tools/<tool_name>', methods=['DELETE'])
+def delete_self_developed_tool(tool_name):
+    if '..' in tool_name or '/' in tool_name or '\\' in tool_name:
+        return jsonify({"status": "error", "message": "Invalid tool name"}), 400
+        
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os_folders = ['windows', 'linux', 'macos']
+    file_deleted = False
+    
+    for os_name in os_folders:
+        file_path = os.path.join(project_root, "tools", "self-developed", os_name, f"{tool_name}.py")
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                file_deleted = True
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"Failed to delete file: {str(e)}"}), 500
+                
+    if not file_deleted:
+        return jsonify({"status": "error", "message": "Tool file not found"}), 404
+        
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tools_config WHERE tool_name = ?", (tool_name.lower(),))
+        conn.commit()
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Database error: {str(e)}"}), 500
+    finally:
+        conn.close()
+        
+    return jsonify({"status": "success", "message": f"Tool {tool_name} successfully deleted"}), 200
+
 @api_settings_bp.route('/api/setup', methods=['POST'])
 def run_setup():
     data = request.json or {}

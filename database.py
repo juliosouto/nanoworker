@@ -234,6 +234,30 @@ def get_all_user_memories() -> list:
     finally:
         conn.close()
 
+def get_all_workers_with_capabilities() -> list:
+    """
+    Retorna uma lista de todos os workers e as capacidades de seus respectivos modelos (input e output).
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            SELECT w.worker_name, w.worker_model, 
+                   MAX(l.text_input) as text_input, MAX(l.image_input) as image_input, 
+                   MAX(l.audio_input) as audio_input, MAX(l.video_input) as video_input, MAX(l.document_input) as document_input,
+                   MAX(l.text_output) as text_output, MAX(l.image_output) as image_output, 
+                   MAX(l.audio_output) as audio_output, MAX(l.video_output) as video_output, MAX(l.document_output) as document_output
+            FROM workers_config w
+            LEFT JOIN llm_config l ON w.worker_model = l.model_name
+            GROUP BY w.id
+        ''')
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
 def delete_user_memory(memory_id: int) -> bool:
     """
     Remove uma memória de usuário específica pelo seu ID.
