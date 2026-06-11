@@ -145,7 +145,7 @@ def get_coordinates(location: str) -> dict:
         return {"error": f"Error fetching coordinates: {str(e)}"}
 
 
-def calculate_route(lon_origin: float, lat_origin: float, lon_dest: float, lat_dest: float) -> dict:
+def calculate_route(lon_origin: float, lat_origin: float, lon_dest: float, lat_dest: float, include_steps: bool = False) -> dict:
     """
     Calculates the driving distance and travel time between two points using OSRM.
     
@@ -154,9 +154,11 @@ def calculate_route(lon_origin: float, lat_origin: float, lon_dest: float, lat_d
         lat_origin: Latitude of the starting point.
         lon_dest: Longitude of the destination.
         lat_dest: Latitude of the destination.
+        include_steps: If true, returns a list of turn-by-turn navigation instructions.
     """
     coordinates = f"{lon_origin},{lat_origin};{lon_dest},{lat_dest}"
-    url = f"http://router.project-osrm.org/route/v1/driving/{coordinates}?overview=false"
+    steps_param = "true" if include_steps else "false"
+    url = f"http://router.project-osrm.org/route/v1/driving/{coordinates}?overview=false&steps={steps_param}"
     
     req = urllib.request.Request(
         url,
@@ -168,10 +170,33 @@ def calculate_route(lon_origin: float, lat_origin: float, lon_dest: float, lat_d
             data = json.loads(response.read())
             if data.get("routes"):
                 route = data["routes"][0]
-                return {
+                result = {
                     "distance_km": round(route["distance"] / 1000, 2), 
                     "time_minutes": round(route["duration"] / 60, 2)
                 }
+                
+                if include_steps and "legs" in route and len(route["legs"]) > 0:
+                    steps = route["legs"][0].get("steps", [])
+                    instructions = []
+                    for step in steps:
+                        maneuver = step.get("maneuver", {})
+                        instruction = maneuver.get("type", "")
+                        modifier = maneuver.get("modifier", "")
+                        name = step.get("name", "")
+                        
+                        desc = instruction
+                        if modifier:
+                            desc += f" {modifier}"
+                        if name:
+                            desc += f" onto {name}"
+                            
+                        desc = desc.capitalize()
+                        if desc and desc != "Arrive":
+                            instructions.append(desc)
+                            
+                    result["steps"] = instructions
+                    
+                return result
             return {"error": "Route could not be calculated."}
     except Exception as e:
         return {"error": f"Error calculating route: {str(e)}"}
