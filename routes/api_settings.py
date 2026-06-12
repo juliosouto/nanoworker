@@ -4,6 +4,7 @@ import subprocess
 from flask import Blueprint, jsonify, request
 
 from database import get_config, get_db, set_config, update_tool_config
+from security import limiter
 
 api_settings_bp = Blueprint('api_settings', __name__)
 
@@ -134,6 +135,23 @@ def save_tool_setting():
     
     return jsonify({"status": "error", "message": "Invalid payload"}), 400
 
+@api_settings_bp.route('/api/login/toggle', methods=['POST'])
+@limiter.limit("10 per minute")
+def toggle_login():
+    data = request.json
+    enabled = data.get('enabled')
+    if enabled:
+        set_config('LOGIN_ENABLED', 'true')
+        token = get_config('LOGIN_TOKEN')
+        if not token:
+            import secrets
+            token = "nw-" + secrets.token_urlsafe(48)
+            set_config('LOGIN_TOKEN', token)
+        return jsonify({'status': 'success', 'enabled': True, 'token': token}), 200
+    else:
+        set_config('LOGIN_ENABLED', 'false')
+        return jsonify({'status': 'success', 'enabled': False}), 200
+
 @api_settings_bp.route('/api/settings/tools/<tool_name>', methods=['DELETE'])
 def delete_self_developed_tool(tool_name):
     if '..' in tool_name or '/' in tool_name or '\\' in tool_name:
@@ -168,7 +186,8 @@ def delete_self_developed_tool(tool_name):
     return jsonify({"status": "success", "message": f"Tool {tool_name} successfully deleted"}), 200
 
 @api_settings_bp.route('/api/setup', methods=['POST'])
-def run_setup():
+@limiter.limit("5 per minute")
+def initial_setup():
     data = request.json or {}
     gemini_key = data.get('gemini_api_key')
     openai_key = data.get('openai_api_key')

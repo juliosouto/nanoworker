@@ -4,39 +4,7 @@
 
 {% block content %}
 
-<style>
-    .premium-input-container {
-        display: flex;
-        flex-direction: column;
-        margin-bottom: 16px;
-    }
-
-    .premium-label {
-        font-size: 0.8rem;
-        font-weight: 600;
-        color: var(--text-muted, #a0a0a0);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 6px;
-    }
-
-    .premium-input {
-        width: 100%;
-        padding: 10px 14px;
-        border-radius: 8px;
-        background: rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        color: var(--text-main, #ffffff);
-        font-size: 0.9rem;
-        outline: none;
-        transition: border-color 0.3s, box-shadow 0.3s;
-    }
-
-    .premium-input:focus {
-        border-color: #3498db;
-        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
-    }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/config.css') }}">
 
 <div style="max-width: 1400px; margin: 0 auto; padding: 20px;">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px;">
@@ -252,105 +220,8 @@
 
 {% block scripts %}
 <script>
-    const registeredWorkers = {{ workers | tojson | safe }} || [];
-    let currentEditWorkerId = null;
-    let workerToDeleteId = null;
-
-    function openWorkerModal() {
-        document.getElementById('workerModal').style.display = 'flex';
-    }
-
-    function closeWorkerModal() {
-        document.getElementById('workerModal').style.display = 'none';
-        document.getElementById('workerForm').reset();
-        document.getElementById('is_default').checked = false;
-        document.getElementById('thinking_enabled').checked = false;
-        document.getElementById('tools_enabled').checked = true;
-        document.getElementById('modalTitle').innerText = 'Add New Worker';
-        currentEditWorkerId = null;
-    }
-
-    function editWorkerById(id) {
-        const worker = registeredWorkers.find(w => w.id === id);
-        if (worker) {
-            currentEditWorkerId = worker.id;
-            document.getElementById('worker_name').value = worker.worker_name;
-            document.getElementById('worker_model').value = worker.worker_model;
-            document.getElementById('worker_instructions').value = worker.worker_instructions || '';
-            document.getElementById('is_default').checked = !!worker.is_default;
-            document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
-            document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
-            document.getElementById('modalTitle').innerText = 'Edit Worker';
-            openWorkerModal();
-        } else {
-            showToast('Worker not found.');
-        }
-    }
-
-    function saveWorker() {
-        const payload = {
-            worker_name: document.getElementById('worker_name').value,
-            worker_model: document.getElementById('worker_model').value,
-            worker_instructions: document.getElementById('worker_instructions').value,
-            is_default: document.getElementById('is_default').checked,
-            thinking_enabled: document.getElementById('thinking_enabled').checked,
-            tools_enabled: document.getElementById('tools_enabled').checked
-        };
-
-        if (!payload.worker_name || !payload.worker_model) {
-            showToast('Worker name and model are required.');
-            return;
-        }
-
-        const method = currentEditWorkerId ? 'PUT' : 'POST';
-        const url = currentEditWorkerId ? `/api/workers/${currentEditWorkerId}` : '/api/workers';
-
-        fetch(url, {
-            method: method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        }).then(res => res.json()).then(data => {
-            if (data.status === 'success') {
-                showToast(currentEditWorkerId ? 'Worker updated successfully!' : 'Worker added successfully!');
-                closeWorkerModal();
-                setTimeout(() => window.location.reload(), 800);
-            } else {
-                showToast('Error saving worker: ' + (data.error || 'Unknown error'));
-            }
-        }).catch(err => {
-            console.error(err);
-            showToast('Error saving worker');
-        });
-    }
-
-    function deleteWorker(id, name) {
-        workerToDeleteId = id;
-        document.getElementById('deleteWorkerNameText').innerText = `"${name}"`;
-        document.getElementById('deleteWorkerModal').style.display = 'flex';
-    }
-
-    function closeDeleteModal() {
-        document.getElementById('deleteWorkerModal').style.display = 'none';
-        workerToDeleteId = null;
-    }
-
-    function confirmDeleteWorker() {
-        if (!workerToDeleteId) return;
-
-        fetch(`/api/workers/${workerToDeleteId}`, {
-            method: 'DELETE'
-        }).then(res => res.json()).then(data => {
-            if (data.status === 'success') {
-                showToast('Worker deleted successfully!');
-                closeDeleteModal();
-                setTimeout(() => window.location.reload(), 800);
-            } else {
-                showToast('Error deleting worker: ' + (data.error || 'Unknown error'));
-            }
-        }).catch(err => {
-            console.error(err);
-            showToast('Error deleting worker');
-        });
-    }
+    window.APP_STATE = window.APP_STATE || {};
+    window.APP_STATE.registeredWorkers = {{ workers | tojson | safe }} || [];
 </script>
+<script src="{{ url_for('static', filename='js/workers.js') }}"></script>
 {% endblock %}

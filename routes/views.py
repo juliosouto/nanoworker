@@ -1,15 +1,29 @@
 import os
 
-from flask import Blueprint, render_template, request, redirect, url_for
+from flask import Blueprint, render_template, request, redirect, url_for, session
 
 import state
 from database import get_config, get_db, get_tool_config
+from security import limiter
 
 views_bp = Blueprint('views', __name__)
 
 @views_bp.route('/')
 def index():
     return redirect(url_for('views.dashboard_page'))
+
+@views_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit("2 per minute; 5 per 10 minute")
+def login_page():
+    if request.method == 'POST':
+        token = request.form.get('token')
+        correct_token = get_config('LOGIN_TOKEN')
+        if token and token == correct_token:
+            session['logged_in'] = True
+            return redirect(url_for('views.dashboard_page'))
+        else:
+            return render_template('login.html', error='Invalid token')
+    return render_template('login.html')
 
 @views_bp.route('/chat')
 def chat():
@@ -510,6 +524,9 @@ def dashboard_page():
     total_min = total_min_recipes if use_recipes else total_min_full
     total_max = total_max_recipes if use_recipes else total_max_full
     
+    login_enabled = get_config('LOGIN_ENABLED', 'false') == 'true'
+    login_token = get_config('LOGIN_TOKEN', '') if login_enabled else ''
+    
     return render_template('dashboard.html', 
                            user_tokens=user_tokens,
                            system_tokens=system_tokens,
@@ -523,4 +540,6 @@ def dashboard_page():
                            total_max_full=total_max_full,
                            total_min=total_min,
                            total_max=total_max,
-                           double_check_tokens=double_check_tokens)
+                           double_check_tokens=double_check_tokens,
+                           login_enabled=login_enabled,
+                           login_token=login_token)

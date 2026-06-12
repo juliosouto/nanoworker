@@ -60,12 +60,14 @@ if platform.system() == 'Darwin' and getattr(subprocess, '_USE_POSIX_SPAWN', Fal
 
 import threading
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, request, redirect, session
 
 import state
-from database import get_ide_config, init_db
+from database import get_ide_config, init_db, get_config, set_config
 from routes import register_routes
+from routes.webhooks import webhooks_bp
 from sweeper import sweep
+from security import init_security, csrf
 
 import socket
 
@@ -91,6 +93,39 @@ app = Flask(__name__)
 # Initialize database and apply migrations on startup
 init_db()
 
+# Initialize Security Mechanisms (Rate Limiting, CSRF, Talisman)
+init_security(app)
+
+# Ensure secret key is set
+secret = get_config('FLASK_SECRET_KEY')
+if not secret:
+    import secrets
+    secret = secrets.token_hex(32)
+    set_config('FLASK_SECRET_KEY', secret)
+app.secret_key = secret
+
+webhook_secret = get_config('WEBHOOK_SECRET')
+if not webhook_secret:
+    import secrets
+    webhook_secret = secrets.token_hex(32)
+    set_config('WEBHOOK_SECRET', webhook_secret)
+
+@app.before_request
+def check_login():
+    if request.path.startswith('/static') or request.path in ['/login', '/api/login/toggle']:
+        return
+
+    # Trusted internal services
+    secret = request.headers.get('X-Webhook-Secret')
+    expected_secret = get_config('WEBHOOK_SECRET')
+    if secret and expected_secret and secret == expected_secret:
+        return
+
+    login_enabled = get_config('LOGIN_ENABLED', 'false') == 'true'
+    if login_enabled:
+        if not session.get('logged_in'):
+            return redirect('/login')
+
 # Ensure static directory exists
 if not os.path.exists('static'):
     os.makedirs('static')
@@ -109,7 +144,10 @@ if run_workers:
     worker_script = os.path.join(os.path.dirname(__file__), 'node_scripts', 'wa_worker.js')
     if os.path.exists(worker_script):
         logging.info("Starting Baileys WhatsApp Worker (wa_worker.js) in the background...")
-        state.worker_process = subprocess.Popen(['node', worker_script])
+        
+        env = os.environ.copy()
+        env['WEBHOOK_SECRET'] = get_config('WEBHOOK_SECRET')
+        state.worker_process = subprocess.Popen(['node', worker_script], env=env)
         
         def cleanup_worker():
             """
@@ -134,7 +172,18 @@ if run_workers:
 # Register all Blueprints
 register_routes(app)
 
+# Exempt webhooks from CSRF protection as they are called by external services
+csrf.exempt(webhooks_bp)
+
 if __name__ == '__main__':
     host = os.environ.get('HOST', '127.0.0.1')
     port = int(os.environ.get('FLASK_PORT', 5000))
+    
+    print("\n" + "═"*60)
+    print("\033[1;36m" + " 🤖 NanoWorker Agent Initialized!" + "\033[0m")
+    print("═"*60)
+    display_host = "localhost" if host == "0.0.0.0" else host
+    print("\033[1;32m" + f" 🚀 Access your panel at: http://{display_host}:{port}" + "\033[0m")
+    print("═"*60 + "\n")
+    
     app.run(debug=True, host=host, port=port)
