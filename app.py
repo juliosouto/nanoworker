@@ -61,6 +61,7 @@ if platform.system() == 'Darwin' and getattr(subprocess, '_USE_POSIX_SPAWN', Fal
 import threading
 from dotenv import load_dotenv
 from flask import Flask, request, redirect, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import state
 from database import get_ide_config, init_db, get_config, set_config
@@ -89,6 +90,8 @@ load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
+# Tell Flask it is behind a proxy (Caddy) so that request.remote_addr is the real client IP.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Initialize database and apply migrations on startup
 init_db()

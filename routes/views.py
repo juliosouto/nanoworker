@@ -13,7 +13,7 @@ def index():
     return redirect(url_for('views.dashboard_page'))
 
 @views_bp.route('/login', methods=['GET', 'POST'])
-@limiter.limit("2 per minute; 5 per 10 minute")
+@limiter.limit("5 per minute; 20 per 10 minute", methods=['POST'])
 def login_page():
     if request.method == 'POST':
         token = request.form.get('token')
