@@ -48,7 +48,7 @@ def setup_app_config():
             ('agent_name', 'Nano'),
             ('USE_RECIPES_AS_TOOLS', 'true'),
             ('SHOW_TOOLS_RESULTS', 'true'),
-            ('AUTONOMOUS_MODE', '1'),
+            ('AUTONOMOUS_MODE', '5'),
             ('DEFAULT_LLM_PROVIDER', 'Google'),
             ('DEFAULT_LLM_MODEL', 'gemini-3.1-flash-lite'),
             ('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
