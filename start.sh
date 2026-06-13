@@ -13,7 +13,7 @@ fi
 
 # Detect public IP
 echo "[1/3] Detecting public IP address..."
-PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me)
+PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me)
 
 # Ensure required files and directories exist so Docker doesn't mount them as directories
 touch .env
