@@ -4,7 +4,8 @@ import sqlite3
 from cryptography.fernet import Fernet
 
 DB_PATH = 'nanoworker.db'
-KEY_PATH = 'encryption.key'
+KEY_PATH = '.store/encryption.key'
+OLD_KEY_PATH = 'encryption.key'
 
 def get_encryption_key() -> bytes:
     """
@@ -14,7 +15,13 @@ def get_encryption_key() -> bytes:
     Retorna:
         bytes: A chave de criptografia.
     """
+    # Migrate old key if it exists
+    if os.path.exists(OLD_KEY_PATH) and not os.path.exists(KEY_PATH):
+        os.makedirs(os.path.dirname(KEY_PATH), exist_ok=True)
+        os.rename(OLD_KEY_PATH, KEY_PATH)
+
     if not os.path.exists(KEY_PATH):
+        os.makedirs(os.path.dirname(KEY_PATH), exist_ok=True)
         key = Fernet.generate_key()
         with open(KEY_PATH, 'wb') as f:
             f.write(key)
