@@ -15,6 +15,11 @@ fi
 echo "[1/3] Detecting public IP address..."
 PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me)
 
+# Ensure required files and directories exist so Docker doesn't mount them as directories
+touch .env
+touch nanoworker.db
+mkdir -p .store
+
 if [ -z "$PUBLIC_IP" ]; then
     echo "⚠️ Warning: Could not detect public IP. Starting in local mode (HTTP only)."
     echo "[2/3] Starting containers..."
