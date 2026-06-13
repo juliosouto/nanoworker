@@ -34,8 +34,10 @@ def setup_app_config():
     cursor = conn.cursor()
     try:
         keys_to_clear = [
-            'agent_name', 'USE_RECIPES_AS_TOOLS', 'SHOW_TOOLS_RESULTS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
-            'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL'
+            'agent_name', 'USE_RECIPES_AS_TOOLS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
+            'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL',
+            'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR',
+            'MESSAGE_SLICE_SIZE_TOKENS'
         ]
         # Clear existing configs in scope
         cursor.execute(
@@ -45,13 +47,19 @@ def setup_app_config():
 
         default_configs = [
             ('agent_name', 'Nano'),
-            ('USE_RECIPES_AS_TOOLS', 'true'),
-            ('SHOW_TOOLS_RESULTS', 'true'),
+            ('REQUIRE_AT_PREFIX', 'false'),
+            ('USE_RECIPES_AS_TOOLS', 'false'),
             ('AUTONOMOUS_MODE', '1'),
             ('DEFAULT_LLM_PROVIDER', 'Google'),
             ('DEFAULT_LLM_MODEL', 'gemini-3.1-flash-lite'),
             ('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
-            ('QWEN_MODEL', 'qwen-plus')
+            ('QWEN_MODEL', 'qwen-plus'),
+            ('PERM_TERMINAL', 'true'),
+            ('PERM_PLAYWRIGHT', 'true'),
+            ('PERM_FS', 'true'),
+            ('PERM_WEB_SEARCH', 'true'),
+            ('PERM_TOOL_CREATOR', 'true'),
+            ('MESSAGE_SLICE_SIZE_TOKENS', '2000')
         ]
         for key, value in default_configs:
             cursor.execute('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)', (key, value))

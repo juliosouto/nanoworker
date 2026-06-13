@@ -5,7 +5,7 @@ def get_default_worker(workers=None):
     if workers is None:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled FROM workers_config')
+        cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results FROM workers_config')
         workers = [dict(w) for w in cursor.fetchall()]
         conn.close()
 
@@ -28,7 +28,7 @@ def resolve_worker_from_content(content):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results FROM workers_config')
     workers = [dict(w) for w in cursor.fetchall()]
     conn.close()
 
@@ -210,7 +210,7 @@ def truncate_message(content, max_length=None):
     if max_length is None:
         from database import get_config
         try:
-            tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "250"))
+            tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "2000"))
         except (ValueError, TypeError):
             tokens = 250
         max_length = tokens * 4

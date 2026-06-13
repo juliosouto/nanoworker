@@ -3,6 +3,7 @@
 {% block title %}NanoWorker - Dashboard{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 <div style="max-width: 1200px; margin: 0 auto;">
     <div style="display: flex; align-items: center; margin-bottom: 24px;">
         <h2 style="font-weight: 600; margin: 0;">Dashboard</h2>
@@ -124,11 +125,30 @@
 
 
 
-        <!-- Card 3 -->
-        <div class="glass-panel" style="display: none; flex-direction: column; padding: 16px; min-height: 200px;">
-            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Card 3</h3>
-            <div style="margin-top: auto; color: var(--text-muted); font-size: 0.9rem;">
-                <!-- Content goes here -->
+        <!-- Card 3: Login System -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px; min-height: 200px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 0;">Login System</h3>
+                <label class="switch" style="position: relative; display: inline-block; width: 40px; height: 20px;">
+                    <input type="checkbox" id="loginToggle" style="opacity: 0; width: 0; height: 0;" {% if login_enabled %}checked{% endif %} onchange="toggleLoginSystem(this.checked)">
+                    <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; transition: .4s; border-radius: 20px;"></span>
+                </label>
+            </div>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Require an access token to use the Web UI.
+            </small>
+
+            <div id="loginTokenContainer" style="display: {% if login_enabled %}block{% else %}none{% endif %}; margin-top: auto; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Access Token</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="password" id="loginTokenDisplay" readonly value="{{ login_token }}" style="flex-grow: 1; background: transparent; border: none; color: var(--text-main); font-family: monospace; font-size: 0.9rem; outline: none; width: 100%;">
+                    <button onclick="toggleTokenVisibility('loginTokenDisplay', 'eyeIconDashboard')" style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;" title="Show/Hide Token">
+                        <svg id="eyeIconDashboard" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    </button>
+                    <button onclick="copyLoginToken()" style="background: none; border: none; color: #3b82f6; cursor: pointer; padding: 4px;" title="Copy Token">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -138,7 +158,7 @@
 <div id="setupModal" class="modal"
     style="display: none; position: fixed; z-index: 1050; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); align-items: center; justify-content: center; backdrop-filter: blur(4px);">
     <div class="modal-content glass-panel"
-        style="background: rgba(18, 18, 22, 0.96); padding: 28px; border-radius: 16px; width: 90%; max-width: 480px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column;">
+        style="background: rgba(18, 18, 22, 0.96); padding: 28px; border-radius: 16px; width: 90%; max-width: 480px; height: auto; max-height: 90vh; overflow-y: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column;">
 
         <div
             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 14px;">
@@ -218,7 +238,7 @@
 <div id="confirmSetupModal" class="modal"
     style="display: none; position: fixed; z-index: 1060; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.85); align-items: center; justify-content: center; backdrop-filter: blur(5px);">
     <div class="modal-content glass-panel"
-        style="background: rgba(22, 18, 18, 0.98); padding: 28px; border-radius: 16px; width: 90%; max-width: 420px; box-shadow: 0 24px 60px rgba(0,0,0,0.7); border: 1px solid rgba(239, 68, 68, 0.3); display: flex; flex-direction: column; text-align: center;">
+        style="background: rgba(22, 18, 18, 0.98); padding: 28px; border-radius: 16px; width: 90%; max-width: 420px; height: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.7); border: 1px solid rgba(239, 68, 68, 0.3); display: flex; flex-direction: column; text-align: center;">
 
         <div style="color: #ef4444; margin-bottom: 16px; display: flex; justify-content: center;">
             <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
@@ -247,74 +267,59 @@
         </div>
     </div>
 </div>
+
+<!-- Confirm Disable Login Modal -->
+<div id="confirmDisableLoginModal" class="modal" style="display: none; position: fixed; z-index: 1060; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.85); align-items: center; justify-content: center; backdrop-filter: blur(5px);">
+    <div class="modal-content glass-panel" style="background: rgba(22, 18, 18, 0.98); padding: 28px; border-radius: 16px; width: 90%; max-width: 420px; height: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.7); border: 1px solid rgba(239, 68, 68, 0.3); display: flex; flex-direction: column; text-align: center;">
+
+        <div style="color: #ef4444; margin-bottom: 16px; display: flex; justify-content: center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 0 10px rgba(239, 68, 68, 0.4));"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+        </div>
+
+        <h3 style="margin: 0 0 12px 0; font-size: 1.25rem; font-weight: 600; color: #ef4444;">Disable Login System?</h3>
+        <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 24px; line-height: 1.5;">
+            By disabling the login system, your Web UI will be <strong>open and accessible to anyone</strong> without requiring an access token.
+        </p>
+
+        <div style="display: flex; gap: 12px; justify-content: center;">
+            <button type="button" class="btn btn-secondary" onclick="cancelDisableLogin()" style="padding: 8px 20px; font-size: 0.9rem; border-radius: 8px; background: rgba(255,255,255,0.08); border: none; color: var(--text-main); cursor: pointer; flex: 1;">Cancel</button>
+            <button type="button" onclick="confirmDisableLogin()" class="btn" style="padding: 8px 20px; font-size: 0.9rem; border-radius: 8px; background: #ef4444; border: none; color: white; cursor: pointer; font-weight: 600; flex: 1;">Yes, Disable</button>
+        </div>
+    </div>
+</div>
+
+<!-- Login System Info Modal -->
+<div id="loginSystemModal" class="modal" style="display: none; position: fixed; z-index: 1050; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+    <div class="modal-content glass-panel" style="background: rgba(18, 18, 22, 0.96); padding: 28px; border-radius: 16px; width: 90%; max-width: 480px; height: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column;">
+        
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 14px;">
+            <h3 id="loginModalTitle" style="margin: 0; font-size: 1.3rem; font-weight: 600; color: var(--text-main);">Login System</h3>
+            <span onclick="closeLoginModal()" style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted); transition: color 0.2s;" onmouseover="this.style.color='var(--text-main)'" onmouseout="this.style.color='var(--text-muted)'">&times;</span>
+        </div>
+
+        <p id="loginModalText" style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;"></p>
+
+        <div id="loginModalTokenArea" style="display: none; flex-direction: column; align-items: center; margin-bottom: 24px;">
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Your Access Token</div>
+            <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.4); padding: 16px; border-radius: 8px; font-family: monospace; font-size: 1.2rem; color: #60a5fa; width: 100%; text-align: center; box-shadow: inset 0 2px 10px rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <input type="password" id="loginModalTokenDisplay" readonly style="background: transparent; border: none; color: inherit; font-family: inherit; font-size: inherit; outline: none; width: 100%; text-align: center;">
+                <button onclick="toggleTokenVisibility('loginModalTokenDisplay', 'eyeIconModal')" style="background: none; border: none; color: inherit; cursor: pointer; padding: 0;" title="Show/Hide Token">
+                    <svg id="eyeIconModal" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+            </div>
+            <button onclick="copyLoginModalToken()" style="margin-top: 12px; padding: 8px 16px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text-main); cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.12)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                Copy Token
+            </button>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end;">
+            <button onclick="closeLoginModal()" class="btn btn-primary" style="padding: 8px 24px; font-size: 0.95rem; border-radius: 8px; background: #3b82f6; border: none; color: white; cursor: pointer; font-weight: 500; transition: background 0.2s;" onmouseover="this.style.background='#2563eb'" onmouseout="this.style.background='#3b82f6'">Got it</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-    function openSetupModal() {
-        document.getElementById('setupModal').style.display = 'flex';
-    }
-
-    function closeSetupModal() {
-        document.getElementById('setupModal').style.display = 'none';
-        document.getElementById('setupForm').reset();
-    }
-
-    function closeConfirmModal() {
-        document.getElementById('confirmSetupModal').style.display = 'none';
-    }
-
-    function submitSetup() {
-        document.getElementById('confirmSetupModal').style.display = 'flex';
-    }
-
-    function executeSetup() {
-        closeConfirmModal();
-
-        const geminiKey = document.getElementById('setup_gemini_key').value;
-        const openaiKey = document.getElementById('setup_openai_key').value;
-        const groqKey = document.getElementById('setup_groq_key').value;
-        const qwenKey = document.getElementById('setup_qwen_key').value;
-        const openrouterKey = document.getElementById('setup_openrouter_key').value;
-
-        const submitBtn = document.getElementById('setupSubmitBtn');
-        const originalContent = submitBtn.innerHTML;
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = '<span>Running...</span>';
-
-        fetch('/api/setup', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                gemini_api_key: geminiKey || null,
-                openai_api_key: openaiKey || null,
-                groq_api_key: groqKey || null,
-                qwen_api_key: qwenKey || null,
-                openrouter_api_key: openrouterKey || null
-            })
-        })
-            .then(response => response.json())
-            .then(data => {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = originalContent;
-                if (data.status === 'success') {
-                    showToast('Setup completed successfully! Re-initializing active configs.');
-                    closeSetupModal();
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1500);
-                } else {
-                    showToast('Setup failed: ' + data.message);
-                }
-            })
-            .catch(error => {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = originalContent;
-                console.error('Error running setup:', error);
-                showToast('An unexpected error occurred during setup.');
-            });
-    }
-</script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}

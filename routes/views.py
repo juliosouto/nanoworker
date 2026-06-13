@@ -1,15 +1,29 @@
 import os
 
-from flask import Blueprint, render_template, request, redirect, url_for
+from flask import Blueprint, render_template, request, redirect, url_for, session
 
 import state
 from database import get_config, get_db, get_tool_config
+from security import limiter
 
 views_bp = Blueprint('views', __name__)
 
 @views_bp.route('/')
 def index():
     return redirect(url_for('views.dashboard_page'))
+
+@views_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute; 20 per 10 minute", methods=['POST'])
+def login_page():
+    if request.method == 'POST':
+        token = request.form.get('token')
+        correct_token = get_config('LOGIN_TOKEN')
+        if token and token == correct_token:
+            session['logged_in'] = True
+            return redirect(url_for('views.dashboard_page'))
+        else:
+            return render_template('login.html', error='Invalid token')
+    return render_template('login.html')
 
 @views_bp.route('/chat')
 def chat():
@@ -186,15 +200,14 @@ def agent_behavior_config_page():
         am_val = 1
 
     try:
-        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '250'))
+        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '2000'))
     except (ValueError, TypeError):
         slice_tokens = 250
 
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
-        use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
-        show_tools_results=get_config('SHOW_TOOLS_RESULTS', 'true').lower() == 'true',
+        use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'false').lower() == 'true',
         autonomous_mode=am_val,
         message_slice_size_tokens=slice_tokens,
         ide_prompt=get_config('IDE_PROMPT', ''))
@@ -392,7 +405,7 @@ def llm_models_page():
 def workers_page():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results FROM workers_config')
     workers = cursor.fetchall()
     
     cursor.execute('SELECT model_name, provider FROM llm_config WHERE enabled = 1')
@@ -510,6 +523,9 @@ def dashboard_page():
     total_min = total_min_recipes if use_recipes else total_min_full
     total_max = total_max_recipes if use_recipes else total_max_full
     
+    login_enabled = get_config('LOGIN_ENABLED', 'false') == 'true'
+    login_token = get_config('LOGIN_TOKEN', '') if login_enabled else ''
+    
     return render_template('dashboard.html', 
                            user_tokens=user_tokens,
                            system_tokens=system_tokens,
@@ -523,4 +539,6 @@ def dashboard_page():
                            total_max_full=total_max_full,
                            total_min=total_min,
                            total_max=total_max,
-                           double_check_tokens=double_check_tokens)
+                           double_check_tokens=double_check_tokens,
+                           login_enabled=login_enabled,
+                           login_token=login_token)

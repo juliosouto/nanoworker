@@ -1,7 +1,8 @@
 import logging
 
 import requests as req
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
+from database import get_config
 
 from router import route_ide_message, route_inbound_message
 from utils.audio_utils import transcribe_webhook_audio
@@ -54,6 +55,28 @@ def _send_composing_presence(target_jid):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@webhooks_bp.before_request
+def authenticate_webhooks():
+    if request.path not in ['/api/webhook', '/api/ide-webhook']:
+        return
+
+    secret = request.headers.get('X-Webhook-Secret')
+    expected_secret = get_config('WEBHOOK_SECRET')
+
+    if secret and expected_secret and secret == expected_secret:
+        return  # Valid internal service
+
+    if session.get('logged_in'):
+        csrf_token = request.headers.get('X-CSRFToken')
+        try:
+            from flask_wtf.csrf import validate_csrf
+            validate_csrf(csrf_token)
+            return  # Valid authenticated frontend request
+        except Exception:
+            return jsonify({"error": "Invalid CSRF token"}), 403
+            
+    return jsonify({"error": "Unauthorized"}), 401
 
 @webhooks_bp.route('/api/webhook', methods=['POST'])
 def webhook():

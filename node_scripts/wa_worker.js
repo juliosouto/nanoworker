@@ -48,7 +48,9 @@ async function getAgentName() {
     const now = Date.now();
     if (now - lastAgentNameFetch > 60000) {
         try {
-            const res = await axios.get(`http://127.0.0.1:${FLASK_PORT}/api/config/agent_name`);
+            const res = await axios.get(`http://127.0.0.1:${FLASK_PORT}/api/config/agent_name`, {
+                headers: { 'X-Webhook-Secret': process.env.WEBHOOK_SECRET || '' }
+            });
             if (res.data) {
                 currentAgentName = res.data.agent_name ? res.data.agent_name.toLowerCase() : null;
                 workerNames = res.data.worker_names ? res.data.worker_names.map(name => name.toLowerCase()) : [];
@@ -318,7 +320,11 @@ async function connectToWhatsApp() {
                     payload.image_base64 = imageBase64;
                     payload.mimetype = mimeType;
                 }
-                await axios.post(FLASK_WEBHOOK_URL, payload);
+                await axios.post(FLASK_WEBHOOK_URL, payload, {
+                    headers: {
+                        'X-Webhook-Secret': process.env.WEBHOOK_SECRET || ''
+                    }
+                });
             } catch (err) {
                 console.error('Failed to forward message to Flask:', err.message);
             }

@@ -221,11 +221,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         # Build config kwargs
         tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
+        show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
 
         config_kwargs = build_config_kwargs(
             system_prompt=system_prompt,
             tools=tools,
             thinking_enabled=thinking_enabled,
+            show_tools_results=show_tools_results,
         )
 
         mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete)
@@ -322,6 +324,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             system_prompt=system_prompt,
             tools=get_permitted_tools(),
             thinking_enabled=thinking_enabled,
+            show_tools_results=True,
         )
 
         mock_response = execute_autonomous_loop(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)

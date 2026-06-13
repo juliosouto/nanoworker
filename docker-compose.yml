@@ -2,8 +2,8 @@ services:
   nanoworker:
     build: .
     container_name: nanoworker
-    ports:
-      - "5001:5000"
+    expose:
+      - "5000"
     volumes:
       - ./.env:/app/.env
       - ./nanoworker.db:/app/nanoworker.db
@@ -11,3 +11,23 @@ services:
     environment:
       - HOST=0.0.0.0
     restart: unless-stopped
+
+  caddy:
+    image: caddy:latest
+    container_name: nanoworker-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nanoworker
+
+volumes:
+  caddy_data:
+  caddy_config:

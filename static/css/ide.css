@@ -1,0 +1,102 @@
+.file-tree {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.file-tree ul {
+    list-style: none;
+    padding-left: 16px;
+    margin: 0;
+}
+
+.file-tree li {
+    margin: 4px 0;
+}
+
+.file-item,
+.dir-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.file-item:hover,
+.dir-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+}
+
+.file-item.active {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--text-main);
+    border-left: 2px solid var(--accent);
+}
+
+.dir-item {
+    font-weight: 500;
+}
+
+.dir-toggle {
+    font-size: 0.7rem;
+    width: 12px;
+    display: inline-block;
+    color: var(--text-muted);
+}
+
+.dir-icon,
+.file-icon {
+    font-size: 1rem;
+}
+
+/* Overrides for IDE Agent Chat */
+.message-item {
+    padding: 10px !important;
+}
+
+.message-item.in {
+    margin-right: 0 !important;
+}
+
+.message-item.out {
+    margin-left: 0 !important;
+}
+
+.msg-content,
+.msg-content.markdown p,
+.msg-content.markdown li,
+.msg-content.markdown table {
+    font-size: 0.85rem !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
+    white-space: normal;
+}
+
+.msg-content.markdown h1 {
+    font-size: 1.1rem !important;
+}
+
+.msg-content.markdown h2 {
+    font-size: 1rem !important;
+}
+
+.msg-content.markdown h3 {
+    font-size: 0.95rem !important;
+}
+
+.msg-content.markdown pre code {
+    font-size: 0.8rem !important;
+}
+
+.msg-time,
+.msg-footer {
+    display: none !important;
+}

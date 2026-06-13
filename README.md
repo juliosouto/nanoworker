@@ -2,7 +2,7 @@
 
 NanoWorker is an Artificial Intelligence agent inspired by the OpenClaw and NanoClaw projects. Its primary goal is to be a **simple and cost-effective assistant**, designed to consume significantly fewer tokens than OpenClaw. 
 
-It is built in **Python** using the **Flask** microframework, and features a **Node.js** bridge for native integration with **WhatsApp**. Impressively, **90% of the codebase was written with the assistance of Google Antigravity**.
+It is built in **Python** using the **Flask** microframework, and features a **Node.js** bridge for native integration with **WhatsApp**. Impressively, **70% of the codebase was written with the assistance of Google Antigravity**.
 
 ⚠️ **Notice:** This project was originally developed for **MacOS**, but now includes **experimental support for Windows and Linux**. Furthermore, in this initial version, the language model (LLM) integration exclusively supports the **Google Gemini** and **Alibaba Qwen** APIs.
 
@@ -53,16 +53,47 @@ It is built in **Python** using the **Flask** microframework, and features a **N
 
 ## 🛠️ System Requirements
 
-- **Operating System:** MacOS Tahoe 26.5 (tested and recommended)
+- **Operating System:** MacOS, Linux and Windows.
 - **Python:** Version 3.13
 - **Node.js:** Version 18 or higher
 - **FFmpeg:** Required for audio and video processing and conversion.
 
 ## ⚙️ Installation and Setup Guide
 
-### 1. Automatic Local Installation (Recommended)
+### 1. Running with Docker (Production or Local) - ⭐ Recommended for VPS
 
-The easiest and most complete way to run NanoWorker, retaining full access to native apps and functionalities, is using the automated setup script. This script automatically installs system dependencies (Node, FFmpeg, Python), configures the virtual environment, and starts the application.
+The most robust way to run NanoWorker, especially on a cloud server (VPS), is using Docker. It includes a built-in reverse proxy (Caddy) that automatically provisions an SSL certificate (HTTPS) for secure public access.
+
+#### Option A: Quick Start (Automated HTTPS)
+Use the automated start script. It will detect your public IP, automatically configure a `nip.io` domain (e.g., `https://123.45.67.89.nip.io`), and provision the SSL certificate out of the box.
+
+```bash
+sudo apt update && sudo apt install git -y
+git clone https://github.com/juliosouto/nanoworker.git
+cd nanoworker
+./start.sh
+```
+*Note: The script will print the exact secure `https://` URL you need to access in the terminal.*
+
+#### Option B: Manual Docker Command (lacks SSL/HTTPS)
+If you want to run it locally without HTTPS, simply use:
+```bash
+docker compose up -d
+```
+Access the Web IDE interface at `http://localhost`.
+
+If you have a custom domain pointing to your server, you can pass it as an environment variable to automatically get an SSL certificate:
+```bash
+DOMAIN=your-domain.com docker compose up -d
+```
+
+> ⚠️ **Warning for macOS users:** When running via Docker, the agent runs in an isolated Linux container and **loses access to native macOS apps and functionalities** (like Mail, Contacts, Calendar, AppleScript, etc.). If you want the agent to interact with your Mac, use the "Automatic Local Installation" below instead.
+
+---
+
+### 2. Automatic Local Installation (For Desktop use)
+
+The easiest way to run NanoWorker on your personal computer, retaining full access to native apps and functionalities, is using the automated setup script. This script automatically installs system dependencies (Node, FFmpeg, Python), configures the virtual environment, and starts the application.
 
 **For macOS and Linux (WSL/Ubuntu):**
 ```bash
@@ -79,22 +110,6 @@ cd nanoworker
 ```
 
 Once running, access the Web IDE interface at `http://localhost:5000` (or the port shown in your terminal).
-
----
-
-### 2. Running with Docker
-
-You can also run NanoWorker using Docker. Ensure you have Docker and Docker Compose installed on your system.
-
-> ⚠️ **Warning for macOS users:** When running via Docker, the agent runs in an isolated Linux container and **loses access to native macOS apps and functionalities** (like Mail, Contacts, Calendar, AppleScript, etc.). If you want the agent to interact with your Mac, use the "Automatic Local Installation" above instead.
-
-```bash
-git clone https://github.com/juliosouto/nanoworker.git
-cd nanoworker
-docker compose up -d
-```
-
-Once the container is built and running, access the Web IDE interface at `http://localhost:5001`.
 
 ---
 

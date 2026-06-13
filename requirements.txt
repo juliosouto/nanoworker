@@ -20,3 +20,6 @@ groq
 geocoder
 curl_cffi
 tradingview-ta
+Flask-Limiter
+Flask-WTF
+Flask-Talisman
