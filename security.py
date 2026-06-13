@@ -32,17 +32,20 @@ def init_security(app):
         'default-src': [
             '\'self\'',
             'https://fonts.googleapis.com',
-            'https://fonts.gstatic.com'
+            'https://fonts.gstatic.com',
+            'https://cdn.jsdelivr.net'
         ],
         'style-src': [
             '\'self\'',
             '\'unsafe-inline\'',
-            'https://fonts.googleapis.com'
+            'https://fonts.googleapis.com',
+            'https://cdn.jsdelivr.net'
         ],
         'script-src': [
             '\'self\'',
             '\'unsafe-inline\'',
-            '\'unsafe-eval\''
+            '\'unsafe-eval\'',
+            'https://cdn.jsdelivr.net'
         ],
         'img-src': [
             '*',
