@@ -156,6 +156,7 @@ def build_config_kwargs(
     system_prompt: str,
     tools=None,
     thinking_enabled: bool = False,
+    show_tools_results: bool = True,
 ) -> dict:
     """
     Builds the config_kwargs dict for LLM calls.
@@ -164,12 +165,14 @@ def build_config_kwargs(
         system_prompt (str): The assembled system prompt.
         tools (list, optional): List of tool functions to provide.
         thinking_enabled (bool): Whether to enable thinking mode.
+        show_tools_results (bool): Whether to stream tool execution results to the client.
 
     Returns:
         dict: Configuration kwargs for the LLM call.
     """
     config_kwargs = {
         "temperature": 0.0,
+        "show_tools_results": show_tools_results,
     }
 
     if tools:

@@ -207,8 +207,7 @@ def agent_behavior_config_page():
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
-        use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'true').lower() == 'true',
-        show_tools_results=get_config('SHOW_TOOLS_RESULTS', 'true').lower() == 'true',
+        use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'false').lower() == 'true',
         autonomous_mode=am_val,
         message_slice_size_tokens=slice_tokens,
         ide_prompt=get_config('IDE_PROMPT', ''))
@@ -406,7 +405,7 @@ def llm_models_page():
 def workers_page():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results FROM workers_config')
     workers = cursor.fetchall()
     
     cursor.execute('SELECT model_name, provider FROM llm_config WHERE enabled = 1')

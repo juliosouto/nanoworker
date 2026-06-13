@@ -22,16 +22,12 @@ function setupToggle(toggleId, knobId) {
 document.addEventListener('DOMContentLoaded', () => {
     setupToggle('requireAtToggle', 'requireAtKnob');
     setupToggle('useRecipesToggle', 'useRecipesKnob');
-    setupToggle('showToolsResultsToggle', 'showToolsResultsKnob');
 
     const requireAtToggle = document.getElementById('requireAtToggle');
     if(requireAtToggle) requireAtToggle.addEventListener('change', autoSaveToggles);
 
     const useRecipesToggle = document.getElementById('useRecipesToggle');
     if(useRecipesToggle) useRecipesToggle.addEventListener('change', autoSaveToggles);
-
-    const showToolsResultsToggle = document.getElementById('showToolsResultsToggle');
-    if(showToolsResultsToggle) showToolsResultsToggle.addEventListener('change', autoSaveToggles);
 
     const slider = document.getElementById('autonomousModeSlider');
     const sliderValue = document.getElementById('autonomousModeValue');
@@ -106,7 +102,6 @@ function updateSliceSlider(val) {
 function autoSaveToggles() {
     const requireAtPrefix = document.getElementById('requireAtToggle')?.checked;
     const useRecipesAsTools = document.getElementById('useRecipesToggle')?.checked;
-    const showToolsResults = document.getElementById('showToolsResultsToggle')?.checked;
     const autonomousMode = parseInt(document.getElementById('autonomousModeSlider')?.value) || 1;
     const sliceSizeTokens = parseInt(document.getElementById('sliceSizeSlider')?.value) || 250;
 
@@ -116,7 +111,6 @@ function autoSaveToggles() {
         body: JSON.stringify({
             require_at_prefix: requireAtPrefix,
             use_recipes_as_tools: useRecipesAsTools,
-            show_tools_results: showToolsResults,
             autonomous_mode: autonomousMode,
             message_slice_size_tokens: sliceSizeTokens
         })

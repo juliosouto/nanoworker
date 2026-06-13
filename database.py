@@ -726,7 +726,8 @@ def init_db():
         worker_instructions TEXT,
         is_default BOOLEAN DEFAULT 0,
         thinking_enabled BOOLEAN DEFAULT 0,
-        tools_enabled BOOLEAN DEFAULT 1
+        tools_enabled BOOLEAN DEFAULT 1,
+        show_tools_results BOOLEAN DEFAULT 1
     )
     ''')
 
@@ -737,6 +738,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE workers_config ADD COLUMN tools_enabled BOOLEAN DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    try:
+        cursor.execute("ALTER TABLE workers_config ADD COLUMN show_tools_results BOOLEAN DEFAULT 1")
     except sqlite3.OperationalError:
         pass  # Column already exists
 

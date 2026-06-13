@@ -11,6 +11,7 @@ function closeWorkerModal() {
     document.getElementById('is_default').checked = false;
     document.getElementById('thinking_enabled').checked = false;
     document.getElementById('tools_enabled').checked = true;
+    document.getElementById('show_tools_results').checked = true;
     document.getElementById('modalTitle').innerText = 'Add New Worker';
     currentEditWorkerId = null;
 }
@@ -26,6 +27,7 @@ function editWorkerById(id) {
         document.getElementById('is_default').checked = !!worker.is_default;
         document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
         document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
+        document.getElementById('show_tools_results').checked = worker.show_tools_results === undefined ? true : !!worker.show_tools_results;
         document.getElementById('modalTitle').innerText = 'Edit Worker';
         openWorkerModal();
     } else {
@@ -40,7 +42,8 @@ function saveWorker() {
         worker_instructions: document.getElementById('worker_instructions').value,
         is_default: document.getElementById('is_default').checked,
         thinking_enabled: document.getElementById('thinking_enabled').checked,
-        tools_enabled: document.getElementById('tools_enabled').checked
+        tools_enabled: document.getElementById('tools_enabled').checked,
+        show_tools_results: document.getElementById('show_tools_results').checked
     };
 
     if (!payload.worker_name || !payload.worker_model) {
