@@ -101,7 +101,7 @@
         </main>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="{{ url_for('static', filename='js/marked.min.js') }}"></script>
     <script>
         window.APP_STATE = window.APP_STATE || {};
         window.APP_STATE.chatId = "{{ chat_id }}";
