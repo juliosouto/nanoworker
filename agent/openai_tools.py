@@ -79,6 +79,8 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     """
     # 1. Map history and content to OpenAI format
     messages = []
+    show_tools_results = config_kwargs.pop("show_tools_results", True)
+
     if "system_instruction" in config_kwargs:
         messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
 
@@ -210,7 +212,7 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             results_str = "\nResults:\n- " + "\n- ".join(tool_results)
             msg_end = f"⚙️ Executed tools: {tools_str}{results_str}"
             insert_feedback(cursor, table, session_id, message_in_id, msg_end)
-            if on_complete and config_kwargs.get("show_tools_results", True):
+            if on_complete and show_tools_results:
                 try:
                     on_complete(msg_end)
                 except Exception:

@@ -51,7 +51,8 @@ class TestOpenAIRouting(unittest.TestCase):
             message_in_id,
             'messages_out',
             'decrypted_api_key',
-            2048
+            2048,
+            on_complete=None
         )
 
     @patch('openai.OpenAI')
