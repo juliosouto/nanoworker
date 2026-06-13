@@ -35,7 +35,8 @@ def setup_app_config():
     try:
         keys_to_clear = [
             'agent_name', 'USE_RECIPES_AS_TOOLS', 'SHOW_TOOLS_RESULTS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
-            'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL'
+            'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL',
+            'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR'
         ]
         # Clear existing configs in scope
         cursor.execute(
@@ -51,7 +52,12 @@ def setup_app_config():
             ('DEFAULT_LLM_PROVIDER', 'Google'),
             ('DEFAULT_LLM_MODEL', 'gemini-3.1-flash-lite'),
             ('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
-            ('QWEN_MODEL', 'qwen-plus')
+            ('QWEN_MODEL', 'qwen-plus'),
+            ('PERM_TERMINAL', 'true'),
+            ('PERM_PLAYWRIGHT', 'true'),
+            ('PERM_FS', 'true'),
+            ('PERM_WEB_SEARCH', 'true'),
+            ('PERM_TOOL_CREATOR', 'true')
         ]
         for key, value in default_configs:
             cursor.execute('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)', (key, value))
