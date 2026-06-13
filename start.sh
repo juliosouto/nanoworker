@@ -29,7 +29,7 @@ if [ -z "$PUBLIC_IP" ]; then
     echo "NanoWorker is running!"
     echo "Access your panel locally at: http://localhost"
 else
-    DOMAIN="${PUBLIC_IP}.nip.io"
+    DOMAIN="nw.${PUBLIC_IP}.nip.io"
     echo "✅ Public IP detected: $PUBLIC_IP"
     echo "✅ Automatic HTTPS domain: $DOMAIN"
     
