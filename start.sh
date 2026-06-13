@@ -22,8 +22,8 @@ mkdir -p .store
 
 if [ -z "$PUBLIC_IP" ]; then
     echo "⚠️ Warning: Could not detect public IP. Starting in local mode (HTTP only)."
-    echo "[2/3] Starting containers..."
-    docker compose up -d
+    echo "[2/3] Building and starting containers..."
+    docker compose up --build -d
     echo "[3/3] Done!"
     echo ""
     echo "NanoWorker is running!"
@@ -33,9 +33,9 @@ else
     echo "✅ Public IP detected: $PUBLIC_IP"
     echo "✅ Automatic HTTPS domain: $DOMAIN"
     
-    echo "[2/3] Starting containers with Caddy SSL..."
+    echo "[2/3] Building and starting containers with Caddy SSL..."
     # Run docker compose with the DOMAIN environment variable
-    DOMAIN=$DOMAIN docker compose up -d
+    DOMAIN=$DOMAIN docker compose up --build -d
     
     echo "[3/3] Done!"
     echo ""
