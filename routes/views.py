@@ -200,7 +200,7 @@ def agent_behavior_config_page():
         am_val = 1
 
     try:
-        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '250'))
+        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '2000'))
     except (ValueError, TypeError):
         slice_tokens = 250
 

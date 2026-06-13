@@ -36,7 +36,8 @@ def setup_app_config():
         keys_to_clear = [
             'agent_name', 'USE_RECIPES_AS_TOOLS', 'SHOW_TOOLS_RESULTS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
             'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL',
-            'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR'
+            'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR',
+            'MESSAGE_SLICE_SIZE_TOKENS'
         ]
         # Clear existing configs in scope
         cursor.execute(
@@ -57,7 +58,8 @@ def setup_app_config():
             ('PERM_PLAYWRIGHT', 'true'),
             ('PERM_FS', 'true'),
             ('PERM_WEB_SEARCH', 'true'),
-            ('PERM_TOOL_CREATOR', 'true')
+            ('PERM_TOOL_CREATOR', 'true'),
+            ('MESSAGE_SLICE_SIZE_TOKENS', '2000')
         ]
         for key, value in default_configs:
             cursor.execute('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)', (key, value))

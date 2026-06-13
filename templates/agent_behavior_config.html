@@ -101,7 +101,7 @@
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                         <button type="button" id="sliceSizeMinus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">-</button>
-                        <input type="range" id="sliceSizeSlider" min="200" max="2000" step="50" value="{{ message_slice_size_tokens }}"
+                        <input type="range" id="sliceSizeSlider" min="200" max="10000" step="50" value="{{ message_slice_size_tokens }}"
                             style="width: 100px; cursor: pointer;">
                         <button type="button" id="sliceSizePlus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">+</button>
                         <span id="sliceSizeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 32px; text-align: center; margin-left: 4px;">{{ message_slice_size_tokens }}</span>

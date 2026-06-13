@@ -210,7 +210,7 @@ def truncate_message(content, max_length=None):
     if max_length is None:
         from database import get_config
         try:
-            tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "250"))
+            tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "2000"))
         except (ValueError, TypeError):
             tokens = 250
         max_length = tokens * 4
