@@ -13,7 +13,7 @@ fi
 
 # Detect public IP
 echo "[1/3] Detecting public IP address..."
-PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me)
+PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me)
 
 # Ensure required files and directories exist so Docker doesn't mount them as directories
 touch .env
@@ -29,7 +29,12 @@ if [ -z "$PUBLIC_IP" ]; then
     echo "NanoWorker is running!"
     echo "Access your panel locally at: http://localhost"
 else
-    DOMAIN="${PUBLIC_IP}.nip.io"
+    if [[ "$PUBLIC_IP" == *":"* ]]; then
+        FORMATTED_IP=$(echo "$PUBLIC_IP" | tr ':' '-')
+        DOMAIN="${FORMATTED_IP}.sslip.io"
+    else
+        DOMAIN="${PUBLIC_IP}.nip.io"
+    fi
     echo "✅ Public IP detected: $PUBLIC_IP"
     echo "✅ Automatic HTTPS domain: $DOMAIN"
     
