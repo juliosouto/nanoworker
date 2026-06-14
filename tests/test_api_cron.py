@@ -7,43 +7,51 @@ def client(mock_db_path):
     import database
     database.init_db()
     
-    conn = database.get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO sessions (channel_id, agent_id) VALUES ('web-chat', 1)
-    ''')
-    session_id = cursor.lastrowid
-    
-    import datetime
-    next_run = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute('''
-        INSERT INTO cron_jobs (id, session_id, description, content, cron_expression, next_run, is_active) 
-        VALUES ('cron_1', ?, 'desc', 'content', '* * * * *', ?, 1)
-    ''', (session_id, next_run))
-    
-    conn.commit()
-    conn.close()
-    
     app.config['TESTING'] = True
     app.config['WTF_CSRF_ENABLED'] = False
     with app.test_client() as client:
         yield client
 
-def test_toggle_cron_job_success(client):
-    response = client.post('/api/cron/cron_1/toggle')
-    assert response.status_code == 200
-    assert response.get_json()['is_active'] is False
-
 def test_toggle_cron_job_not_found(client):
-    response = client.post('/api/cron/cron_99/toggle')
+    response = client.post('/api/cron/999/toggle')
     assert response.status_code == 404
+    assert response.get_json()['error'] == 'Job not found'
 
-def test_delete_cron_job_success(client):
-    response = client.delete('/api/cron/cron_1')
+def test_toggle_cron_job_success(client):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO sessions (id, agent_id, channel_id) VALUES ('s1', 'a1', 'c1')")
+    cursor.execute("INSERT INTO cron_jobs (id, session_id, description, content, cron_expression, next_run, is_active) VALUES ('j1', 's1', 'job1', 'do stuff', '* * * * *', '2026-01-01 00:00:00', 1)")
+    conn.commit()
+    conn.close()
+
+    response = client.post('/api/cron/j1/toggle')
     assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'success'
+    assert data['is_active'] == False
+
+    # Toggle again
+    response = client.post('/api/cron/j1/toggle')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'success'
+    assert data['is_active'] == True
+
+def test_delete_cron_job(client):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO sessions (id, agent_id, channel_id) VALUES ('s1', 'a1', 'c1')")
+    cursor.execute("INSERT INTO cron_jobs (id, session_id, description, content, cron_expression, next_run, is_active) VALUES ('j2', 's1', 'job2', 'do stuff', '* * * * *', '2026-01-01 00:00:00', 1)")
+    conn.commit()
+    conn.close()
+
+    response = client.delete('/api/cron/j2')
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'success'
     
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) as c FROM cron_jobs WHERE id='cron_1'")
-    assert cursor.fetchone()['c'] == 0
+    cursor.execute("SELECT * FROM cron_jobs WHERE id = 'j2'")
+    assert cursor.fetchone() is None
     conn.close()

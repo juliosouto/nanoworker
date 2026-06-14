@@ -115,7 +115,6 @@ def test_export_photos_exception(mocker):
     res = mac_photos.export_photos(["123"], "/tmp/photos")
     assert "Error executing AppleScript: Unknown Error" in res
 
-def test_delete_photos():
-    # Since deletion is disabled
+def test_delete_photos_disabled():
     res = mac_photos.delete_photos(["123"])
     assert "disabled for safety reasons" in res

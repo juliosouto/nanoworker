@@ -58,6 +58,20 @@ def test_add_llm_model_success(client):
     assert response.status_code == 200
     assert response.get_json()['status'] == 'success'
 
+from unittest.mock import patch, MagicMock
+
+@patch('routes.api_llm.get_db')
+def test_add_llm_model_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    
+    payload = {'model_name': 'Fail', 'provider': 'Prov'}
+    response = client.post('/api/llm_models', json=payload)
+    assert response.status_code == 500
+
 def test_add_llm_model_missing_fields(client):
     response = client.post('/api/llm_models', json={'model_name': 'FailModel'})
     assert response.status_code == 400
@@ -74,6 +88,24 @@ def test_add_llm_model_duplicate_key(client):
     assert response.status_code == 200
     assert response.get_json()['status'] == 'success'
 
+@patch('routes.api_llm.get_db')
+def test_add_llm_model_duplicate_key_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    # Raise exception when trying to fetch the duplicated key
+    mock_cursor.execute.side_effect = Exception("Query Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    
+    payload = {
+        'model_name': 'CopiedModelFail',
+        'provider': 'TestProvider',
+        'api_key': '••••••••••••',
+        'duplicate_from_id': 1
+    }
+    response = client.post('/api/llm_models', json=payload)
+    assert response.status_code == 500
+
 def test_delete_llm_model_success(client):
     response = client.delete('/api/llm_models/1')
     assert response.status_code == 200
@@ -82,6 +114,16 @@ def test_delete_llm_model_success(client):
 def test_delete_llm_model_not_found(client):
     response = client.delete('/api/llm_models/999')
     assert response.status_code == 404
+
+@patch('routes.api_llm.get_db')
+def test_delete_llm_model_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    response = client.delete('/api/llm_models/1')
+    assert response.status_code == 500
 
 def test_update_llm_model_success(client):
     payload = {
@@ -111,6 +153,17 @@ def test_update_llm_model_not_found(client):
     response = client.put('/api/llm_models/999', json=payload)
     assert response.status_code == 404
 
+@patch('routes.api_llm.get_db')
+def test_update_llm_model_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    payload = {'model_name': 'Fail', 'provider': 'Prov'}
+    response = client.put('/api/llm_models/1', json=payload)
+    assert response.status_code == 500
+
 def test_toggle_llm_model_success(client):
     response = client.post('/api/llm_models/1/toggle')
     assert response.status_code == 200
@@ -119,6 +172,16 @@ def test_toggle_llm_model_success(client):
 def test_toggle_llm_model_not_found(client):
     response = client.post('/api/llm_models/999/toggle')
     assert response.status_code == 404
+
+@patch('routes.api_llm.get_db')
+def test_toggle_llm_model_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    response = client.post('/api/llm_models/1/toggle')
+    assert response.status_code == 500
 
 # -- TESTS FOR WORKERS --
 
@@ -139,6 +202,17 @@ def test_add_worker_success(client):
 def test_add_worker_missing_fields(client):
     response = client.post('/api/workers', json={'worker_name': 'FailWorker'})
     assert response.status_code == 400
+
+@patch('routes.api_llm.get_db')
+def test_add_worker_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    payload = {'worker_name': 'Fail', 'worker_model': 'Test'}
+    response = client.post('/api/workers', json=payload)
+    assert response.status_code == 500
 
 def test_update_worker_success(client):
     payload = {
@@ -163,6 +237,17 @@ def test_update_worker_not_found(client):
     response = client.put('/api/workers/999', json=payload)
     assert response.status_code == 404
 
+@patch('routes.api_llm.get_db')
+def test_update_worker_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    payload = {'worker_name': 'Fail', 'worker_model': 'Test'}
+    response = client.put('/api/workers/1', json=payload)
+    assert response.status_code == 500
+
 def test_delete_worker_success(client):
     response = client.delete('/api/workers/1')
     assert response.status_code == 200
@@ -171,3 +256,13 @@ def test_delete_worker_success(client):
 def test_delete_worker_not_found(client):
     response = client.delete('/api/workers/999')
     assert response.status_code == 404
+
+@patch('routes.api_llm.get_db')
+def test_delete_worker_exception(mock_get_db, client):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    response = client.delete('/api/workers/1')
+    assert response.status_code == 500

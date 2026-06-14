@@ -20,6 +20,30 @@ def test_get_agent_name_api(client):
     assert 'agent_name' in data
     assert 'worker_names' in data
 
+@patch('routes.api_settings.get_db')
+def test_get_agent_name_api_exceptions(mock_get_db, client):
+    # Simulate config missing keys to trigger IndexError/KeyError
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    # Mock return value of fetchone to be a MagicMock that raises KeyError
+    mock_config = MagicMock()
+    mock_config.__getitem__.side_effect = KeyError("Missing key")
+    mock_config.__bool__.return_value = True
+    mock_cursor.fetchone.return_value = mock_config
+    mock_cursor.fetchall.return_value = []
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    
+    with patch('routes.api_settings.get_config') as mock_get_config:
+        # Trigger ValueError for autonomous_mode
+        mock_get_config.side_effect = lambda k, d="": "invalid_int" if k == "AUTONOMOUS_MODE" else d
+        response = client.get('/api/config/agent_name')
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['allow_mentions'] is True
+        assert data['allow_audio_mentions'] is False
+        assert data['autonomous_mode'] == 1
+
 def test_save_settings(client):
     payload = {
         'gemini_api_key': 'test_key',
@@ -35,7 +59,8 @@ def test_save_tool_setting_valid(client):
     payload = {
         'tool_name': 'test_tool',
         'enabled': True,
-        'allow_others_from_direct_msgs': False
+        'allow_others_from_direct_msgs': False,
+        'allow_others_from_group_msgs': True
     }
     response = client.post('/api/settings/tools', json=payload)
     assert response.status_code == 200
@@ -90,6 +115,22 @@ def test_delete_self_developed_tool_error(mock_remove, mock_exists, client):
     mock_remove.side_effect = Exception("OS Error")
     response = client.delete('/api/settings/tools/my_tool')
     assert response.status_code == 500
+
+@patch('os.path.exists')
+@patch('os.remove')
+@patch('routes.api_settings.get_db')
+def test_delete_self_developed_tool_db_error(mock_get_db, mock_remove, mock_exists, client):
+    mock_exists.return_value = True
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mock_get_db.return_value = mock_conn
+    
+    response = client.delete('/api/settings/tools/my_tool')
+    assert response.status_code == 500
+    data = response.get_json()
+    assert 'Database error' in data['message']
 
 @patch('utils.setup_utils.backup_database')
 @patch('utils.setup_utils.setup_app_config')

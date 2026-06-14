@@ -87,3 +87,112 @@ def test_delete_scheduled_task(sch_setup, mocker):
     assert "successfully canceled" in res
     
     current_session_id.reset(token)
+
+def test_schedule_task_cron_error(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.schedule_task("test", "do something", cron_expression="invalid cron")
+    assert "Error parsing cron expression" in res
+    
+    current_session_id.reset(token)
+
+def test_schedule_task_now(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.schedule_task("test", "do something")
+    assert "Task scheduled successfully to run at" in res
+    
+    current_session_id.reset(token)
+
+def test_schedule_task_db_error(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.schedule_task("test", "do something")
+    assert "Error scheduling task" in res
+    
+    current_session_id.reset(token)
+
+def test_list_scheduled_tasks_no_session(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set(None)
+    res = sch_module.list_scheduled_tasks()
+    assert "Error: No active session" in res
+    current_session_id.reset(token)
+
+def test_list_scheduled_tasks_empty(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+    mock_conn.cursor.return_value = mock_cursor
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.list_scheduled_tasks()
+    assert "No active scheduled tasks" in res
+    current_session_id.reset(token)
+
+def test_list_scheduled_tasks_db_error(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.list_scheduled_tasks()
+    assert "Error listing tasks" in res
+    current_session_id.reset(token)
+
+def test_delete_scheduled_task_no_session(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set(None)
+    res = sch_module.delete_scheduled_task("job-1")
+    assert "Error: No active session" in res
+    current_session_id.reset(token)
+
+def test_delete_scheduled_task_db_error(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("DB Error")
+    mock_conn.cursor.return_value = mock_cursor
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.delete_scheduled_task("job-1")
+    assert "Error canceling task" in res
+    current_session_id.reset(token)
+
+def test_delete_scheduled_task_not_found(sch_setup, mocker):
+    os_name, sch_module = sch_setup
+    token = current_session_id.set("sess-123")
+    
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.rowcount = 0
+    mock_conn.cursor.return_value = mock_cursor
+    mocker.patch(f'tools.{os_name}.scheduling.get_db', return_value=mock_conn)
+    
+    res = sch_module.delete_scheduled_task("job-1")
+    assert "not found or you don't have permission" in res
+    current_session_id.reset(token)

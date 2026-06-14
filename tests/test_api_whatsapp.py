@@ -33,7 +33,19 @@ def test_save_whatsapp_config(client):
     assert config['bot_enabled'] == 1
     assert config['rate_limit_per_minute'] == 10
     conn.close()
-
+    # Also test ValueError path for rate_limit_per_minute
+    payload_invalid = {
+        'rate_limit_per_minute': 'invalid'
+    }
+    response2 = client.post('/api/whatsapp/config', json=payload_invalid)
+    assert response2.status_code == 200
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT rate_limit_per_minute FROM whatsapp_config WHERE id = 1")
+    config2 = cursor.fetchone()
+    assert config2['rate_limit_per_minute'] == 0
+    conn.close()
 @patch('subprocess.Popen')
 def test_whatsapp_auth_stream(mock_popen, client):
     # Mock the process and its stdout
@@ -68,6 +80,13 @@ def test_whatsapp_restart_not_found(mock_exists, client):
     mock_exists.return_value = False
     response = client.post('/api/whatsapp/restart')
     assert response.status_code == 404
+
+@patch('os.path.exists')
+def test_whatsapp_restart_exception(mock_exists, client):
+    mock_exists.side_effect = Exception("Test Error")
+    response = client.post('/api/whatsapp/restart')
+    assert response.status_code == 500
+    assert "Test Error" in response.get_data(as_text=True)
 
 @patch('routes.api_whatsapp.wa_verify')
 def test_whatsapp_webhook_verify(mock_verify, client):
@@ -119,3 +138,51 @@ def test_whatsapp_webhook_inbound_rate_limited(mock_send, mock_check, mock_shoul
     assert mock_send.called
     args, _ = mock_send.call_args
     assert "Rate limit reached" in args[1]
+
+@patch('routes.api_whatsapp.wa_parse')
+@patch('routes.api_whatsapp.should_process_wa_message')
+def test_whatsapp_webhook_inbound_ignored(mock_should, mock_parse, client):
+    mock_parse.return_value = [{
+        "sender": "123",
+        "sender_name": "Test User",
+        "content": "Hello",
+        "message_id": "msg1"
+    }]
+    mock_should.return_value = False
+    
+    response = client.post('/whatsapp/webhook', json={})
+    assert response.status_code == 200
+    # Should ignore and not do anything further
+
+@patch('routes.api_whatsapp.wa_parse')
+@patch('routes.api_whatsapp.should_process_wa_message')
+@patch('utils.message_utils.check_rate_limit')
+@patch('routes.api_whatsapp.wa_mark_read')
+@patch('routes.api_whatsapp.wa_send')
+@patch('routes.api_whatsapp.route_inbound_message')
+def test_whatsapp_webhook_inbound_callback(mock_route, mock_send, mock_mark, mock_check, mock_should, mock_parse, client):
+    mock_parse.return_value = [{
+        "sender": "123",
+        "sender_name": "Test User",
+        "content": "Hello",
+        "message_id": "msg1"
+    }]
+    mock_should.return_value = True
+    mock_check.return_value = True
+    
+    # We want to test the callback Execution inside route_inbound_message
+    def fake_route(*args, **kwargs):
+        on_complete = kwargs.get('on_complete')
+        if on_complete:
+            on_complete("Reply text")
+            
+    mock_route.side_effect = fake_route
+    
+    response = client.post('/whatsapp/webhook', json={})
+    assert response.status_code == 200
+    
+    # callback should have called wa_send
+    assert mock_send.called
+    args, _ = mock_send.call_args
+    assert args[0] == "123"
+    assert args[1] == "Reply text"

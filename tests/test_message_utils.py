@@ -156,3 +156,95 @@ def test_check_wa_permissions(mocker):
     allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
     assert allowed
     assert reason is None
+
+def test_resolve_worker_from_content_no_content(mock_db):
+    mock_db.fetchall.return_value = [{'is_default': True, 'worker_name': 'def'}]
+    worker = resolve_worker_from_content("")
+    assert worker['worker_name'] == 'def'
+
+def test_resolve_worker_from_content_require_at(mock_db, mocker):
+    mocker.patch('database.get_config', return_value='true') # require_at is True
+    
+    # Should fallback to default
+    mock_db.fetchall.return_value = [{'is_default': True, 'worker_name': 'def'}, {'is_default': False, 'worker_name': 'Nano'}]
+    worker = resolve_worker_from_content("nano how are you?")
+    assert worker['worker_name'] == 'def'
+
+def test_should_process_wa_message_no_config(mock_db):
+    mock_db.fetchone.return_value = None
+    assert should_process_wa_message('wa_web:me', 'user@s.whatsapp.net')
+
+def test_should_process_wa_message_audio_mention(mock_db, mocker):
+    # bot_enabled=True, allow_mentions=True, allow_audio_mentions=True
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '', 'allow_mentions': True, 'allow_audio_mentions': True}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+    
+    assert should_process_wa_message('channel', 'user@s.whatsapp.net', "Audio\n[Transcription]: nano hello")
+
+def test_should_process_wa_message_exceptions_in_config(mock_db, mocker):
+    # Mock KeyError for allow_mentions and allow_audio_mentions
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*'}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+    
+    # Should still process if mentioned because allow_mentions defaults to True
+    assert should_process_wa_message('channel', 'user@s.whatsapp.net', "@nano hello")
+
+def test_should_process_wa_message_chat_with_self_lid(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '', 'allow_mentions': True}
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {'lid_number': '54321'}
+    mocker.patch('requests.get', return_value=mock_resp)
+    
+    assert should_process_wa_message('54321@s.whatsapp.net', 'user')
+
+def test_clean_mention_no_content():
+    assert clean_mention("") == ""
+    assert clean_mention(None) == ""
+
+def test_truncate_message_exceptions(mocker):
+    mocker.patch('database.get_config', side_effect=ValueError)
+    long_msg = "A" * 1500
+    # defaults to 250 tokens * 4 = 1000
+    assert len(truncate_message(long_msg)) == 1000
+
+def test_check_rate_limit_exceptions_and_logic(mock_db):
+    # KeyError for limit
+    mock_db.fetchone.return_value = {}
+    assert check_rate_limit('user')
+    
+    # Limit <= 0
+    mock_db.fetchone.return_value = {'rate_limit_per_minute': -1}
+    assert check_rate_limit('user')
+
+    # Successful insert
+    mock_db.fetchone.side_effect = [{'rate_limit_per_minute': 10}, (5,)]
+    assert check_rate_limit('user')
+
+def test_format_dict_to_lines_edge_cases():
+    d = {'a': [], 'b': {}}
+    lines = format_dict_to_lines(d)
+    assert len(lines) == 2
+    
+    # Passing a string directly
+    lines2 = format_dict_to_lines("direct string")
+    assert lines2 == ["direct string"]
+    
+    # Passing list of strings
+    lines3 = format_dict_to_lines(["str1", "str2"])
+    assert "- str1" in lines3
+
+def test_format_document_search_results_not_list():
+    assert format_document_search_results("not a list") == "not a list"
+
+def test_process_tools_for_llm_empty_or_false(mocker):
+    assert process_tools_for_llm([]) == []
+    
+    mocker.patch('database.get_config', return_value="false")
+    def my_tool(): pass
+    tools = [my_tool]
+    assert process_tools_for_llm(tools) == tools
