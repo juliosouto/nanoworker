@@ -255,6 +255,10 @@ store/*
 .store/*
 *.bin
 temp/*
+!temp/.gitkeep
+!temp/*/
+temp/*/*
+!temp/*/.gitkeep
 .vdd/
 bin/backups/*
 bin/docs/*
