@@ -10,7 +10,6 @@ def reset_globals(mocker):
     _sessions.clear()
     import browser.manager
     browser.manager._cleanup_thread_started = False
-    mocker.patch('threading.Thread.start')
     
 @patch('browser.manager.sync_playwright')
 def test_global_browser_singleton(mock_playwright):
