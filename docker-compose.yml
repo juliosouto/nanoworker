@@ -8,6 +8,7 @@ services:
       - ./.env:/app/.env
       - ./nanoworker.db:/app/nanoworker.db
       - ./.store:/app/.store
+      - ./temp:/app/temp
     environment:
       - HOST=0.0.0.0
     restart: unless-stopped
