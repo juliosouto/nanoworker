@@ -130,6 +130,34 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     Main entry point for WhatsApp and web-chat messages.
     """
     original_content = content
+
+    # Fast-path for /stop command
+    if original_content.strip().lower() == '/stop':
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
+        conn.commit()
+        conn.close()
+        
+        stop_response = "🛑 Comando de parada recebido."
+        message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
+        try:
+            cursor = get_db().cursor()
+            cursor.execute('INSERT INTO messages_out (id, session_id, in_reply_to, content) VALUES (?, ?, ?, ?)',
+                           (message_out_id, session_id, message_in_id, stop_response))
+            cursor.connection.commit()
+            cursor.connection.close()
+        except Exception as e:
+            logger.error(f"Failed to save stop response to DB: {e}")
+
+        if on_complete:
+            try:
+                on_complete(stop_response)
+            except Exception as e:
+                logger.error(f"on_complete callback failed for stop command: {e}")
+                
+        return message_out_id, stop_response
+
     # Wait a bit to debounce multiple rapid messages (like multiple images from WhatsApp)
     time.sleep(2)
 
@@ -275,6 +303,33 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
     """
     Runs the LLM agent for IDE messages, using ide_messages_in/out tables.
     """
+    # Fast-path for /stop command
+    if content.strip().lower() == '/stop':
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE ide_messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
+        conn.commit()
+        conn.close()
+        
+        stop_response = "🛑 Comando de parada recebido via IDE."
+        message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
+        try:
+            cursor = get_db().cursor()
+            cursor.execute('INSERT INTO ide_messages_out (id, session_id, in_reply_to, content) VALUES (?, ?, ?, ?)',
+                           (message_out_id, session_id, message_in_id, stop_response))
+            cursor.connection.commit()
+            cursor.connection.close()
+        except Exception as e:
+            logger.error(f"Failed to save stop response to IDE DB: {e}")
+
+        if on_complete:
+            try:
+                on_complete(stop_response)
+            except Exception as e:
+                logger.error(f"on_complete callback failed for stop command: {e}")
+                
+        return message_out_id, stop_response
+
     conn = get_db()
     cursor = conn.cursor()
 
