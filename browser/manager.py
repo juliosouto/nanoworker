@@ -129,9 +129,9 @@ class BrowserManager:
         self.update_activity()
         def _task():
             try:
-                self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                self.page.goto(url, wait_until="domcontentloaded", timeout=10000)
                 try:
-                    self.page.wait_for_load_state("networkidle", timeout=10000)
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
                 except Exception:
                     pass
                 return f"Navigated to {url}"
@@ -184,7 +184,7 @@ class BrowserManager:
             try:
                 selector = f'[data-browser-ref="{ref_id}"]'
                 self.page.locator(selector).first.scroll_into_view_if_needed()
-                self.page.locator(selector).first.click(timeout=5000)
+                self.page.locator(selector).first.click(timeout=3000)
                 self.page.wait_for_timeout(1000)
                 return f"Clicked on {ref_id}"
             except Exception as e:
@@ -197,7 +197,7 @@ class BrowserManager:
             try:
                 selector = f'[data-browser-ref="{ref_id}"]'
                 self.page.locator(selector).first.scroll_into_view_if_needed()
-                self.page.locator(selector).first.fill(text, timeout=5000)
+                self.page.locator(selector).first.fill(text, timeout=3000)
                 return f"Filled {ref_id} with '{text}'"
             except Exception as e:
                 return f"Error filling {ref_id}: {e}"

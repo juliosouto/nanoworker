@@ -44,7 +44,7 @@ def test_navigate_success(mock_playwright):
     bm.page.goto.return_value = None
     res = bm.navigate("http://example.com")
     assert "Navigated to" in res
-    bm.page.goto.assert_called_with("http://example.com", wait_until="domcontentloaded", timeout=30000)
+    bm.page.goto.assert_called_with("http://example.com", wait_until="domcontentloaded", timeout=10000)
 
 @patch('browser.manager.sync_playwright')
 def test_navigate_error(mock_playwright):
