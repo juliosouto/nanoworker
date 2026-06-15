@@ -254,11 +254,11 @@ out/
 store/*
 .store/*
 *.bin
-temp/*
-!temp/.gitkeep
-!temp/*/
-temp/*/*
-!temp/*/.gitkeep
+files/*
+!files/.gitkeep
+!files/*/
+files/*/*
+!files/*/.gitkeep
 .vdd/
 bin/backups/*
 bin/docs/*
