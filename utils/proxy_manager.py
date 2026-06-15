@@ -1,6 +1,5 @@
 import requests
 import logging
-from fp.fp import FreeProxy
 
 logger = logging.getLogger(__name__)
 
@@ -9,13 +8,44 @@ _proxy_enabled = False
 _current_proxies = None
 
 import os
+import requests
+from bs4 import BeautifulSoup
+import random
+
+def _fetch_working_proxy():
+    try:
+        res = requests.get('https://free-proxy-list.net/', timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        proxies = []
+        for row in soup.find('table').find_all('tr')[1:]:
+            cols = row.find_all('td')
+            if len(cols) >= 8 and cols[6].text == 'yes': # HTTPS support
+                ip = cols[0].text
+                port = cols[1].text
+                proxies.append(f"http://{ip}:{port}")
+        
+        random.shuffle(proxies)
+        for proxy in proxies[:5]:
+            try:
+                # Test the proxy
+                test_res = requests.get('https://api.ipify.org', proxies={'http': proxy, 'https': proxy}, timeout=5)
+                if test_res.status_code == 200:
+                    return proxy
+            except Exception:
+                continue
+    except Exception as e:
+        logger.error(f"Error scraping proxies: {e}")
+    return None
 
 def enable_proxy():
     """Habilita o proxy global, buscando um novo proxy aleatório."""
     global _proxy_enabled, _current_proxies
     try:
-        logger.info("Buscando um FreeProxy disponível...")
-        proxy = FreeProxy(rand=True, timeout=10).get()
+        logger.info("Buscando um proxy gratuito disponível (custom fetcher)...")
+        proxy = _fetch_working_proxy()
+        if not proxy:
+            raise Exception("Nenhum proxy funcionando encontrado.")
+            
         _current_proxies = {'http': proxy, 'https': proxy}
         _proxy_enabled = True
         
@@ -66,8 +96,8 @@ def disable_proxy():
 def status_proxy():
     """Retorna o status atual do proxy."""
     if _proxy_enabled and _current_proxies:
-        return f"Ativo: {_current_proxies['http']}"
-    return "Desativado"
+        return f"Active: {_current_proxies['http']}"
+    return "Disabled"
 
 def get_current_proxy() -> str | None:
     """Retorna o URL do proxy atual (como string simples) ou None."""
