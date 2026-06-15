@@ -75,8 +75,8 @@ def _inject_channel_rules(system_prompt: str, channel_id: str, include_tool_rule
                 f"This message comes from WhatsApp (Channel ID: {clean_channel}). To reply to the current conversation, "
                 f"simply output your text directly. Do NOT use the send_whatsapp_message tool "
                 f"for standard replies. The system will automatically forward your text to the chat. "
-                f"However, if you need to send an image or file (like a screenshot), you MUST use "
-                f"the send_whatsapp_file tool (with phone_number='{clean_channel}').\n\n{system_prompt}"
+                f"However, if you need to send an image or file (like a screenshot) to the current conversation, you MUST use "
+                f"the send_whatsapp_file tool (with phone_number='{clean_channel}'). If you need to send it to another chat or group, use their respective phone_number.\n\n{system_prompt}"
             )
         else:
             return (
