@@ -35,12 +35,13 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
     7. If the user asks you to send an audio or voice message, wrap ONLY the text you want to be spoken inside <audio></audio> tags. The backend system will automatically intercept this tag, generate the audio using Kokoro TTS, and send it as a voice note. For example: <audio>Hi, here is your audio!</audio>.
     8. Always make sure your answer is precise and fulfills completely the user's request.
     9. Whenever a query involves facts, current events, or verifiable data, you are strictly prohibited from answering based solely on your internal training. You must obligatorily invoke the search_web tool before generating any response.
+    10. The files are stored in /app/files/, with subfolders for each category like /app/files/documents/, /app/files/downloads/, /app/files/images/, /app/files/music/, /app/files/temp/, /app/files/videos/.
     """
 
     if include_tool_rules:
         standard_rules += """
-    10. I am sending a list of tools you can use. It's a big list.
-    11. Always use a tool to fulfill the user's request.
+    11. I am sending a list of tools you can use. It's a big list.
+    12. Always use a tool to fulfill the user's request.
     """
     
     standard_rules += "\n    "
