@@ -5,8 +5,11 @@ from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
+import queue
+import concurrent.futures
+
 class GlobalBrowser:
-    """Singleton for the Playwright Chromium instance"""
+    """Singleton for the Playwright Chromium instance, running in a dedicated thread"""
     _instance = None
     _lock = threading.Lock()
     
@@ -18,6 +21,17 @@ class GlobalBrowser:
             return cls._instance
             
     def __init__(self):
+        self.task_queue = queue.Queue()
+        self.playwright = None
+        self.browser = None
+        
+        self.thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self.thread.start()
+        
+        # Initialize browser synchronously in the worker thread
+        self.submit_task(self._init_browser).result()
+
+    def _init_browser(self):
         self.playwright = sync_playwright().start()
         
         launch_options = {
@@ -42,7 +56,27 @@ class GlobalBrowser:
         }
         self.browser = self.playwright.chromium.launch(**launch_options)
 
+    def _worker_loop(self):
+        while True:
+            task, future = self.task_queue.get()
+            if task is None:
+                break
+            try:
+                res = task()
+                future.set_result(res)
+            except Exception as e:
+                future.set_exception(e)
+            self.task_queue.task_done()
+
+    def submit_task(self, func, *args, **kwargs):
+        future = concurrent.futures.Future()
+        def wrapper():
+            return func(*args, **kwargs)
+        self.task_queue.put((wrapper, future))
+        return future
+
     def new_context(self, **kwargs):
+        # This method is left for backward compatibility structure but should only be called inside tasks
         return self.browser.new_context(**kwargs)
 
 class BrowserManager:
@@ -60,25 +94,30 @@ class BrowserManager:
         Configura e inicializa um context e page. O browser pesado é compartilhado.
         Se já houver um context aberto, ele será fechado e reiniciado.
         """
-        if self.context:
-            self.close()
-
         global_browser = GlobalBrowser.get_instance()
-        
-        context_options = context_kwargs
-        if storage_state:
-            context_options["storage_state"] = storage_state
-        if user_agent:
-            context_options["user_agent"] = user_agent
+
+        def _task():
+            if self.context:
+                try:
+                    if self.page:
+                        self.page.close()
+                    self.context.close()
+                except Exception:
+                    pass
             
-        # Opcionalmente tratar proxy aqui se necessário, 
-        # embora o ideal para proxy global fosse na launch option. 
-        # O Playwright suporta proxy por context a partir de algumas versões.
-        if proxy:
-            context_options["proxy"] = proxy
-            
-        self.context = global_browser.new_context(**context_options)
-        self.page = self.context.new_page()
+            context_options = context_kwargs
+            if storage_state:
+                context_options["storage_state"] = storage_state
+            if user_agent:
+                context_options["user_agent"] = user_agent
+                
+            if proxy:
+                context_options["proxy"] = proxy
+                
+            self.context = global_browser.new_context(**context_options)
+            self.page = self.context.new_page()
+
+        global_browser.submit_task(_task).result()
 
     def relaunch_custom_config(self):
         self.start_browser(
@@ -88,127 +127,152 @@ class BrowserManager:
 
     def navigate(self, url):
         self.update_activity()
-        try:
-            self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        def _task():
             try:
-                self.page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            return f"Navigated to {url}"
-        except Exception as e:
-            return f"Error navigating to {url}: {e}"
+                self.page.goto(url, wait_until="domcontentloaded", timeout=10000)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                return f"Navigated to {url}"
+            except Exception as e:
+                return f"Error navigating to {url}: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def get_snapshot(self, interactive_only=True):
         self.update_activity()
-        js_code = """
-        () => {
-            let interactables = document.querySelectorAll('button, a, input, select, textarea, [role="button"], [tabindex], [role="link"], [role="checkbox"], [role="menuitem"]');
-            let result = [];
-            let counter = 1;
-            interactables.forEach(el => {
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
-                const rect = el.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) return;
-                
-                let ref = '@e' + counter;
-                counter++;
-                el.setAttribute('data-browser-ref', ref);
-                
-                let label = el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
-                label = label.trim().replace(/\\n/g, ' ').substring(0, 50);
-                
-                let tag = el.tagName.toLowerCase();
-                let type = el.getAttribute('type');
-                let desc = type ? `${tag}[type=${type}]` : tag;
-                
-                result.push(`[${ref}] ${desc} "${label}"`);
-            });
-            return result.join('\\n');
-        }
-        """
-        try:
-            res = self.page.evaluate(js_code)
-            if not res:
-                return "No interactive elements found."
-            return res
-        except Exception as e:
-            return f"Error generating snapshot: {e}"
+        def _task():
+            js_code = """
+            () => {
+                let interactables = document.querySelectorAll('button, a, input, select, textarea, [role="button"], [tabindex], [role="link"], [role="checkbox"], [role="menuitem"]');
+                let result = [];
+                let counter = 1;
+                interactables.forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return;
+                    
+                    let ref = '@e' + counter;
+                    counter++;
+                    el.setAttribute('data-browser-ref', ref);
+                    
+                    let label = el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
+                    label = label.trim().replace(/\\n/g, ' ').substring(0, 50);
+                    
+                    let tag = el.tagName.toLowerCase();
+                    let type = el.getAttribute('type');
+                    let desc = type ? `${tag}[type=${type}]` : tag;
+                    
+                    result.push(`[${ref}] ${desc} "${label}"`);
+                });
+                return result.join('\\n');
+            }
+            """
+            try:
+                res = self.page.evaluate(js_code)
+                if not res:
+                    return "No interactive elements found."
+                return res
+            except Exception as e:
+                return f"Error generating snapshot: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def click(self, ref_id):
         self.update_activity()
-        try:
-            selector = f'[data-browser-ref="{ref_id}"]'
-            self.page.locator(selector).first.scroll_into_view_if_needed()
-            self.page.locator(selector).first.click(timeout=5000)
-            self.page.wait_for_timeout(1000)
-            return f"Clicked on {ref_id}"
-        except Exception as e:
-            return f"Error clicking {ref_id}: {e}"
+        def _task():
+            try:
+                selector = f'[data-browser-ref="{ref_id}"]'
+                self.page.locator(selector).first.scroll_into_view_if_needed()
+                self.page.locator(selector).first.click(timeout=3000)
+                self.page.wait_for_timeout(1000)
+                return f"Clicked on {ref_id}"
+            except Exception as e:
+                return f"Error clicking {ref_id}: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def fill(self, ref_id, text):
         self.update_activity()
-        try:
-            selector = f'[data-browser-ref="{ref_id}"]'
-            self.page.locator(selector).first.scroll_into_view_if_needed()
-            self.page.locator(selector).first.fill(text, timeout=5000)
-            return f"Filled {ref_id} with '{text}'"
-        except Exception as e:
-            return f"Error filling {ref_id}: {e}"
+        def _task():
+            try:
+                selector = f'[data-browser-ref="{ref_id}"]'
+                self.page.locator(selector).first.scroll_into_view_if_needed()
+                self.page.locator(selector).first.fill(text, timeout=3000)
+                return f"Filled {ref_id} with '{text}'"
+            except Exception as e:
+                return f"Error filling {ref_id}: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def extract(self, ref_id, property_name):
         self.update_activity()
-        try:
-            selector = f'[data-browser-ref="{ref_id}"]'
-            element = self.page.locator(selector).first
-            if property_name.lower() == 'text':
-                return element.inner_text()
-            elif property_name.lower() == 'html':
-                return element.inner_html()
-            else:
-                return element.get_attribute(property_name)
-        except Exception as e:
-            return f"Error extracting {property_name} from {ref_id}: {e}"
+        def _task():
+            try:
+                selector = f'[data-browser-ref="{ref_id}"]'
+                element = self.page.locator(selector).first
+                if property_name.lower() == 'text':
+                    return element.inner_text()
+                elif property_name.lower() == 'html':
+                    return element.inner_html()
+                else:
+                    return element.get_attribute(property_name)
+            except Exception as e:
+                return f"Error extracting {property_name} from {ref_id}: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def run_js(self, script):
         self.update_activity()
-        try:
-            res = self.page.evaluate(script)
-            return str(res)
-        except Exception as e:
-            return f"Error executing JS: {e}"
+        def _task():
+            try:
+                res = self.page.evaluate(script)
+                return str(res)
+            except Exception as e:
+                return f"Error executing JS: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def take_screenshot(self, path):
         self.update_activity()
-        try:
-            self.page.screenshot(path=path)
-            return f"Screenshot saved to {path}"
-        except Exception as e:
-            return f"Error taking screenshot: {e}"
+        def _task():
+            try:
+                self.page.screenshot(path=path)
+                return f"Screenshot saved to {path}"
+            except Exception as e:
+                return f"Error taking screenshot: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def get_cookies(self):
         self.update_activity()
-        return self.context.cookies()
+        def _task():
+            return self.context.cookies()
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def add_cookies(self, cookies):
         self.update_activity()
-        self.context.add_cookies(cookies)
+        def _task():
+            self.context.add_cookies(cookies)
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def save_state(self, path):
         self.update_activity()
-        self.context.storage_state(path=path)
+        def _task():
+            self.context.storage_state(path=path)
+        return GlobalBrowser.get_instance().submit_task(_task).result()
 
     def close(self):
+        def _task():
+            try:
+                if self.page:
+                    self.page.close()
+                if self.context:
+                    self.context.close()
+            except Exception:
+                pass
+            finally:
+                self.page = None
+                self.context = None
         try:
-            if self.page:
-                self.page.close()
-            if self.context:
-                self.context.close()
+            GlobalBrowser.get_instance().submit_task(_task).result()
         except Exception:
             pass
-        finally:
-            self.page = None
-            self.context = None
 
 
 # --- Gerenciamento Centralizado de Sessões ---

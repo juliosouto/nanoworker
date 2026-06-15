@@ -92,7 +92,7 @@ function updateSliceSlider(val) {
     let newVal = parseInt(val);
     if (isNaN(newVal)) return;
     if (newVal < 200) newVal = 200;
-    if (newVal > 2000) newVal = 2000;
+    if (newVal > 10000) newVal = 10000;
     newVal = Math.round(newVal / 50) * 50;
     sliceSlider.value = newVal;
     if(sliceSliderValue) sliceSliderValue.textContent = newVal;

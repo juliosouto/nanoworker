@@ -23,3 +23,9 @@ tradingview-ta
 Flask-Limiter
 Flask-WTF
 Flask-Talisman
+
+# Testing Dependencies
+pytest
+pytest-flask
+pytest-mock
+pytest-cov

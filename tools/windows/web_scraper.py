@@ -27,7 +27,7 @@ def extract_webpage_text(url: str) -> str:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.goto(url, timeout=10000, wait_until="domcontentloaded")
             
             # Wait a bit for dynamic content
             page.wait_for_timeout(2000)

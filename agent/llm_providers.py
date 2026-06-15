@@ -38,6 +38,9 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
         raise ValueError("API Key for Gemini model is not set.")
     client = genai.Client(api_key=api_key)
 
+    # Extract show_tools_results so it's not passed to the Gemini API
+    show_tools_results = config_kwargs.pop("show_tools_results", True)
+
     # Disable automatic function calling so we can handle it manually
     if "tools" in config_kwargs and config_kwargs["tools"]:
         config_kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
@@ -124,7 +127,7 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
             results_str = "\nResults:\n- " + "\n- ".join(tool_results)
             msg_end = f"⚙️ Executed tools: {tools_str}{results_str}"
             insert_feedback(cursor, table, session_id, message_in_id, msg_end)
-            if on_complete and config_kwargs.get("show_tools_results", True):
+            if on_complete and show_tools_results:
                 try:
                     on_complete(msg_end)
                 except Exception:
