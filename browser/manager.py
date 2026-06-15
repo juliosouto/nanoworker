@@ -54,6 +54,13 @@ class GlobalBrowser:
                 "--disable-remote-fonts",
             ]
         }
+        
+        # Add proxy if global proxy is enabled
+        from utils.proxy_manager import get_playwright_proxy_config
+        proxy_config = get_playwright_proxy_config()
+        if proxy_config:
+            launch_options["proxy"] = proxy_config
+            
         self.browser = self.playwright.chromium.launch(**launch_options)
 
     def _worker_loop(self):

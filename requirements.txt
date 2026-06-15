@@ -23,6 +23,7 @@ tradingview-ta
 Flask-Limiter
 Flask-WTF
 Flask-Talisman
+free-proxy
 
 # Testing Dependencies
 pytest

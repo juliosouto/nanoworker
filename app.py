@@ -93,6 +93,10 @@ app = Flask(__name__)
 # Tell Flask it is behind a proxy (Caddy) so that request.remote_addr is the real client IP.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# Initialize Proxy Manager Global Monkey-Patch
+from utils.proxy_manager import setup_global_proxy
+setup_global_proxy()
+
 # Initialize database and apply migrations on startup
 init_db()
 
