@@ -240,7 +240,8 @@ def permissions_config_page():
 def advanced_settings_page():
     return render_template('advanced-settings.html',
         tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
-        whisper_model=get_config('WHISPER_MODEL', 'small')
+        whisper_model=get_config('WHISPER_MODEL', 'small'),
+        max_download_size_mb=get_config('MAX_DOWNLOAD_SIZE_MB', '100')
     )
 
 @views_bp.route('/settings/tools')

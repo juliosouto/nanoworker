@@ -79,7 +79,8 @@ def save_settings():
         'ide_prompt': 'IDE_PROMPT',
         'whisper_model': 'WHISPER_MODEL',
         'autonomous_mode': 'AUTONOMOUS_MODE',
-        'message_slice_size_tokens': 'MESSAGE_SLICE_SIZE_TOKENS'
+        'message_slice_size_tokens': 'MESSAGE_SLICE_SIZE_TOKENS',
+        'max_download_size_mb': 'MAX_DOWNLOAD_SIZE_MB'
     }
     
     for json_key, db_key in mapping.items():

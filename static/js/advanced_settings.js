@@ -52,4 +52,20 @@ document.addEventListener('DOMContentLoaded', () => {
             saveSetting('whisper_model', e.target.value);
         });
     }
+
+    const maxDownloadInput = document.getElementById('maxDownloadSizeInput');
+    if (maxDownloadInput) {
+        let timeoutId;
+        maxDownloadInput.addEventListener('input', (e) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                let val = parseInt(e.target.value);
+                if (isNaN(val) || val < 1) {
+                    val = 100;
+                    e.target.value = 100;
+                }
+                saveSetting('max_download_size_mb', val.toString());
+            }, 800);
+        });
+    }
 });

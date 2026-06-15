@@ -83,7 +83,7 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
                 if iteration < autonomous_limit - 1:
                     feedback_text = f"Your response does not completely answer the user's prompt. Try a different approach or tool.\n{{\n  \"user_prompt\": {json.dumps(user_prompt_val)},\n  \"llm_response\": {json.dumps(final_response)},\n  \"is_the_user_request_completely_satisfied\": null,\n  \"critical_system_failure\": null\n}}\nPlease try again."
 
-                    user_feedback_msg = f"🔄 Agent reflecting (Iteration {iteration + 1}/{autonomous_limit}): The request is not completely satisfied yet. Continuing..."
+                    user_feedback_msg = f"🔄 Agent reflecting (Iteration {iteration + 1}/{autonomous_limit})..."
                     try:
                         insert_feedback(cursor, table, session_id, message_in_id, user_feedback_msg)
                     except:
