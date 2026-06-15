@@ -19,8 +19,10 @@ You MUST output your final response as a valid JSON object matching exactly this
 {
   "user_prompt": "<the user's original request>",
   "llm_response": "<your complete response addressing the request>",
-  "is_the_user_request_completely_satisfied": <boolean>
+  "is_the_user_request_completely_satisfied": <boolean>,
+  "critical_system_failure": <boolean>
 }
+Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverable system exception or fatal tool error that prevents you from satisfying the request.
 Do not include any markdown formatting like ```json, just the raw JSON object.
 """
 

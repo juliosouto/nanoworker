@@ -17,8 +17,9 @@ def client(mock_db_path):
 def temp_workspace(tmp_path):
     # Setup some files in tmp_path
     (tmp_path / "test.txt").write_text("hello world")
-    (tmp_path / "temp").mkdir()
-    (tmp_path / "temp" / "temp_file.txt").write_text("temp data")
+    (tmp_path / "files").mkdir()
+    (tmp_path / "files" / "temp").mkdir()
+    (tmp_path / "files" / "temp" / "temp_file.txt").write_text("temp data")
     
     # Save original state
     orig_path = state.CURRENT_PROJECT_PATH
@@ -88,13 +89,13 @@ def test_save_file_content_exception(mock_open, client, temp_workspace):
     assert "Write error" in response.get_json()['error']
 
 def test_serve_temp_file_success(client, temp_workspace):
-    with patch('routes.api_files.ROOT_DIR', str(temp_workspace)):
+    with patch('utils.file_utils.get_temp_dir', return_value=str(temp_workspace / "files" / "temp")):
         response = client.get('/api/temp/temp_file.txt')
         assert response.status_code == 200
         assert response.get_data(as_text=True) == "temp data"
 
 def test_serve_temp_file_access_denied(client, temp_workspace):
-    with patch('routes.api_files.ROOT_DIR', str(temp_workspace)):
+    with patch('utils.file_utils.get_temp_dir', return_value=str(temp_workspace / "files" / "temp")):
         response = client.get('/api/temp/../test.txt')
         assert response.status_code == 403
 

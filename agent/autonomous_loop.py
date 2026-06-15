@@ -69,16 +69,19 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
                 except:
                     pass
 
-        if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and "is_the_user_request_completely_satisfied" in parsed_json:
+        if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and ("is_the_user_request_completely_satisfied" in parsed_json or "critical_system_failure" in parsed_json):
             final_response = parsed_json["llm_response"]
             is_satisfied = parsed_json.get("is_the_user_request_completely_satisfied")
+            critical_system_failure = parsed_json.get("critical_system_failure", False)
             user_prompt_val = parsed_json.get("user_prompt", "")
 
-            if is_satisfied is True:
+            if critical_system_failure is True:
+                break
+            elif is_satisfied is True:
                 break
             else:
                 if iteration < autonomous_limit - 1:
-                    feedback_text = f"Your response does not completely answer the user's prompt. Try a different approach or tool.\n{{\n  \"user_prompt\": {json.dumps(user_prompt_val)},\n  \"llm_response\": {json.dumps(final_response)},\n  \"is_the_user_request_completely_satisfied\": null\n}}\nPlease try again."
+                    feedback_text = f"Your response does not completely answer the user's prompt. Try a different approach or tool.\n{{\n  \"user_prompt\": {json.dumps(user_prompt_val)},\n  \"llm_response\": {json.dumps(final_response)},\n  \"is_the_user_request_completely_satisfied\": null,\n  \"critical_system_failure\": null\n}}\nPlease try again."
 
                     user_feedback_msg = f"🔄 Agent reflecting (Iteration {iteration + 1}/{autonomous_limit}): The request is not completely satisfied yet. Continuing..."
                     try:

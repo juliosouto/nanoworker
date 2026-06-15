@@ -60,7 +60,8 @@ def save_file_content():
 
 @api_files_bp.route('/api/temp/<path:filename>')
 def serve_temp_file(filename):
-    temp_dir = os.path.abspath(os.path.join(ROOT_DIR, "temp"))
+    from utils.file_utils import get_temp_dir
+    temp_dir = get_temp_dir()
     safe_path = os.path.abspath(os.path.join(temp_dir, filename))
     if not safe_path.startswith(temp_dir):
         return "Access denied", 403

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def get_temp_dir() -> str:
     """Returns the absolute path to the project's temp directory, creating it if necessary."""
-    temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "temp")
+    temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "files", "temp")
     os.makedirs(temp_dir, exist_ok=True)
     return temp_dir
 
