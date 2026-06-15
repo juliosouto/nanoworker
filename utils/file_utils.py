@@ -44,7 +44,10 @@ def read_file(path: str) -> str:
     """
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
+            content = f.read()
+            if len(content) > 10000:
+                return content[:10000] + "\n\n[... File content truncated because it is too large. If this is a binary file (image, video), do not use read_file on it!]"
+            return content
     except Exception as e:
         return f"Error reading file {path}: {str(e)}"
 
