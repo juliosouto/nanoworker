@@ -25,7 +25,7 @@ def search_wikimedia_images(query: str, limit: int = 5) -> str:
         "gsrlimit": min(limit, 50)
     }
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "NanoworkerBot/1.0 (https://github.com/nanoworker; bot@nanoworker.com)"
     }
     
     try:

@@ -293,12 +293,12 @@ async function connectToWhatsApp() {
             if (!text) continue;
 
             // Use remoteJid as the base channel ID, but extract actual participant if available (e.g. for groups)
-            const channelIdBase = remoteJid.split('@')[0];
+            const channelIdBase = remoteJid.split('@')[0].split(':')[0];
             let actualSenderJid = msg.key.participant || msg.key.remoteJid;
             if (msg.key.fromMe && ownJid) {
                 actualSenderJid = ownJid;
             }
-            const senderId = actualSenderJid.split('@')[0];
+            const senderId = actualSenderJid.split('@')[0].split(':')[0];
 
             console.log(`[Baileys Inbound] ${senderId} (in ${channelIdBase}): ${text}`);
 

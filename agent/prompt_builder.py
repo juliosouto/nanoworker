@@ -19,8 +19,10 @@ You MUST output your final response as a valid JSON object matching exactly this
 {
   "user_prompt": "<the user's original request>",
   "llm_response": "<your complete response addressing the request>",
-  "is_the_user_request_completely_satisfied": <boolean>
+  "is_the_user_request_completely_satisfied": <boolean>,
+  "critical_system_failure": <boolean>
 }
+Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverable system exception or fatal tool error that prevents you from satisfying the request.
 Do not include any markdown formatting like ```json, just the raw JSON object.
 """
 
@@ -73,8 +75,8 @@ def _inject_channel_rules(system_prompt: str, channel_id: str, include_tool_rule
                 f"This message comes from WhatsApp (Channel ID: {clean_channel}). To reply to the current conversation, "
                 f"simply output your text directly. Do NOT use the send_whatsapp_message tool "
                 f"for standard replies. The system will automatically forward your text to the chat. "
-                f"However, if you need to send an image or file (like a screenshot), you MUST use "
-                f"the send_whatsapp_file tool (with phone_number='{clean_channel}').\n\n{system_prompt}"
+                f"However, if you need to send an image or file (like a screenshot) to the current conversation, you MUST use "
+                f"the send_whatsapp_file tool (with phone_number='{clean_channel}'). If you need to send it to another chat or group, use their respective phone_number.\n\n{system_prompt}"
             )
         else:
             return (

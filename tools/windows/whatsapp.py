@@ -60,6 +60,17 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
             clean_target = clean_target.replace("-", "")
             
         if clean_target not in sanitized_allowed_list:
+            # Try to resolve LID to sender_id from messages_in
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT sender_id FROM messages_in WHERE channel_id LIKE ? AND sender_id IS NOT NULL ORDER BY id DESC LIMIT 1", (f"%{clean_target}%",))
+                row = cursor.fetchone()
+                if row and row['sender_id']:
+                    sender_id_clean = str(row['sender_id']).strip().replace("+", "").replace(" ", "").split(':')[0]
+                    if sender_id_clean in sanitized_allowed_list:
+                        return True
+            except Exception as e:
+                logger.error(f"Error resolving LID to sender_id: {e}")
             return False
             
         return True

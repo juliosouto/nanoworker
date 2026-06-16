@@ -9,7 +9,7 @@ def test_get_temp_dir(mocker):
     mock_makedirs = mocker.patch('os.makedirs')
     temp_dir = file_utils.get_temp_dir()
     assert os.path.isabs(temp_dir)
-    assert temp_dir.endswith("temp")
+    assert temp_dir.endswith(os.path.join("files", "temp"))
     mock_makedirs.assert_called_once_with(temp_dir, exist_ok=True)
 
 def test_get_temp_file_path(mocker):

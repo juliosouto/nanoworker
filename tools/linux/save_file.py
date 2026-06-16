@@ -22,6 +22,6 @@ def save_file_to_disk(file_content: str, filename: str, category: str) -> str:
             os.chmod(result, 0o644)
         except Exception:
             pass
-        return f"File successfully saved to {result} (Linux)"
+        return result
     else:
         return result

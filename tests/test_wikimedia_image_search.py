@@ -1,6 +1,6 @@
 import json
 from unittest.mock import patch, Mock
-from tools.wikimedia_image_search import search_wikimedia_images
+from tools.linux.wikimedia_image_search import search_wikimedia_images
 
 def test_search_wikimedia_images_success():
     """Test successful image search on Wikimedia Commons."""

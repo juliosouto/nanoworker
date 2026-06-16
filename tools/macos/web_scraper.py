@@ -25,7 +25,12 @@ def extract_webpage_text(url: str) -> str:
     # Fallback: Playwright
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            from utils.proxy_manager import get_playwright_proxy_config
+            proxy_config = get_playwright_proxy_config()
+            launch_opts = {"headless": True}
+            if proxy_config:
+                launch_opts["proxy"] = proxy_config
+            browser = p.chromium.launch(**launch_opts)
             page = browser.new_page()
             page.goto(url, timeout=10000, wait_until="domcontentloaded")
             
