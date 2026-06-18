@@ -109,8 +109,16 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     model_base = model_lower.split("/")[-1] if "/" in model_lower else model_lower
     is_reasoning = model_base.startswith("o1") or model_base.startswith("o3") or "nano" in model_base
 
-    # 3. Tool execution loop (max 10 iterations)
-    for iteration in range(10):
+    try:
+        max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
+    except Exception:
+        max_iterations = 10
+    
+    agent_name = get_config("agent_name", "Agent")
+
+    # 3. Tool execution loop
+    iteration = 0
+    while iteration < max_iterations:
         call_args = {
             "model": model_name,
             "messages": messages,
@@ -217,5 +225,13 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                     on_complete(msg_end)
                 except Exception:
                     pass
+
+        iteration += 1
+        if iteration == max_iterations:
+            messages.append({"role": "user", "content": f"{agent_name} continue"})
+            max_iterations += int(get_config("AUTONOMOUS_MODE", "10"))
+            
+            if iteration > 100:  # Hard safety limit
+                return "Error: Tool execution loop exceeded absolute maximum limit."
 
     return "Error: Tool execution loop exceeded maximum iterations."

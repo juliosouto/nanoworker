@@ -55,8 +55,16 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     response_text = None
     current_content = content
 
-    # Tool execution loop (max 10 iterations)
-    for iteration in range(10):
+    try:
+        max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
+    except Exception:
+        max_iterations = 10
+        
+    agent_name = get_config("agent_name", "Agent")
+
+    # Tool execution loop
+    iteration = 0
+    while iteration < max_iterations:
         response = None
         for attempt in range(max_retries):
             try:
@@ -132,6 +140,14 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                     on_complete(msg_end)
                 except Exception:
                     pass
+
+        iteration += 1
+        if iteration == max_iterations:
+            function_responses.append(types.Part.from_text(text=f"{agent_name} continue"))
+            max_iterations += int(get_config("AUTONOMOUS_MODE", "10"))
+            
+            if iteration > 100:  # Hard safety limit
+                return "Error: Tool execution loop exceeded absolute maximum limit."
 
         current_content = function_responses
 

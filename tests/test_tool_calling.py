@@ -92,6 +92,58 @@ class TestToolCalling(unittest.TestCase):
         self.assertEqual(final_messages[2]["role"], "assistant")
         self.assertEqual(final_messages[3]["role"], "tool")
         self.assertEqual(final_messages[3]["content"], "Success my_file.txt my content")
+    @patch('agent.openai_tools.get_config')
+    def test_execute_openai_compatible_llm_intercept(self, mock_get_config):
+        # Return autonomous mode 1, and agent_name 'Agent'
+        def mock_get_config_side_effect(key, default=None):
+            if key == "AUTONOMOUS_MODE":
+                return "1"
+            if key == "agent_name":
+                return "TestAgent"
+            return default
+        mock_get_config.side_effect = mock_get_config_side_effect
+        
+        mock_client = MagicMock()
+        mock_completion_1 = MagicMock()
+        mock_completion_2 = MagicMock()
+        
+        # Iteration 0: returns a tool call
+        mock_message_1 = MagicMock()
+        mock_tool_call = MagicMock()
+        mock_tool_call.id = "call_intercept123"
+        mock_tool_call.function.name = "dummy_tool"
+        mock_tool_call.function.arguments = '{"path": "inter.txt", "content": "intercept"}'
+        mock_message_1.content = None
+        mock_message_1.tool_calls = [mock_tool_call]
+        mock_completion_1.choices = [MagicMock(message=mock_message_1)]
+        
+        # Because AUTONOMOUS_MODE is 1, after the first iteration, it should intercept,
+        # append "TestAgent continue", and do another iteration.
+        # Iteration 1: returns the final text
+        mock_message_2 = MagicMock()
+        mock_message_2.content = "Done after intercept!"
+        mock_message_2.tool_calls = None
+        mock_completion_2.choices = [MagicMock(message=mock_message_2)]
+        
+        mock_client.chat.completions.create.side_effect = [mock_completion_1, mock_completion_2]
+        
+        history = []
+        config_kwargs = {"tools": [dummy_tool]}
+        cursor = MagicMock()
+        
+        res = agent_runner.execute_openai_compatible_llm(
+            mock_client, 'gpt-4o', history, config_kwargs, 'start intercept', cursor, 'session-123', 'msg-123', 'messages_out'
+        )
+        
+        self.assertEqual(res, "Done after intercept!")
+        self.assertEqual(mock_client.chat.completions.create.call_count, 2)
+        
+        # Verify call history update contains the injected continue message
+        final_messages = mock_client.chat.completions.create.call_args_list[1][1]["messages"]
+        # messages: [user('start intercept'), assistant(tool_calls), tool('Success...'), user('TestAgent continue')]
+        self.assertEqual(len(final_messages), 4)
+        self.assertEqual(final_messages[-1]["role"], "user")
+        self.assertEqual(final_messages[-1]["content"], "TestAgent continue")
 
 if __name__ == '__main__':
     unittest.main()

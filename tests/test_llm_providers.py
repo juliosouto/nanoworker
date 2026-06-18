@@ -92,6 +92,52 @@ def test_call_gemini_llm_tool_call(mock_client_cls, mock_cursor):
     res = call_gemini_llm("model", [], {"tools": [dummy_tool]}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key", on_complete=MagicMock())
     assert res == "Final Tool Response"
 
+@patch('agent.llm_providers.get_config')
+@patch('google.genai.Client')
+def test_call_gemini_llm_intercept(mock_client_cls, mock_get_config, mock_cursor):
+    # Mock get_config to return autonomous mode 1
+    def mock_get_config_side_effect(key, default=None):
+        if key == "AUTONOMOUS_MODE":
+            return "1"
+        if key == "agent_name":
+            return "TestAgent"
+        return default
+    mock_get_config.side_effect = mock_get_config_side_effect
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+    
+    # First response: tool call
+    mock_fc = MagicMock()
+    mock_fc.name = "dummy_tool"
+    mock_fc.args = {"arg1": "val1"}
+    
+    mock_resp1 = MagicMock()
+    mock_resp1.function_calls = [mock_fc]
+    
+    # Second response: text
+    mock_resp2 = MagicMock()
+    mock_resp2.function_calls = []
+    mock_resp2.text = "Done after Gemini intercept!"
+    
+    mock_chat.send_message.side_effect = [mock_resp1, mock_resp2]
+    
+    def dummy_tool(arg1):
+        return f"Tool ran with {arg1}"
+    
+    res = call_gemini_llm("model", [], {"tools": [dummy_tool]}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key", on_complete=MagicMock())
+    
+    assert res == "Done after Gemini intercept!"
+    assert mock_chat.send_message.call_count == 2
+    
+    # Verify second send_message call includes the injected continue message
+    last_call_args = mock_chat.send_message.call_args_list[-1][0][0]
+    # last_call_args should be a list containing the tool response and the continue message
+    assert len(last_call_args) == 2
+    assert last_call_args[1].text == "TestAgent continue"
+
 def test_call_qwen_llm_no_api_key():
     with pytest.raises(ValueError, match="API Key for Qwen"):
         call_qwen_llm("model", [], {}, "content", MagicMock(), "sess", "msg", "tbl")
