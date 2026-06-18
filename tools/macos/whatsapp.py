@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 BAILEYS_URL = "http://127.0.0.1:3000/send"
 
 def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> bool:
+    phone_number = str(phone_number)
     if not phone_number or phone_number.lower() == "self":
         return True
 
@@ -95,6 +96,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
     Returns:
         A confirmation string indicating success or an error message.
     """
+    phone_number = str(phone_number)
     from utils.audio_utils import extract_and_generate_audio
     text_to_send, audio_path = extract_and_generate_audio(message)
     
@@ -179,6 +181,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
     Returns:
         A confirmation string indicating success or an error message.
     """
+    phone_number = str(phone_number)
     import os
     import shutil
     import uuid
