@@ -300,14 +300,28 @@ async function connectToWhatsApp() {
             }
             const senderId = actualSenderJid.split('@')[0].split(':')[0];
 
-            console.log(`[Baileys Inbound] ${senderId} (in ${channelIdBase}): ${text}`);
+            // Extract alt identifier (LID↔PN mapping) when available
+            let altSenderJid = null;
+            if (msg.key.fromMe && ownJid) {
+                // For own messages, use ownLid as the alt identifier
+                altSenderJid = ownLid || null;
+            } else if (msg.key.participant) {
+                altSenderJid = msg.key.participantAlt || null;
+            } else {
+                altSenderJid = msg.key.remoteJidAlt || null;
+            }
+            const senderIdAlt = altSenderJid ? altSenderJid.split('@')[0].split(':')[0] : null;
+
+            console.log(`[Baileys Inbound] ${senderId} (alt: ${senderIdAlt || 'none'}) (in ${channelIdBase}): ${text}`);
 
             try {
                 const payload = {
                     channel_id: `wa_web:${channelIdBase}`,
                     sender_id: senderId,
+                    sender_id_alt: senderIdAlt,
                     sender_name: msg.pushName || '',
                     sender_jid: actualSenderJid,
+                    sender_jid_alt: altSenderJid,
                     remote_jid: remoteJid,
                     content: text,
                     message_id: msg.key.id

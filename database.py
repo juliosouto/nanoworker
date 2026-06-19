@@ -603,6 +603,11 @@ def init_db():
     except sqlite3.OperationalError as e:
         if "duplicate column name" not in str(e).lower():
             pass
+    try:
+        cursor.execute("ALTER TABLE messages_in ADD COLUMN sender_id_alt TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
 
     # Messages Out Table (Outbound DB equivalent)
     cursor.execute('''

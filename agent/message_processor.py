@@ -46,13 +46,13 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
     Fetches and builds the Gemini-format conversation history from the database.
     """
     cursor.execute('''
-        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_name 
+        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name 
         FROM messages_in 
         WHERE session_id = ? AND id != ?
         
         UNION ALL
         
-        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_name 
+        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_id_alt, NULL as sender_name 
         FROM messages_out 
         WHERE session_id = ?
         
@@ -69,7 +69,10 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
                 msg_content = truncate_message(msg_content)
             if row['sender_id']:
                 sender_label = row['sender_name'] or row['sender_id']
-                msg_content = f"[Message from: {sender_label} ({row['sender_id']})]\n{msg_content}"
+                ids = row['sender_id']
+                if row['sender_id_alt']:
+                    ids = f"{row['sender_id']} / {row['sender_id_alt']}"
+                msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
             from utils.image_utils import build_gemini_part
@@ -190,11 +193,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     history = _build_history_from_db(cursor, session_id, message_in_id, is_wa_group)
 
     # Get current message info
-    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_name FROM messages_in WHERE id = ?', (message_in_id,))
+    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_id_alt, sender_name FROM messages_in WHERE id = ?', (message_in_id,))
     current_msg = cursor.fetchone()
     current_image_base64 = current_msg['image_base64'] if current_msg else None
     current_gemini_uri = current_msg['gemini_file_uri'] if current_msg else None
     current_sender_id = current_msg['sender_id'] if current_msg else None
+    current_sender_id_alt = current_msg['sender_id_alt'] if current_msg else None
     current_sender_name = current_msg['sender_name'] if current_msg else None
 
     # Ensure client is available for fallback handling
@@ -210,7 +214,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
     if current_sender_id:
         sender_label = current_sender_name or current_sender_id
-        content = f"[Message from: {sender_label} ({current_sender_id})]\n{content}"
+        ids = current_sender_id
+        if current_sender_id_alt:
+            ids = f"{current_sender_id} / {current_sender_id_alt}"
+        content = f"[Message from: {sender_label} ({ids})]\n{content}"
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part

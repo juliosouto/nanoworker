@@ -61,7 +61,7 @@ def resolve_worker_from_content(content):
 
     return get_default_worker(workers)
 
-def should_process_wa_message(channel_base, sender_id, content="", is_group=False):
+def should_process_wa_message(channel_base, sender_id, content="", is_group=False, sender_id_alt=None):
     """
     Determines if a WhatsApp message should be processed based on config.
     It expects the channel_base and sender_id to accurately determine note-to-self.
@@ -155,7 +155,11 @@ def should_process_wa_message(channel_base, sender_id, content="", is_group=Fals
         return True
         
     allowed_list = [num.strip() for num in allowed_from.split(',') if num.strip()]
-    if clean_sender not in allowed_list:
+    sender_ids_to_check = {clean_sender}
+    if sender_id_alt:
+        clean_sender_alt = str(sender_id_alt).split('@')[0]
+        sender_ids_to_check.add(clean_sender_alt)
+    if not sender_ids_to_check & set(allowed_list):
         return False
             
     return True
@@ -375,9 +379,10 @@ def check_wa_permissions(data, content):
     channel_base = data['channel_id'].replace('wa_web:', '')
     is_group = '@g.us' in data.get('remote_jid', '') or '@g.us' in data['channel_id']
     sender_id = data.get('sender_id')
+    sender_id_alt = data.get('sender_id_alt')
 
-    if not should_process_wa_message(channel_base, sender_id, content, is_group):
-        logging.info(f"Ignored message from {sender_id} in channel {channel_base} due to WhatsApp config permissions.")
+    if not should_process_wa_message(channel_base, sender_id, content, is_group, sender_id_alt=sender_id_alt):
+        logging.info(f"Ignored message from {sender_id} (alt: {sender_id_alt}) in channel {channel_base} due to WhatsApp config permissions.")
         return False, "permissions_or_disabled"
 
     if not check_rate_limit(sender_id):

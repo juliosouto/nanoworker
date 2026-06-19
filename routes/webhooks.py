@@ -115,6 +115,7 @@ def webhook():
         channel_id=data['channel_id'],
         content=content,
         sender_id=data.get('sender_id'),
+        sender_id_alt=data.get('sender_id_alt'),
         sender_name=data.get('sender_name'),
         image_base64=file_path,
         file_mime_type=data.get('file_mime_type'),
