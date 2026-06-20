@@ -4,6 +4,7 @@ for OpenAI-compatible LLM providers (OpenAI, Groq, Qwen).
 """
 import inspect
 import json
+import time
 import uuid
 
 from agent.db_feedback import insert_feedback
@@ -150,6 +151,15 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 response = client.chat.completions.create(**fallback_args)
             else:
                 raise e
+
+        if not response.choices:
+            iteration += 1
+            if iteration >= max_iterations:
+                return "Error: Model returned empty responses after maximum retries."
+            insert_feedback(cursor, table, session_id, message_in_id,
+                f"⚠️ Empty response from model (attempt {iteration}/{max_iterations}). Retrying...")
+            time.sleep(2)
+            continue
 
         message = response.choices[0].message
         tool_calls = getattr(message, 'tool_calls', None)
