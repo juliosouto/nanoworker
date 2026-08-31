@@ -95,7 +95,7 @@ def get_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_config(key: str, default=None) -> str:
+def get_config(key: str, default=None) -> str|None:
     """
     Recupera um valor de configuração geral da tabela app_config.
     Descriptografa automaticamente caso a chave seja identificada como sensível.
