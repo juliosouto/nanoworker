@@ -13,6 +13,34 @@ from agent.openai_tools import execute_openai_compatible_llm
 from database import get_config
 
 
+def _is_minute_quota_exceeded(error_str: str, exception: Exception) -> bool:
+    """
+    Returns True for 429 RESOURCE_EXHAUSTED errors caused by per-minute quotas
+    (e.g. GenerateContentInputTokensPerModelPerMinute-FreeTier).
+    Only these reset when the minute turns, so waiting ~60s can resolve them.
+    Daily quotas ("PerDay") are excluded: waiting for the minute is useless there.
+    """
+    code = getattr(exception, "code", None)
+    is_quota_429 = ("429" in error_str or code == 429) and "RESOURCE_EXHAUSTED" in error_str
+    return is_quota_429 and "PerDay" not in error_str
+
+
+def _wait_seconds_for_quota(error_str: str) -> float:
+    """
+    Computes how long to wait before retrying a per-minute quota exceeded error:
+    the largest of the provider's own retryDelay (if present) and the seconds
+    remaining until the next minute plus a small margin.
+    """
+    retry_delay = 0.0
+    if "Please retry in " in error_str:
+        try:
+            retry_delay = float(error_str.split("Please retry in ")[1].split("s")[0].strip())
+        except (IndexError, ValueError):
+            retry_delay = 0.0
+    next_minute_wait = 60 - (time.time() % 60) + 3  # seconds until the minute turns, plus margin
+    return max(retry_delay, next_minute_wait)
+
+
 def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, on_complete=None) -> str:
     """
     Makes a call to the Google Gemini API.
@@ -79,6 +107,16 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                     feedback = f"⚠️ 503 Error on attempt {attempt + 1}/{max_retries}. Retrying..."
                     insert_feedback(cursor, table, session_id, message_in_id, feedback)
                     time.sleep(2)
+                    continue
+                elif _is_minute_quota_exceeded(error_str, e):
+                    if attempt >= max_retries - 1:
+                        raise e  # retries exhausted: fall back to the model fallback chain
+                    # Wait until the per-minute quota resets (next minute) plus a small margin.
+                    # Retrying on the same chat object resumes exactly from where it failed.
+                    wait_seconds = _wait_seconds_for_quota(error_str)
+                    feedback = f"⏳ Quota exceeded (429) on attempt {attempt + 1}/{max_retries}. Waiting {wait_seconds:.0f}s until the next minute to continue..."
+                    insert_feedback(cursor, table, session_id, message_in_id, feedback)
+                    time.sleep(wait_seconds)
                     continue
                 elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
                     raise e
