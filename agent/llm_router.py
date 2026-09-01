@@ -2,10 +2,121 @@
 LLM routing logic: selects the correct provider based on database config,
 and implements fallback across multiple models.
 """
+import logging
 import uuid
 
 from agent.db_feedback import insert_feedback
 import agent.llm_providers as _providers
+
+logger = logging.getLogger(__name__)
+
+# Heuristic used across the project: 1 token ~= 4 chars.
+_CHARS_PER_TOKEN = 4
+# Safety margin reserved on top of the accounted input tokens.
+_SAFE_MARGIN_TOKENS = 1024
+# OpenRouter reserves this many output tokens by default when max_tokens is omitted
+# (this is exactly the "32000 in the output" seen in context-limit errors).
+_DEFAULT_OUTPUT_RESERVE = 32000
+
+
+def _estimate_tokens(text) -> int:
+    """Rough token estimate for a string (1 token ~= 4 chars, matching truncate_message)."""
+    if not text:
+        return 0
+    return max(1, len(str(text)) // _CHARS_PER_TOKEN)
+
+
+def _history_text(msg) -> str:
+    """
+    Defensively extracts text from a single history item.
+
+    Supports both the Gemini-format types.Content objects (built by
+    _build_history_from_db) and plain OpenAI-style dicts with 'content'.
+    """
+    if hasattr(msg, "parts"):
+        return " ".join(
+            getattr(p, "text", "") or "" for p in msg.parts if getattr(p, "text", None)
+        )
+    if isinstance(msg, dict):
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                c.get("text", "") if isinstance(c, dict) else str(c)
+                for c in content
+            )
+        return str(content) if content else ""
+    return str(getattr(msg, "content", "") or "")
+
+
+def _prune_history_to_fit(history, context_window, config_kwargs, content, max_output_tokens=None):
+    """
+    Trims old conversation history to fit within the model's context window.
+
+    Uses the "Context Window" and "Max Output Tokens" configured for the model in
+    the LLM models web UI (llm_config table). The current user message is NEVER
+    trimmed; only the oldest messages are dropped until the estimated input fits.
+
+    When context_window is unset (NULL/0), returns the history unchanged so the
+    previous behavior is preserved.
+
+    Returns:
+        list: The (possibly trimmed) history, with order preserved.
+    """
+    try:
+        context = int(context_window) if context_window else 0
+    except (ValueError, TypeError):
+        context = 0
+
+    if context <= 0:
+        return history
+
+    # Reserve part of the context for the model output. When the user configured
+    # "Max Output Tokens" for the model we use it; otherwise we mirror the output
+    # reservation that API gateways (e.g. OpenRouter) apply by default (32000).
+    try:
+        reserve_output = int(max_output_tokens) if max_output_tokens else _DEFAULT_OUTPUT_RESERVE
+    except (ValueError, TypeError):
+        reserve_output = _DEFAULT_OUTPUT_RESERVE
+
+    # Cost of the system prompt, the tools and the current user message.
+    system_token = _estimate_tokens(config_kwargs.get("system_instruction", ""))
+    tools_token = 0
+    for tool in config_kwargs.get("tools", []) or []:
+        tools_token += _estimate_tokens(getattr(tool, "__doc__", "") or "")
+
+    current_token = _estimate_tokens(content)
+    if isinstance(content, list):
+        current_token = _estimate_tokens(" ".join(
+            p.text if getattr(p, "text", None) else str(p) for p in content
+        ))
+
+    budget = (
+        context
+        - reserve_output
+        - _SAFE_MARGIN_TOKENS
+        - system_token
+        - tools_token
+        - current_token
+    )
+
+    oldest = 0  # number of oldest messages to drop
+    used = 0
+    for i in range(len(history) - 1, -1, -1):
+        used += _estimate_tokens(_history_text(history[i]))
+        if used > budget and i != len(history) - 1:
+            oldest = i + 1
+            break
+
+    if oldest > 0:
+        logger.info(
+            f"[llm_router] Pruned {oldest} oldest message(s) to fit context "
+            f"(budget {budget}, kept {len(history) - oldest}/{len(history)})."
+        )
+        return list(history[oldest:])
+
+    return history
 
 
 def route_llm_call(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, is_ide: bool, on_complete=None) -> str:
@@ -32,13 +143,14 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
     from database import get_db, decrypt_value
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT provider, api_key, thinking, max_output_tokens FROM llm_config WHERE model_name = ?", (model_name,))
+    c.execute("SELECT provider, api_key, thinking, context_window, max_output_tokens FROM llm_config WHERE model_name = ?", (model_name,))
     row = c.fetchone()
     conn.close()
 
     provider = None
     api_key = None
     model_thinking = False
+    context_window = None
     max_output_tokens = None
     if row:
         try:
@@ -55,6 +167,10 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
         except (KeyError, IndexError, TypeError):
             model_thinking = False
         try:
+            context_window = row['context_window']
+        except (KeyError, IndexError, TypeError):
+            context_window = None
+        try:
             max_output_tokens = row['max_output_tokens']
         except (KeyError, IndexError, TypeError):
             max_output_tokens = None
@@ -62,6 +178,10 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
         local_kwargs.pop('thinking_config', None)
+
+    # Trim old history to the model's context window configured in the LLM models UI.
+    # Only active when 'Context Window' is set; otherwise history is passed as-is.
+    history = _prune_history_to_fit(history, context_window, local_kwargs, content, max_output_tokens or None)
 
     if provider == "qwen" or model_name.lower().startswith("qwen"):
         return _providers.call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, on_complete=on_complete)
