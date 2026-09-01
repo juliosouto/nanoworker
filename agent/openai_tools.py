@@ -128,7 +128,7 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             call_args["tools"] = openai_tools
 
         if not is_reasoning:
-            call_args["temperature"] = 1.0
+            call_args["temperature"] = config_kwargs.get("temperature", 1.0)
             if limit_tokens:
                 call_args["max_tokens"] = limit_tokens
         else:

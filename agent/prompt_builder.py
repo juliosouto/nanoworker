@@ -163,6 +163,7 @@ def build_config_kwargs(
     tools=None,
     thinking_enabled: bool = False,
     show_tools_results: bool = True,
+    temperature: float = None,
 ) -> dict:
     """
     Builds the config_kwargs dict for LLM calls.
@@ -172,14 +173,18 @@ def build_config_kwargs(
         tools (list, optional): List of tool functions to provide.
         thinking_enabled (bool): Whether to enable thinking mode.
         show_tools_results (bool): Whether to stream tool execution results to the client.
+        temperature (float, optional): Sampling temperature (0..2). When None, the
+            provider-specific default is kept (Gemini uses 2.0, OpenAI-compatible 1.0).
 
     Returns:
         dict: Configuration kwargs for the LLM call.
     """
     config_kwargs = {
-        "temperature": 0.0,
         "show_tools_results": show_tools_results,
     }
+
+    if temperature is not None:
+        config_kwargs["temperature"] = temperature
 
     if tools:
         config_kwargs["tools"] = process_tools_for_llm(tools)

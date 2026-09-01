@@ -156,6 +156,26 @@ def toggle_llm_model(model_id):
         conn.close()
 
 # Workers API Routes
+def _parse_temperature(value):
+    """
+    Parses a worker temperature value submitted from the web UI.
+    Returns the float if valid (0..2), None when empty/not provided (use provider default).
+    Raises no exceptions; invalid values return None so callers can reject them.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "":
+            return None
+    try:
+        temperature = float(value)
+    except (TypeError, ValueError):
+        return None
+    if temperature < 0 or temperature > 2:
+        return None
+    return temperature
+
 @api_llm_bp.route('/api/workers', methods=['POST'])
 def add_worker():
     data = request.json
@@ -166,14 +186,17 @@ def add_worker():
     thinking_enabled = 1 if data.get('thinking_enabled') else 0
     tools_enabled = 0 if data.get('tools_enabled') is False else 1
     show_tools_results = 0 if data.get('show_tools_results') is False else 1
+    temperature = _parse_temperature(data.get('temperature'))
+    if 'temperature' in data and temperature is None:
+        return jsonify({"error": "temperature must be a number between 0 and 2"}), 400
     conn = get_db()
     cursor = conn.cursor()
     try:
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0')
         cursor.execute('''
-            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, show_tools_results))
+            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, show_tools_results, temperature))
         conn.commit()
         return jsonify({"status": "success", "message": "Worker added"})
     except Exception as e:
@@ -191,14 +214,17 @@ def update_worker(worker_id):
     thinking_enabled = 1 if data.get('thinking_enabled') else 0
     tools_enabled = 0 if data.get('tools_enabled') is False else 1
     show_tools_results = 0 if data.get('show_tools_results') is False else 1
+    temperature = _parse_temperature(data.get('temperature'))
+    if 'temperature' in data and temperature is None:
+        return jsonify({"error": "temperature must be a number between 0 and 2"}), 400
     conn = get_db()
     cursor = conn.cursor()
     try:
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0 WHERE id != ?', (worker_id,))
         cursor.execute('''
-            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, tools_enabled = ?, show_tools_results = ? WHERE id = ?
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, show_tools_results, worker_id))
+            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, tools_enabled = ?, show_tools_results = ?, temperature = ? WHERE id = ?
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, show_tools_results, temperature, worker_id))
         conn.commit()
         if cursor.rowcount == 0:
             return jsonify({"error": "Worker not found"}), 404

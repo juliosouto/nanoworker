@@ -73,8 +73,9 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     if "tools" in config_kwargs and config_kwargs["tools"]:
         config_kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
 
-    # TEST
-    config_kwargs['temperature'] = 2.0
+    # Apply the worker-configured temperature if present; otherwise keep Gemini's
+    # default (2.0 as before).
+    config_kwargs.setdefault('temperature', 2.0)
 
     chat = client.chats.create(
         model=model_name,
