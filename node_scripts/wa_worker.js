@@ -292,8 +292,11 @@ async function connectToWhatsApp() {
 
             if (!text) continue;
 
-            // Use remoteJid as the base channel ID, but extract actual participant if available (e.g. for groups)
-            const channelIdBase = remoteJid.split('@')[0].split(':')[0];
+            // Use the FULL remoteJid (including the '@lid' / '@g.us' / '@s.whatsapp.net' suffix)
+            // as the channel ID. This preserves the correct addressing mode so the agent can
+            // later reply to the exact chat (group vs private LID chat vs note-to-self).
+            // Only the device suffix (e.g. ':3' in multi-device sessions) is stripped.
+            const channelIdBase = remoteJid.split(':')[0];
             let actualSenderJid = msg.key.participant || msg.key.remoteJid;
             if (msg.key.fromMe && ownJid) {
                 actualSenderJid = ownJid;

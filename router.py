@@ -29,9 +29,25 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
     agent_id = 'agent-1'
     
     # 2. Find or create session
-    cursor.execute('SELECT id FROM sessions WHERE agent_id = ? AND channel_id = ?', (agent_id, channel_id))
+    # Prefer the exact channel_id. For backwards-compatibility with sessions created before
+    # JIDs carried their suffix (e.g. the channel was stored as 'wa_web:5511...' without
+    # '@lid'/'@g.us'), fall back to the suffix-less base and upgrade the stored session.
+    cursor.execute('SELECT id, channel_id FROM sessions WHERE agent_id = ? AND channel_id = ?', (agent_id, channel_id))
     session = cursor.fetchone()
-    
+
+    channel_base = None
+    if ':' in channel_id and '@' in channel_id.split(':', 1)[1]:
+        prefix, rest = channel_id.split(':', 1)
+        channel_base = f"{prefix}:{rest.split('@')[0].split(':')[0]}"
+
+    if not session and channel_base:
+        cursor.execute('SELECT id, channel_id FROM sessions WHERE agent_id = ? AND channel_id = ?', (agent_id, channel_base))
+        session = cursor.fetchone()
+        if session and session['channel_id'] != channel_id:
+            # Upgrade legacy session to the canonical (full JID) channel id
+            cursor.execute('UPDATE sessions SET channel_id = ? WHERE id = ?', (channel_id, session['id']))
+            conn.commit()
+
     if session:
         session_id = session['id']
     else:

@@ -11,10 +11,15 @@ def download_file_from_url(url: str, filename: str, category: str) -> str:
     Args:
         url: The URL to download the file from.
         filename: The name to save the downloaded file as (e.g., 'report.pdf', 'photo.jpg').
+                  IMPORTANT: always include the correct file extension (e.g. '.jpg', '.png', '.pdf').
+                  The extension is used to determine the file type when later sent to WhatsApp.
         category: The category directory. Must be one of: 'documents', 'downloads', 'images', 'music', 'temp', 'videos'.
+                  Use 'images' for pictures downloaded from the web.
         
     Returns:
-        str: A success message indicating where the file was saved, or an error message.
+        str: A success message containing the ABSOLUTE saved path, or an error message.
+             IMPORTANT: when sending the downloaded file afterwards, you MUST use the exact
+             absolute path returned here (with send_whatsapp_file) — do not reconstruct it.
     """
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
