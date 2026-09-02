@@ -139,7 +139,10 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     except Exception:
         max_iterations = 10
     
-    agent_name = get_config("agent_name", "Agent")
+    try:
+        agent_name = get_config("agent_name", "Agent")
+    except Exception:
+        agent_name = "Agent"
 
     # 3. Tool execution loop
     iteration = 0

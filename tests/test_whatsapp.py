@@ -441,3 +441,83 @@ def test_send_whatsapp_file_lid_jid(wa_setup, mocker):
     assert captured['payload']['jid'] == "5511999998888@lid"
     # unknown mimetype should fall back to image/jpeg because of the .jpg extension
     assert captured['payload']['mimetype'] == "image/jpeg"
+def test_jid_number_strips_wa_web_prefix(wa_setup):
+    """Regression: 'wa_web:' prefixed channel ids must NOT be reduced to 'wa_web'."""
+    os_name, wa_module = wa_setup
+    assert wa_module._jid_number("wa_web:120363123456789-123@g.us") == "120363123456789123"
+    assert wa_module._jid_number("wa_web:5511999998888@lid") == "5511999998888"
+    assert wa_module._jid_number("whatsapp:5511999998888@lid") == "5511999998888"
+
+
+def test_is_allowed_to_outgoing_mentions_override(wa_setup, mocker):
+    """With allow_outgoing_mentions enabled, file sends are allowed regardless of target."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {
+        "allowed_to": "5511999999999",
+        "allow_mentions": 0,
+        "allow_outgoing_mentions": 1,
+    }
+    mocker.patch('database.get_db', return_value=mock_conn)
+    assert wa_module._is_allowed_to(
+        "120363123456789-123@g.us", allow_mentions_override=True
+    ) is True
+
+
+def test_is_allowed_to_group_resolves_requesting_member(wa_setup, mocker):
+    """A group JID not in Allowed To is authorized when its last requesting member is."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    # First fetchone -> whatsapp_config; second -> sender resolved from messages_in.
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5511999999999"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is True
+
+
+def test_is_allowed_to_group_denied_for_unknown_member(wa_setup, mocker):
+    """A group whose requesting member is not in Allowed To is blocked."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5511888888888"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is False
+
+
+def test_send_whatsapp_file_wa_web_group_portability(wa_setup, mocker):
+    """Composite tool passes the raw wa_web channel; file must still reach the group."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, '_is_allowed_to', return_value=True)
+    mocker.patch('requests.get')
+    mocker.patch('os.path.isfile', return_value=True)
+    mocker.patch('os.path.exists', return_value=True)
+    mocker.patch('os.remove')
+    mocker.patch('utils.file_utils.create_temp_copy', return_value="/tmp/copy.jpg")
+    mocker.patch('mimetypes.guess_type', return_value=("image/jpeg", None))
+
+    captured = {}
+    def fake_post(url, json=None, timeout=None, **kwargs):
+        captured['payload'] = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"target": json.get("jid", "?")}
+        return mock_resp
+    mocker.patch('requests.post', side_effect=fake_post)
+
+    res = wa_module.send_whatsapp_file("wa_web:120363123456789-123@g.us", "/fake/photo.jpg")
+    assert "successfully" in res
+    # The send target must be the group JID (wa_web: prefix stripped), not a private chat.
+    assert captured['payload']['jid'] == "120363123456789-123@g.us"

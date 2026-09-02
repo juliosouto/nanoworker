@@ -11,15 +11,23 @@ def _jid_number(phone_number) -> str:
     """Returns only the numeric part of a JID/phone number, stripping suffix and device parts."""
     if not phone_number:
         return ""
+    value = str(phone_number).strip()
+    # Strip transport prefixes (e.g. 'wa_web:120363...@g.us' -> '120363...@g.us')
+    # BEFORE splitting, otherwise the prefix ('wa_web') would be mistaken for the
+    # numeric part and the allow-list lookup would never match.
+    for prefix in ("wa_web:", "whatsapp:"):
+        if value.lower().startswith(prefix):
+            value = value[len(prefix):]
+            break
     return (
-        str(phone_number)
-        .strip()
+        value
         .split("@")[0]
         .split(":")[0]
         .replace("+", "")
         .replace(" ", "")
         .replace("-", "")
     )
+
 
 
 def _format_jid(phone_number):
@@ -69,67 +77,94 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
     if not phone_number or phone_number.lower() == "self":
         return True
 
+    import requests
     from database import get_db
+
+    conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT allowed_to, allow_mentions FROM whatsapp_config WHERE id = 1')
+        cursor.execute('SELECT * FROM whatsapp_config WHERE id = 1')
         config = cursor.fetchone()
-        conn.close()
-        
+
         if not config:
+            # Missing whatsapp_config row -> keep the previous permissive behaviour.
             return True
-            
-        if allow_mentions_override and config['allow_mentions']:
-            return True
-            
+
+        if allow_mentions_override:
+            # The correct gate for SENDING out is allow_outgoing_mentions (default 1).
+            # Fall back to the legacy inbound allow_mentions only on old schemas that
+            # lack the allow_outgoing_mentions column.
+            outgoing_allowed = config['allow_outgoing_mentions'] \
+                if 'allow_outgoing_mentions' in config.keys() else config['allow_mentions']
+            if outgoing_allowed:
+                return True
+
         allowed_to = config['allowed_to']
-        
+
         clean_target = _jid_number(phone_number)
 
-        import requests
+        # Sending to your own number (note-to-self / direct chat) is always allowed.
         try:
             resp = requests.get('http://127.0.0.1:3000/me', timeout=2)
             if resp.status_code == 200:
                 data = resp.json()
                 own_number = data.get('number')
                 lid_number = data.get('lid_number')
-                if own_number and clean_target == str(own_number):
-                    return True
-                if lid_number and clean_target == str(lid_number):
+                if (own_number and clean_target == str(own_number)) or \
+                   (lid_number and clean_target == str(lid_number)):
                     return True
         except Exception:
             pass
 
         if not allowed_to or not allowed_to.strip():
             return False
-            
+
         allowed_list = [num.strip() for num in allowed_to.split(',') if num.strip()]
-        sanitized_allowed_list = []
-        for num in allowed_list:
-            n = _jid_number(num)
-            sanitized_allowed_list.append(n)
-            
-        clean_target = _jid_number(phone_number)
-            
-        if clean_target not in sanitized_allowed_list:
-            # Try to resolve LID to sender_id from messages_in
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT sender_id FROM messages_in WHERE channel_id LIKE ? AND sender_id IS NOT NULL ORDER BY id DESC LIMIT 1", (f"%{clean_target}%",))
-                row = cursor.fetchone()
-                if row and row['sender_id']:
-                    sender_id_clean = str(row['sender_id']).strip().replace("+", "").replace(" ", "").split(':')[0]
-                    if sender_id_clean in sanitized_allowed_list:
-                        return True
-            except Exception as e:
-                logger.error(f"Error resolving LID to sender_id: {e}")
-            return False
-            
-        return True
+        sanitized_allowed_list = [_jid_number(num) for num in allowed_list]
+
+        if clean_target in sanitized_allowed_list:
+            return True
+
+        # Target not listed directly. For group JIDs the value in "Allowed To" is the
+        # requesting member, so resolve the sender of the most recent inbound message
+        # from this channel (joining through sessions to get the channel) and check
+        # THAT member against the allow-list. messages_in has no channel_id column, so
+        # we must go through sessions.channel_id.
+        try:
+            candidates = [f"wa_web:{clean_target}", f"whatsapp:{clean_target}"]
+            placeholders = ",".join("?" for _ in candidates)
+            cursor.execute(
+                f"""
+                SELECT m.sender_id
+                FROM messages_in m
+                JOIN sessions s ON s.id = m.session_id
+                WHERE s.channel_id IN ({placeholders})
+                  AND m.sender_id IS NOT NULL
+                ORDER BY m.id DESC
+                LIMIT 1
+                """,
+                candidates,
+            )
+            row = cursor.fetchone()
+            if row and row['sender_id']:
+                sender_id_clean = str(row['sender_id']).strip().replace("+", "").replace(" ", "").split(':')[0]
+                if sender_id_clean in sanitized_allowed_list:
+                    return True
+        except Exception as e:
+            logger.error(f"Error resolving LID to sender_id: {e}")
+
+        return False
     except Exception as e:
         logger.error(f"Error checking allowed_to: {e}")
         return True
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 
 
 def send_whatsapp_message(phone_number: str, message: str) -> str:

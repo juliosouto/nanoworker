@@ -92,7 +92,10 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     except Exception:
         max_iterations = 10
         
-    agent_name = get_config("agent_name", "Agent")
+    try:
+        agent_name = get_config("agent_name", "Agent")
+    except Exception:
+        agent_name = "Agent"
 
     # Tool execution loop
     iteration = 0
