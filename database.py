@@ -683,7 +683,10 @@ def init_db():
         pass
 
     try:
-        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_audio_mentions BOOLEAN DEFAULT 0")
+        # DEFAULT 1 preserves the legacy behavior (inbound audios were processed without an
+        # opt-in gate before this column existed). DEFAULT 0 silently disabled received audios
+        # on existing installs after a deploy that applied this migration.
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_audio_mentions BOOLEAN DEFAULT 1")
     except sqlite3.OperationalError:
         pass
 

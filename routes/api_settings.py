@@ -30,9 +30,18 @@ def get_agent_name_api():
     except (IndexError, KeyError):
         allow_audio_mentions = False
         
-    from utils.message_utils import get_default_worker
-    default_worker = get_default_worker()
-    agent_name = default_worker['worker_name'] if default_worker else ''
+    # get_default_worker() is required by the Baileys worker every ~60s. If it ever
+    # throws (e.g. a missing workers_config column during a partial deploy), the
+    # whole endpoint would 500 and the worker would silently degrade (audio gate off).
+    # Keep the endpoint resilient so the worker always gets a sane response.
+    try:
+        from utils.message_utils import get_default_worker
+        default_worker = get_default_worker()
+        agent_name = default_worker['worker_name'] if default_worker else ''
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Failed to load default worker in /api/config/agent_name")
+        agent_name = ''
     
     require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
     use_recipes_as_tools = get_config("USE_RECIPES_AS_TOOLS", "true").lower() == "true"

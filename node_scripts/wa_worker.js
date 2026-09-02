@@ -234,6 +234,11 @@ async function connectToWhatsApp() {
             };
 
             if (!shouldForwardMessage(context, agentConfig)) {
+                // Log dropped messages explicitly so silent filtering by the audio gate
+                // (allowAudioMentions=false) is observable instead of disappearing without a trace.
+                if (context.isAudio) {
+                    console.error(`[Baileys Inbound] 🔊 Dropped audio from ${remoteJid} (not self, no text mention). Set allow_audio_mentions=true in WhatsApp settings to process received audios.`);
+                }
                 continue;
             }
 
