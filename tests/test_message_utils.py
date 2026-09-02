@@ -141,12 +141,18 @@ def test_resolve_target_jid():
     assert resolve_target_jid({'sender_id': '456'}) == '456@s.whatsapp.net'
 
 def test_check_wa_permissions(mocker):
-    mocker.patch('utils.message_utils.should_process_wa_message', return_value=False)
+    mocker.patch('utils.message_utils.should_process_wa_message', return_value=(False, "audio_mentions_disabled"))
+    allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
+    assert not allowed
+    assert reason == "audio_mentions_disabled"
+
+    # Reason falls back to the generic code when the checker returns an empty reason
+    mocker.patch('utils.message_utils.should_process_wa_message', return_value=(False, None))
     allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
     assert not allowed
     assert reason == "permissions_or_disabled"
     
-    mocker.patch('utils.message_utils.should_process_wa_message', return_value=True)
+    mocker.patch('utils.message_utils.should_process_wa_message', return_value=(True, None))
     mocker.patch('utils.message_utils.check_rate_limit', return_value=False)
     allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
     assert not allowed
@@ -192,6 +198,56 @@ def test_should_process_wa_message_exceptions_in_config(mock_db, mocker):
     
     # Should still process if mentioned because allow_mentions defaults to True
     assert should_process_wa_message('channel', 'user@s.whatsapp.net', "@nano hello")
+
+def test_should_process_wa_message_audio_disabled_reason(mock_db, mocker):
+    # allow_audio_mentions = False + audio transcript -> reason "audio_mentions_disabled",
+    # but default (bool) return must still be False.
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*', 'allow_mentions': True, 'allow_audio_mentions': False}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+
+    audio_content = "Audio\n[Transcription]: nano hello"
+    assert should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content) is False
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content, return_reason=True)
+    assert allowed is False
+    assert reason == "audio_mentions_disabled"
+
+def test_should_process_wa_message_audio_no_mention_reason(mock_db, mocker):
+    # allow_audio_mentions = True but transcription has no worker name
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*', 'allow_mentions': True, 'allow_audio_mentions': True}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+
+    audio_content = "Audio\n[Transcription]: hey do this please"
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content, return_reason=True)
+    assert allowed is False
+    assert reason == "no_worker_mentioned_in_transcription"
+
+def test_should_process_wa_message_bot_disabled_reason(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': False}
+    allowed, reason = should_process_wa_message('wa_web:me', 'user@s.whatsapp.net', return_reason=True)
+    assert allowed is False
+    assert reason == "bot_disabled"
+
+def test_should_process_wa_message_sender_not_allowed_reason(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '999', 'allow_mentions': True}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+    allowed, reason = should_process_wa_message('channel', '888@s.whatsapp.net', 'nano hello', return_reason=True)
+    assert allowed is False
+    assert reason == "sender_not_allowed"
+
+def test_should_process_wa_message_allowed_reason_none(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*'}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', '@nano hello', return_reason=True)
+    assert allowed is True
+    assert reason is None
 
 def test_should_process_wa_message_chat_with_self_lid(mock_db, mocker):
     mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '', 'allow_mentions': True}
