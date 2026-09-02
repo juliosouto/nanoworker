@@ -4,6 +4,7 @@ for OpenAI-compatible LLM providers (OpenAI, Groq, Qwen).
 """
 import inspect
 import json
+import re
 import time
 import uuid
 
@@ -56,6 +57,14 @@ def convert_to_openai_tool(func) -> dict:
             "description": param_desc
         }
 
+        # Detect fixed-choice values ("Must be one of: 'a', 'b', 'c'.") and expose
+        # them as an enum so small models don't send invalid values.
+        one_of = re.search(r"Must be one of[:\s]*([^.]+)", param_desc)
+        if one_of:
+            choices = [v.strip().strip("'\"") for v in re.split(r"[,]|\bor\b", one_of.group(1)) if v.strip()]
+            if len(choices) >= 2:
+                properties[param_name]["enum"] = choices
+
         if param.default == inspect.Parameter.empty:
             required.append(param_name)
 
@@ -71,6 +80,21 @@ def convert_to_openai_tool(func) -> dict:
             }
         }
     }
+
+
+def _describe_tool_args(func) -> str:
+    """Returns a human-readable list of a function's parameters for error feedback."""
+    try:
+        sig = inspect.signature(func)
+    except Exception:
+        return "(signature unavailable)"
+    parts = []
+    for pname, param in sig.parameters.items():
+        if pname in ("self", "args", "kwargs"):
+            continue
+        default = "" if param.default is inspect.Parameter.empty else f" (default: {param.default!r})"
+        parts.append(f"{pname}{default}")
+    return ", ".join(parts) if parts else "(no arguments)"
 
 
 def execute_openai_compatible_llm(client, model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, limit_tokens: int = None, on_complete=None) -> str:
@@ -193,24 +217,46 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             tool_name = tc.function.name
             arguments_str = tc.function.arguments
 
-            try:
-                args = json.loads(arguments_str) if arguments_str else {}
-            except Exception:
-                args = {}
+            # Parse the model's JSON arguments defensively, giving small models
+            # actionable feedback instead of swallowing errors silently.
+            args = {}
+            args_error = None
+            if arguments_str:
+                try:
+                    args = json.loads(arguments_str)
+                    if not isinstance(args, dict):
+                        args_error = f"expected a JSON object but got a {type(args).__name__}"
+                except Exception as je:
+                    args_error = f"invalid JSON ({str(je)})"
 
             # Log execution starting
             msg_start = f"⚙️ Executing local tool: {tool_name}..."
             insert_feedback(cursor, table, session_id, message_in_id, msg_start)
 
-            # Execute Python function
+            tool_func = next(
+                (f for f in permitted_tools if getattr(f, '__name__', '') == tool_name),
+                None,
+            )
             result = "Tool not found"
-            for f in permitted_tools:
-                if f.__name__ == tool_name:
-                    try:
-                        result = f(**args)
-                    except Exception as ex:
-                        result = f"Error executing {tool_name}: {str(ex)}"
-                    break
+            if tool_func is None:
+                available = ", ".join(
+                    sorted(getattr(f, '__name__', '') for f in permitted_tools)) or "none"
+                result = (f"Error: tool '{tool_name}' does not exist. "
+                          f"Available tools: {available}. Call one of these instead.")
+            elif args_error:
+                expected = _describe_tool_args(tool_func)
+                result = (f"Error: arguments for {tool_name} could not be parsed ({args_error}). "
+                          f"Expected arguments: {expected}. "
+                          f"Provide a valid JSON object with ONLY those keys.")
+            else:
+                try:
+                    result = tool_func(**args)
+                except TypeError as te:
+                    expected = _describe_tool_args(tool_func)
+                    result = (f"Error executing {tool_name}: {str(te)}. "
+                              f"Expected arguments: {expected}.")
+                except Exception as ex:
+                    result = f"Error executing {tool_name}: {str(ex)}"
 
             if tool_name not in tools_used:
                 tools_used.append(tool_name)

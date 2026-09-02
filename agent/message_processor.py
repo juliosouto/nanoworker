@@ -73,6 +73,11 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
                 if row['sender_id_alt']:
                     ids = f"{row['sender_id']} / {row['sender_id_alt']}"
                 msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
+        elif role == 'model' and is_wa_group:
+            # Large tool-result feedbacks (⚙️ Executed tools: ...) pollute small
+            # contexts. Gate behind a config flag so it can be toggled per install.
+            if get_config("TRUNCATE_MODEL_HISTORY_IN_GROUPS", "true").lower() == "true":
+                msg_content = truncate_message(msg_content)
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
             from utils.image_utils import build_gemini_part

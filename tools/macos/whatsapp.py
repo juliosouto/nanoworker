@@ -229,6 +229,19 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
                 f"You MUST reply to the user EXACTLY with this English sentence: "
                 f"'You must add the number {phone_number} to the Allowed To list in the WhatsApp Settings page before I can send files to it.'")
 
+    # Allow passing a direct URL: download it first, then send the local copy.
+    if str(file_path).lower().lstrip().startswith(("http://", "https://")):
+        import importlib
+        import platform as _platform
+        _folder = "windows" if _platform.system() == "Windows" else ("linux" if _platform.system() == "Linux" else "macos")
+        _dl_mod = importlib.import_module(f"tools.{_folder}.download_file_from_url")
+        _src_url = str(file_path)
+        _name = os.path.basename(_src_url.split("?", 1)[0]) or "download"
+        _saved = _dl_mod.download_file_from_url(_src_url, _name, "temp")
+        if isinstance(_saved, str) and _saved.lower().startswith(("error", "network error")):
+            return _saved
+        file_path = _saved
+
     if not os.path.isfile(file_path):
         return f"Error: File not found at {file_path}"
 
