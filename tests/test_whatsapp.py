@@ -119,7 +119,7 @@ def test_send_whatsapp_file_success(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "5511999999999"}
+    mock_resp.json.return_value = {"target": "5511999999999", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     res = wa_module.send_whatsapp_file("5511999999999", "/fake/file.pdf", "Here is your file")
@@ -288,7 +288,7 @@ def test_send_whatsapp_file_no_mimetype(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "1234"}
+    mock_resp.json.return_value = {"target": "1234", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     res = wa_module.send_whatsapp_file("1234", "/fake/unknown.bin")
@@ -306,7 +306,7 @@ def test_send_whatsapp_file_group_jid(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "12036312345-123@g.us"}
+    mock_resp.json.return_value = {"target": "12036312345-123@g.us", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     res = wa_module.send_whatsapp_file("12036312345-123", "/fake/file.pdf")
@@ -362,7 +362,7 @@ def test_send_whatsapp_file_remove_exception(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "1234"}
+    mock_resp.json.return_value = {"target": "1234", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     # Simulate os.remove throwing an exception
@@ -432,7 +432,7 @@ def test_send_whatsapp_file_lid_jid(wa_setup, mocker):
         captured['payload'] = json
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"target": json.get("jid", "?")}
+        mock_resp.json.return_value = {"target": json.get("jid", "?"), "message_id": "MSG123"}
         return mock_resp
     mocker.patch('requests.post', side_effect=fake_post)
 
@@ -513,7 +513,7 @@ def test_send_whatsapp_file_wa_web_group_portability(wa_setup, mocker):
         captured['payload'] = json
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"target": json.get("jid", "?")}
+        mock_resp.json.return_value = {"target": json.get("jid", "?"), "message_id": "MSG123"}
         return mock_resp
     mocker.patch('requests.post', side_effect=fake_post)
 
@@ -521,3 +521,24 @@ def test_send_whatsapp_file_wa_web_group_portability(wa_setup, mocker):
     assert "successfully" in res
     # The send target must be the group JID (wa_web: prefix stripped), not a private chat.
     assert captured['payload']['jid'] == "120363123456789-123@g.us"
+def test_send_whatsapp_file_200_without_message_id_reports_failure(wa_setup, mocker):
+    """Regression: an HTTP 200 from Baileys WITHOUT a message_id means the file was
+    not actually delivered (e.g. bot is no longer in the group). The tool must report
+    a failure instead of a false 'sent successfully'."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, '_is_allowed_to', return_value=True)
+    mocker.patch('requests.get')
+    mocker.patch('os.path.isfile', return_value=True)
+    mocker.patch('os.path.exists', return_value=True)
+    mocker.patch('os.remove')
+    mocker.patch('utils.file_utils.create_temp_copy', return_value="/tmp/copy.jpg")
+    mocker.patch('mimetypes.guess_type', return_value=("image/jpeg", None))
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"target": "12036312345-123@g.us"}  # NO message_id
+    mocker.patch('requests.post', return_value=mock_resp)
+
+    res = wa_module.send_whatsapp_file("12036312345-123", "/fake/photo.jpg")
+    assert "NOT delivered" in res
+    assert "successfully" not in res

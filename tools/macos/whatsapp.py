@@ -314,6 +314,11 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
         if response.status_code == 200:
             data = response.json()
             target = data.get("target", phone_number)
+            message_id = data.get("message_id")
+            if not message_id:
+                logger.error(f"send_whatsapp_file: HTTP 200 but no message_id for {target} (not delivered)")
+                return (f"Error sending WhatsApp file: Baileys returned success but no message_id - "
+                        f"the file was NOT delivered to {target}.")
             return f"File '{file_name}' sent successfully to {target}."
         elif response.status_code == 503:
             return "Error: WhatsApp client is not connected. Please check the connection in Settings."

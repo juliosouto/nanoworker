@@ -442,11 +442,21 @@ app.post('/send_file', async (req, res) => {
         }
 
         const sentMsg = await sock.sendMessage(targetJid, messagePayload);
-        if (sentMsg && sentMsg.key && sentMsg.key.id) {
-            botSentMsgIds.add(sentMsg.key.id);
+        const msgKey = sentMsg && sentMsg.key ? sentMsg.key.id : null;
+        if (msgKey) {
+            botSentMsgIds.add(msgKey);
             if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
         }
-        res.json({ status: 'sent', target: targetJid });
+        if (!msgKey) {
+            // No message id returned -> the message was NOT actually accepted/delivered
+            // by the WhatsApp servers (e.g. the bot is no longer a member of the group,
+            // or the group session keys are not loaded). Surface it as a failure so the
+            // agent never reports a false "sent successfully".
+            console.error(`[Baileys Outbound File] No message id returned for ${targetJid} -> delivery NOT confirmed`);
+            return res.status(502).json({ error: 'Message not accepted by WhatsApp (no message id returned)', target: targetJid });
+        }
+        console.log(`[Baileys Outbound File] Delivered to ${targetJid} (${targetJid.endsWith('@g.us') ? 'group' : 'chat'}) msgId=${msgKey}`);
+        res.json({ status: 'sent', target: targetJid, message_id: msgKey });
     } catch (err) {
         console.error('Failed to send file via Baileys:', err);
         res.status(500).json({ error: 'Failed to send file', details: err.message || err.toString() });
