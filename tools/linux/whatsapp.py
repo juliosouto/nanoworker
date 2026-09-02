@@ -92,12 +92,16 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
             return True
 
         if allow_mentions_override:
-            # The correct gate for SENDING out is allow_outgoing_mentions (default 1).
-            # Fall back to the legacy inbound allow_mentions only on old schemas that
-            # lack the allow_outgoing_mentions column.
-            outgoing_allowed = config['allow_outgoing_mentions'] \
-                if 'allow_outgoing_mentions' in config.keys() else config['allow_mentions']
-            if outgoing_allowed:
+            # Sending a requested file/image is allowed when the user enables either
+            # the dedicated "outgoing" flag or the classic "allow mentions" flag.
+            # IMPORTANT: both must be accepted because allow_outgoing_mentions is not
+            # writable from any UI, so relying on it alone breaks sending when that
+            # column defaults to 0. allow_mentions is the legacy (and only writable) gate.
+            outgoing_allowed = False
+            if 'allow_outgoing_mentions' in config.keys():
+                outgoing_allowed = bool(config['allow_outgoing_mentions'])
+            mentions_allowed = bool(config['allow_mentions'])
+            if outgoing_allowed or mentions_allowed:
                 return True
 
         allowed_to = config['allowed_to']

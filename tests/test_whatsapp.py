@@ -450,7 +450,8 @@ def test_jid_number_strips_wa_web_prefix(wa_setup):
 
 
 def test_is_allowed_to_outgoing_mentions_override(wa_setup, mocker):
-    """With allow_outgoing_mentions enabled, file sends are allowed regardless of target."""
+    """Sending is allowed when the dedicated allow_outgoing_mentions flag is on
+    (even if the legacy allow_mentions flag is off)."""
     os_name, wa_module = wa_setup
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
@@ -464,6 +465,42 @@ def test_is_allowed_to_outgoing_mentions_override(wa_setup, mocker):
     assert wa_module._is_allowed_to(
         "120363123456789-123@g.us", allow_mentions_override=True
     ) is True
+
+
+def test_is_allowed_to_mentions_only_override(wa_setup, mocker):
+    """Regression: with allow_mentions=1 but allow_outgoing_mentions=0 (the real DB
+    state, since nothing writes the outgoing column) sending must STILL be allowed."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {
+        "allowed_to": "5511999999999",
+        "allow_mentions": 1,
+        "allow_outgoing_mentions": 0,
+    }
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to(
+        "120363123456789-123@g.us", allow_mentions_override=True
+    ) is True
+
+
+def test_is_allowed_to_no_override_denied_when_empty_allowed(wa_setup, mocker):
+    """Without the override flag, an empty allowed_to still blocks file sends."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {
+        "allowed_to": "",
+        "allow_mentions": 1,
+        "allow_outgoing_mentions": 0,
+    }
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    # sender resolution returns None -> blocked
+    assert wa_module._is_allowed_to("120363123456789-123@g.us") is False
 
 
 def test_is_allowed_to_group_resolves_requesting_member(wa_setup, mocker):
