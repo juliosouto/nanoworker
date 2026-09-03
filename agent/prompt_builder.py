@@ -26,6 +26,23 @@ Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverab
 Do not include any markdown formatting like ```json, just the raw JSON object.
 """
 
+# JSON schema variant used when PLAN_BEFORE_EXECUTION is enabled. It adds an
+# "execution_plan" field so the plan can be kept separate from the final
+# response and stripped cleanly before reaching the end user.
+JSON_SCHEMA_PROMPT_WITH_PLAN = """
+You MUST output your final response as a valid JSON object matching exactly this schema:
+{
+  "user_prompt": "<the user's original request>",
+  "execution_plan": "<your step-by-step plan: which tools you will use, in what order, and why each step is needed>",
+  "llm_response": "<your complete response addressing the request>",
+  "is_the_user_request_completely_satisfied": <boolean>,
+  "critical_system_failure": <boolean>
+}
+Note: Put your plan ONLY in the "execution_plan" field. The "llm_response" field must contain ONLY the final result requested by the user, never the plan or any planning meta-commentary.
+Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverable system exception or fatal tool error that prevents you from satisfying the request.
+Do not include any markdown formatting like ```json, just the raw JSON object.
+"""
+
 
 def _fetch_user_memory(cursor) -> str:
     """
@@ -142,10 +159,12 @@ def build_system_prompt(
         system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
 
     # 6. JSON schema prompt
+    schema_enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
+    schema_prompt = JSON_SCHEMA_PROMPT_WITH_PLAN if schema_enabled else JSON_SCHEMA_PROMPT
     if system_prompt:
-        system_prompt = f"{system_prompt}\n\n{JSON_SCHEMA_PROMPT}"
+        system_prompt = f"{system_prompt}\n\n{schema_prompt}"
     else:
-        system_prompt = JSON_SCHEMA_PROMPT
+        system_prompt = schema_prompt
 
     # 7. User memory
     memory_block = _fetch_user_memory(cursor)

@@ -326,4 +326,34 @@ def test_apply_plan_before_execution_enabled(mocker):
     assert result.startswith("[Plan Before Execution]")
     assert "Review the list of tools" in result
     assert "step-by-step plan" in result
+    assert "execution_plan" in result
+    assert "llm_response" in result
     assert result.endswith("please do this")
+
+
+def test_build_system_prompt_schema_plan_enabled(mocker):
+    mocker.patch('agent.prompt_builder.get_config', return_value="true")
+    mocker.patch('agent.prompt_builder.get_ide_config', return_value=None)
+    mocker.patch('agent.prompt_builder._fetch_user_memory', return_value="")
+
+    from agent.prompt_builder import JSON_SCHEMA_PROMPT, JSON_SCHEMA_PROMPT_WITH_PLAN, build_system_prompt
+
+    cursor = mocker.MagicMock()
+    out = build_system_prompt(cursor=cursor)
+    assert JSON_SCHEMA_PROMPT not in out
+    assert "execution_plan" in out
+    assert "llm_response" in out
+
+
+def test_build_system_prompt_schema_plan_disabled(mocker):
+    mocker.patch('agent.prompt_builder.get_config', return_value="false")
+    mocker.patch('agent.prompt_builder.get_ide_config', return_value=None)
+    mocker.patch('agent.prompt_builder._fetch_user_memory', return_value="")
+
+    from agent.prompt_builder import JSON_SCHEMA_PROMPT, JSON_SCHEMA_PROMPT_WITH_PLAN, build_system_prompt
+
+    cursor = mocker.MagicMock()
+    out = build_system_prompt(cursor=cursor)
+    assert JSON_SCHEMA_PROMPT in out
+    assert JSON_SCHEMA_PROMPT_WITH_PLAN not in out
+    assert "execution_plan" not in out

@@ -383,7 +383,8 @@ PLAN_BEFORE_EXECUTION_PROMPT = """[Plan Before Execution]
 Before fulfilling the request below, you MUST first:
 1. Review the list of tools available to you in this conversation.
 2. Present a concise step-by-step plan describing which tools you will use, in what order, and why each step is necessary to fully deliver the result requested by the user.
-3. Then execute the plan using the tools, step by step, and provide the final result requested.
+3. Put that plan in the "execution_plan" field of your JSON output (it is internal and not shown to the user unless configured).
+4. Then execute the plan using the tools, step by step, and put ONLY the final result in the "llm_response" field of your JSON output.
 
 The user's request follows below:"""
 

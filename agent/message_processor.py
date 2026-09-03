@@ -276,7 +276,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             temperature=worker.get('temperature') if worker else None,
         )
 
-        mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete)
+        mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results)
 
     except Exception as e:
         error_str = str(e)
@@ -400,7 +400,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             show_tools_results=True,
         )
 
-        mock_response = execute_autonomous_loop(history, config_kwargs, apply_plan_before_execution(content), models_to_try, cursor, session_id, message_in_id, is_ide=True)
+        mock_response = execute_autonomous_loop(history, config_kwargs, apply_plan_before_execution(content), models_to_try, cursor, session_id, message_in_id, is_ide=True, show_plan_in_chat=True)
 
     except Exception as e:
         mock_response = f"Error calling LLM API: {str(e)}"

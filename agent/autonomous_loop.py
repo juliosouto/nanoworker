@@ -143,7 +143,7 @@ def _parse_json_response(raw_response):
     return None
 
 
-def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None):
+def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None, show_plan_in_chat=True):
     """
     Executes the autonomous reflection loop that re-invokes the LLM
     when the response indicates the user's request is not yet satisfied.
@@ -158,6 +158,9 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
         message_in_id (str): Input message ID.
         is_ide (bool): Whether this is an IDE message.
         on_complete (callable, optional): Callback for intermediate feedback.
+        show_plan_in_chat (bool): Whether the "execution_plan" field from the model's
+            JSON output should be surfaced to the user (as a separate feedback message).
+            When False, the plan is discarded silently and never reaches the user.
 
     Returns:
         str: The final response text.
@@ -196,6 +199,23 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
             is_satisfied = _coerce_bool(parsed_json.get("is_the_user_request_completely_satisfied"))
             critical_system_failure = _coerce_bool(parsed_json.get("critical_system_failure", False))
             user_prompt_val = parsed_json.get("user_prompt", "")
+
+            # Surface the plan as its own intermediate message, mirroring the
+            # existing feedback pattern (e.g. "⚙️ Executed tools: ..."). The plan
+            # lives in its own JSON field, so it never contaminates llm_response.
+            plan_val = parsed_json.get("execution_plan")
+            if plan_val and isinstance(plan_val, str) and plan_val.strip():
+                plan_msg = f"📋 Execution Plan:\n{plan_val.strip()}"
+                if show_plan_in_chat:
+                    try:
+                        insert_feedback(cursor, table, session_id, message_in_id, plan_msg)
+                    except Exception:
+                        pass
+                    if on_complete:
+                        try:
+                            on_complete(plan_msg)
+                        except Exception as e:
+                            print(f"Failed to call on_complete: {e}")
 
             if critical_system_failure is True:
                 break

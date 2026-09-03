@@ -234,3 +234,70 @@ def test_loop_respects_limit_no_reflection():
     )
     assert final == "b"
     assert len(calls) == 2
+
+
+def _run_loop_with_plan(response_raw, show_plan_in_chat):
+    """Drive execute_autonomous_loop with a single canned LLM response, capturing
+    feedback inserts and on_complete calls. Returns (final, feedback_calls, on_complete_msgs)."""
+    import agent.autonomous_loop as mod
+    from unittest.mock import MagicMock
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = None
+    on_complete_msgs = []
+
+    def fake_invoke(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=None):
+        return response_raw
+
+    original_invoke = mod.invoke_llm_with_fallback
+    original_get_config = mod.get_config
+    original_insert_feedback = mod.insert_feedback
+    feedback_calls = []
+    mod.invoke_llm_with_fallback = fake_invoke
+    mod.insert_feedback = lambda *a, **k: feedback_calls.append(a)
+    mod.get_config = lambda key, default=None: str(1) if key == "AUTONOMOUS_MODE" else original_get_config(key, default)
+    try:
+        final = mod.execute_autonomous_loop(
+            [], {"show_tools_results": True}, ["user request"], ["model-a"],
+            mock_cursor, "sess-x", "msg-in-1", is_ide=False,
+            on_complete=lambda m: on_complete_msgs.append(m),
+            show_plan_in_chat=show_plan_in_chat,
+        )
+    finally:
+        mod.invoke_llm_with_fallback = original_invoke
+        mod.get_config = original_get_config
+        mod.insert_feedback = original_insert_feedback
+
+    return final, feedback_calls, on_complete_msgs
+
+
+def test_loop_show_plan_in_chat_true():
+    final, feedback_calls, on_complete_msgs = _run_loop_with_plan(
+        '{"llm_response": "final answer", "execution_plan": "step1; step2", "is_the_user_request_completely_satisfied": true}',
+        show_plan_in_chat=True,
+    )
+    assert final == "final answer"
+    # Plan surfaced as separate feedback (DB insert + on_complete stream).
+    assert any("📋 Execution Plan" in str(f[4]) for f in feedback_calls)
+    assert any("📋 Execution Plan" in m for m in on_complete_msgs)
+
+
+def test_loop_show_plan_in_chat_false_discards():
+    final, feedback_calls, on_complete_msgs = _run_loop_with_plan(
+        '{"llm_response": "final answer", "execution_plan": "secret plan", "is_the_user_request_completely_satisfied": true}',
+        show_plan_in_chat=False,
+    )
+    # Final response stays clean; plan never persisted nor streamed.
+    assert final == "final answer"
+    assert not any("Execution Plan" in str(f) for f in feedback_calls)
+    assert on_complete_msgs == []
+
+
+def test_loop_no_plan_key_unchanged():
+    final, feedback_calls, on_complete_msgs = _run_loop_with_plan(
+        '{"llm_response": "plain", "is_the_user_request_completely_satisfied": true}',
+        show_plan_in_chat=True,
+    )
+    assert final == "plain"
+    assert not any("Execution Plan" in str(f) for f in feedback_calls)
+    assert on_complete_msgs == []
