@@ -579,3 +579,64 @@ def test_send_whatsapp_file_200_without_message_id_reports_failure(wa_setup, moc
     res = wa_module.send_whatsapp_file("12036312345-123", "/fake/photo.jpg")
     assert "NOT delivered" in res
     assert "successfully" not in res
+
+
+def test_format_jid_uses_session_lid(wa_setup, mocker):
+    """Bare private numbers resolve to the canonical session JID (e.g. '@lid')
+    instead of blindly guessing '@s.whatsapp.net'."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {"channel_id": "wa_web:5522345678901@lid"}
+    mocker.patch('database.get_db', return_value=mock_conn)
+    assert wa_module._format_jid("5522345678901") == "5522345678901@lid"
+
+
+def test_format_jid_bare_fallback_pn(wa_setup, mocker):
+    """Without a matching session, a bare private number falls back to @s.whatsapp.net."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = None
+    mocker.patch('database.get_db', return_value=mock_conn)
+    assert wa_module._format_jid("5522345678901") == "5522345678901@s.whatsapp.net"
+
+
+def test_format_jid_preserves_explicit_lid(wa_setup):
+    """An explicit '@lid' suffix is preserved as-is (never rewritten to PN)."""
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("5522345678901@lid") == "5522345678901@lid"
+
+
+def test_is_allowed_to_group_matches_member_by_alt_lid(wa_setup, mocker):
+    """A group member whose sender is a LID (phone number only in sender_id_alt,
+    the LID<->PN mapping) is matched against Allowed To by their phone number."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "120363012345678@lid", "sender_id_alt": "5511999999999"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is True
+
+
+def test_is_allowed_to_private_lid_resolves_member(wa_setup, mocker):
+    """A private chat addressed by LID resolves its requesting member through the
+    sender_id_alt (phone number) when the PN is on the Allowed To list."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5522999999999@lid", "sender_id_alt": "5511999999999"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:5522999999999@lid") is True

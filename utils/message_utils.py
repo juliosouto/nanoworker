@@ -397,7 +397,7 @@ def check_wa_permissions(data, content):
     """
     import logging
     channel_base = data['channel_id'].replace('wa_web:', '')
-    is_group = '@g.us' in data.get('remote_jid', '') or '@g.us' in data['channel_id']
+    is_group = (data.get('remote_jid') or '').endswith('@g.us') or data['channel_id'].endswith('@g.us')
     sender_id = data.get('sender_id')
     sender_id_alt = data.get('sender_id_alt')
 

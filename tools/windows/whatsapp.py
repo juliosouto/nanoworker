@@ -30,6 +30,41 @@ def _jid_number(phone_number) -> str:
 
 
 
+def _session_jid_for_number(number):
+    """Look up the canonical JID stored for a bare number in the most recent
+    session ('...@lid', '...@s.whatsapp.net' or group '@g.us'). Preferring the
+    session JID avoids guessing '@s.whatsapp.net' for contacts that are only
+    addressable via their LID."""
+    strip = str(number).replace("+", "").replace(" ", "")
+    try:
+        from database import get_db
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT channel_id FROM sessions
+            WHERE channel_id IN (?, ?, ?, ?, ?, ?, ?, ?)
+            ORDER BY rowid DESC LIMIT 1
+            """,
+            (
+                f"wa_web:{strip}@lid", f"whatsapp:{strip}@lid",
+                f"wa_web:{strip}@s.whatsapp.net", f"whatsapp:{strip}@s.whatsapp.net",
+                f"wa_web:{strip}@g.us", f"whatsapp:{strip}@g.us",
+                f"wa_web:{strip}", f"whatsapp:{strip}",
+            ),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            value = dict(row).get("channel_id")
+            if value and ":" in value:
+                value = value.split(":", 1)[1]
+            return value
+    except Exception:
+        pass
+    return None
+
+
 def _format_jid(phone_number):
     """
     Converts a phone number / channel id into a full WhatsApp JID.
@@ -51,6 +86,11 @@ def _format_jid(phone_number):
     parts = jid.split("-")
     if jid.startswith("120363") or (len(parts) == 2 and parts[1].isdigit() and len(parts[1]) >= 8):
         return jid.replace("+", "").replace(" ", "") + "@g.us"
+    # Prefer the canonical JID stored for this number in an existing session
+    # (e.g. '...@lid' for LID-mode private chats) before guessing '@s.whatsapp.net'.
+    session_jid = _session_jid_for_number(jid)
+    if session_jid:
+        return session_jid
     return jid.replace("+", "").replace(" ", "").replace("-", "") + "@s.whatsapp.net"
 
 
@@ -136,25 +176,39 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
         # THAT member against the allow-list. messages_in has no channel_id column, so
         # we must go through sessions.channel_id.
         try:
-            candidates = [f"wa_web:{clean_target}", f"whatsapp:{clean_target}"]
-            placeholders = ",".join("?" for _ in candidates)
+            # Sessions are stored with the full JID suffix ('@g.us', '@lid',
+            # '@s.whatsapp.net'), plus the legacy suffix-less form for sessions created
+            # before JIDs carried a suffix. Match all of them so a bare target still
+            # resolves to its canonical chat.
+            candidate_channels = [
+                f"wa_web:{clean_target}@g.us", f"whatsapp:{clean_target}@g.us",
+                f"wa_web:{clean_target}@lid", f"whatsapp:{clean_target}@lid",
+                f"wa_web:{clean_target}@s.whatsapp.net", f"whatsapp:{clean_target}@s.whatsapp.net",
+                f"wa_web:{clean_target}", f"whatsapp:{clean_target}",
+            ]
+            placeholders = ",".join("?" for _ in candidate_channels)
             cursor.execute(
                 f"""
-                SELECT m.sender_id
+                SELECT m.sender_id AS sender_id, m.sender_id_alt AS sender_id_alt
                 FROM messages_in m
                 JOIN sessions s ON s.id = m.session_id
                 WHERE s.channel_id IN ({placeholders})
-                  AND m.sender_id IS NOT NULL
+                  AND (m.sender_id IS NOT NULL OR m.sender_id_alt IS NOT NULL)
                 ORDER BY m.id DESC
                 LIMIT 1
                 """,
-                candidates,
+                candidate_channels,
             )
             row = cursor.fetchone()
-            if row and row['sender_id']:
-                sender_id_clean = str(row['sender_id']).strip().replace("+", "").replace(" ", "").split(':')[0]
-                if sender_id_clean in sanitized_allowed_list:
-                    return True
+            if row:
+                row_dict = dict(row)
+                # Check both the primary sender and the alt id (LID<->PN mapping), so a
+                # member listed by their PN is still recognized when they arrived via LID.
+                for candidate in (row_dict.get('sender_id'), row_dict.get('sender_id_alt')):
+                    if candidate:
+                        candidate_clean = _jid_number(candidate)
+                        if candidate_clean in sanitized_allowed_list:
+                            return True
         except Exception as e:
             logger.error(f"Error resolving LID to sender_id: {e}")
 

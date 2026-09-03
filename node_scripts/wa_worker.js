@@ -100,7 +100,10 @@ function extractTextContent(msgContent) {
 
 function isGroupChat(remoteJid) {
     if (!remoteJid) return false;
-    return remoteJid.includes('-') || remoteJid.startsWith('120363');
+    // Canonical group JIDs always carry the '@g.us' suffix. Keep this check
+    // suffix-based (instead of guessing from the numeric format) so groups are
+    // recognized regardless of the exact numeric prefix WhatsApp assigns.
+    return remoteJid.endsWith('@g.us');
 }
 
 function isNoteToSelf(remoteJid, ownJid, ownLid) {

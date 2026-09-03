@@ -34,7 +34,10 @@ def _detect_wa_channel_type(channel_id: str):
     is_wa_private = False
     if channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):
         clean_channel = channel_id.replace('wa_web:', '').replace('whatsapp:', '')
-        if '-' in clean_channel or clean_channel.startswith('120363'):
+        # Canonical group JIDs carry the '@g.us' suffix. Keep a legacy best-effort
+        # guess for channels stored before JIDs had a suffix (e.g. '120363...' without
+        # '@g.us'), but always prefer the exact suffix match.
+        if clean_channel.endswith('@g.us') or '-' in clean_channel or clean_channel.startswith('120363'):
             is_wa_group = True
         else:
             is_wa_private = True

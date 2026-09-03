@@ -13,6 +13,136 @@ from agent.llm_router import invoke_llm_with_fallback
 from database import get_config
 
 
+def _coerce_bool(value):
+    """Coerce a JSON boolean that may arrive as a raw bool, a string ("true"/"false"),
+    or an int (0/1) into a real Python bool. None is preserved as None so the
+    existing nullable semantics of the reflection fields stay unchanged."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes"):
+            return True
+        if lowered in ("false", "0", "no"):
+            return False
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    return value
+
+
+def _extract_balanced_json_blocks(text):
+    """Scan ``text`` and return every top-level JSON object literal ``{...}`` that
+    is fully balanced. Strings are skipped (honoring backslash escapes), so braces
+    inside string values ("use {braces}") never break the object balance. Blocks
+    are returned in order of appearance."""
+    blocks = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                elif text[i] == '"':
+                    i += 1
+                    break
+                else:
+                    i += 1
+            continue
+        if ch == "{":
+            start = i
+            depth = 1
+            i += 1
+            closed = False
+            while i < n:
+                c = text[i]
+                if c == '"':
+                    i += 1
+                    while i < n:
+                        if text[i] == "\\":
+                            i += 2
+                        elif text[i] == '"':
+                            i += 1
+                            break
+                        else:
+                            i += 1
+                    continue
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        blocks.append(text[start:i + 1])
+                        closed = True
+                        i += 1
+                        break
+                i += 1
+            if not closed:
+                break  # unterminated block -> stop scanning
+            continue
+        i += 1
+    return blocks
+
+
+def _parse_json_response(raw_response):
+    """Attempt to parse a model response into a dict, trying progressively more
+    lenient extraction strategies.
+
+    1. The whole (fence-stripped) text as JSON.
+    2. The greedy regex fallback (``{...}``) for backward compatibility.
+    3. A balanced-brace scanner over the raw text; candidate blocks are tried from
+       last to first (the final answer usually appears last).
+
+    The first parseable dict that contains ``llm_response`` is preferred; otherwise
+    the first parseable dict (if any) is returned. Returns None if nothing parses.
+    """
+    if not raw_response:
+        return None
+
+    raw_text = raw_response.strip()
+
+    # Strip markdown fences regardless of language tag / surrounding prose.
+    cleaned = raw_text
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+    candidates = []
+
+    # Fast path: the entire (fence-cleaned) response is valid JSON.
+    if cleaned:
+        try:
+            candidates.append(json.loads(cleaned))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Backward-compatible greedy regex fallback.
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+    if match:
+        try:
+            candidates.append(json.loads(match.group(0)))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Balanced-brace scanner; try from the last block to the first.
+    for block in reversed(_extract_balanced_json_blocks(raw_text)):
+        try:
+            candidates.append(json.loads(block))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    for obj in candidates:
+        if isinstance(obj, dict) and "llm_response" in obj:
+            return obj
+    for obj in candidates:
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
 def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None):
     """
     Executes the autonomous reflection loop that re-invokes the LLM
@@ -59,31 +189,12 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
 
         mock_response_raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide, on_complete=on_complete)
 
-        parsed_json = None
-        raw_text = mock_response_raw.strip()
-
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:]
-        if raw_text.startswith("```"):
-            raw_text = raw_text[3:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-        raw_text = raw_text.strip()
-
-        try:
-            parsed_json = json.loads(raw_text)
-        except json.JSONDecodeError:
-            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-            if match:
-                try:
-                    parsed_json = json.loads(match.group(0))
-                except:
-                    pass
+        parsed_json = _parse_json_response(mock_response_raw)
 
         if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and ("is_the_user_request_completely_satisfied" in parsed_json or "critical_system_failure" in parsed_json):
             final_response = parsed_json["llm_response"]
-            is_satisfied = parsed_json.get("is_the_user_request_completely_satisfied")
-            critical_system_failure = parsed_json.get("critical_system_failure", False)
+            is_satisfied = _coerce_bool(parsed_json.get("is_the_user_request_completely_satisfied"))
+            critical_system_failure = _coerce_bool(parsed_json.get("critical_system_failure", False))
             user_prompt_val = parsed_json.get("user_prompt", "")
 
             if critical_system_failure is True:

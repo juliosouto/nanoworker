@@ -806,16 +806,6 @@ def init_db():
         # Delete old key from app_config
         cursor.execute('DELETE FROM app_config WHERE key = ?', (key,))
 
-    # Seed the composite image tool so it is exposed in groups/direct chats out of
-    # the box (its underlying send_whatsapp_file already is). Idempotent.
-    for seed_name in ('find_and_send_image',):
-        cursor.execute('SELECT COUNT(*) FROM tools_config WHERE tool_name = ?', (seed_name,))
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('''
-                INSERT INTO tools_config (tool_name, enabled, allow_others_from_direct_msgs, allow_others_from_group_msgs)
-                VALUES (?, 1, 1, 1)
-            ''', (seed_name,))
-
     conn.commit()
     conn.close()
 
