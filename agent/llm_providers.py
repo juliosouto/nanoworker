@@ -110,6 +110,11 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                 if "503" in error_str:
                     feedback = f"⚠️ 503 Error on attempt {attempt + 1}/{max_retries}. Retrying..."
                     insert_feedback(cursor, table, session_id, message_in_id, feedback)
+                    if on_complete:
+                        try:
+                            on_complete(feedback)
+                        except Exception:
+                            pass
                     time.sleep(2)
                     continue
                 elif _is_minute_quota_exceeded(error_str, e):
@@ -120,6 +125,11 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                     wait_seconds = _wait_seconds_for_quota(error_str)
                     feedback = f"⏳ Quota exceeded (429) on attempt {attempt + 1}/{max_retries}. Waiting {wait_seconds:.0f}s until the next minute to continue..."
                     insert_feedback(cursor, table, session_id, message_in_id, feedback)
+                    if on_complete:
+                        try:
+                            on_complete(feedback)
+                        except Exception:
+                            pass
                     time.sleep(wait_seconds)
                     continue
                 elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:

@@ -24,6 +24,27 @@ from utils.session import current_session_id
 logger = logging.getLogger(__name__)
 
 
+def _friendly_llm_error(error_str: str) -> str:
+    """Returns a short, human-friendly message for LLM API failures caused by
+    per-minute rate limits / quota exhaustion (HTTP 429, RESOURCE_EXHAUSTED),
+    instead of leaking the raw API error payload to the user. Any other error
+    keeps the previous generic message unchanged."""
+    lowered = error_str.lower()
+    is_rate_limit = ("429" in error_str or "resource_exhausted" in lowered) and (
+        "quota" in lowered
+        or "rate limit" in lowered
+        or "rate-limit" in lowered
+        or "retry in" in lowered
+    )
+    if is_rate_limit:
+        return (
+            "⏳ The AI service temporarily exceeded its usage quota (429). "
+            "I retried automatically several times but it is still rate-limited. "
+            "Please resend your message in a few minutes."
+        )
+    return f"Error calling LLM API: {error_str}"
+
+
 def _detect_wa_channel_type(channel_id: str):
     """
     Determines if a channel is a WhatsApp group or private chat.
@@ -288,7 +309,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 pass
             mock_response = "⚠️ A permission error occurred with old history files (possible API Key change or expired file). The file cache for this session was cleared automatically to resolve the issue. Please resend your message to proceed!"
         else:
-            mock_response = f"Error calling LLM API: {error_str}"
+            mock_response = _friendly_llm_error(error_str)
 
     # Write to messages_out safely
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
@@ -403,7 +424,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         mock_response = execute_autonomous_loop(history, config_kwargs, apply_plan_before_execution(content), models_to_try, cursor, session_id, message_in_id, is_ide=True, show_plan_in_chat=True)
 
     except Exception as e:
-        mock_response = f"Error calling LLM API: {str(e)}"
+        mock_response = _friendly_llm_error(str(e))
 
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
     cursor.execute('''

@@ -94,6 +94,79 @@ class TestLoopErrorFeedback(unittest.TestCase):
         self.assertIn("query", tool_content)
 
 
+class TestRateLimitRetry(unittest.TestCase):
+    """429 rate-limit / quota errors are retried with real-time feedback before
+    propagating to the model fallback chain."""
+
+    def _final_answer_response(self):
+        msg = MagicMock()
+        msg.content = "final answer"
+        msg.tool_calls = None
+        c = MagicMock()
+        c.choices = [MagicMock(message=msg)]
+        return c
+
+    @patch("time.sleep", return_value=None)
+    def test_429_retries_then_succeeds(self, mock_sleep):
+        mock_client = MagicMock()
+        calls = {"n": 0}
+
+        def _create(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise Exception("429 RESOURCE_EXHAUSTED. Quota exceeded. Please retry in 5s.")
+            return self._final_answer_response()
+
+        mock_client.chat.completions.create.side_effect = _create
+        on_complete = MagicMock()
+
+        with patch("agent.openai_tools.get_config", side_effect=_mock_config):
+            result = agent_runner.execute_openai_compatible_llm(
+                mock_client, "gpt-4o", [], {}, "hello",
+                MagicMock(), "session-1", "msg-1", "messages_out",
+                on_complete=on_complete,
+            )
+
+        self.assertEqual(result, "final answer")
+        self.assertEqual(mock_client.chat.completions.create.call_count, 2)
+        mock_sleep.assert_called_once()
+        feedbacks = [c[0][0] for c in on_complete.call_args_list]
+        self.assertTrue(any("Rate limit (429)" in f for f in feedbacks))
+
+    @patch("time.sleep", return_value=None)
+    def test_429_persistent_raises_after_all_retries(self, mock_sleep):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception(
+            "429 RESOURCE_EXHAUSTED. rate limit exceeded"
+        )
+
+        with self.assertRaises(Exception) as ctx, \
+             patch("agent.openai_tools.get_config", side_effect=_mock_config):
+            agent_runner.execute_openai_compatible_llm(
+                mock_client, "gpt-4o", [], {}, "hello",
+                MagicMock(), "session-1", "msg-1", "messages_out",
+            )
+
+        self.assertIn("429", str(ctx.exception))
+        # 5 attempts -> only the first 4 wait (last attempt re-raises)
+        self.assertEqual(mock_sleep.call_count, 4)
+
+    def test_non_rate_limit_error_raises_immediately(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception("400 Bad Request")
+
+        with self.assertRaises(Exception) as ctx, \
+             patch("agent.openai_tools.get_config", side_effect=_mock_config), \
+             patch("time.sleep", return_value=None) as mock_sleep:
+            agent_runner.execute_openai_compatible_llm(
+                mock_client, "gpt-4o", [], {}, "hello",
+                MagicMock(), "session-1", "msg-1", "messages_out",
+            )
+
+        self.assertIn("400 Bad Request", str(ctx.exception))
+        mock_sleep.assert_not_called()
+
+
 class TestToolSchemaEnum(unittest.TestCase):
     def test_enum_extracted_from_must_be_one_of(self):
         def enum_tool(category: str) -> str:

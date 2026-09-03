@@ -169,6 +169,33 @@ def test_call_gemini_llm_429_waits_until_next_minute_and_resumes(mock_client_cls
 
 @patch('agent.llm_providers.get_config')
 @patch('agent.llm_providers.genai.Client')
+def test_call_gemini_llm_429_sends_realtime_feedback(mock_client_cls, mock_get_config, mock_cursor):
+    mock_get_config.side_effect = lambda key, default=None: default
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+
+    err_429 = "429 RESOURCE_EXHAUSTED. Quota exceeded GenerateContentInputTokensPerModelPerMinute-FreeTier"
+
+    mock_response = MagicMock()
+    mock_response.function_calls = []
+    mock_response.text = "Success after quota wait"
+    mock_chat.send_message.side_effect = [Exception(err_429), mock_response]
+
+    on_complete = MagicMock()
+
+    with patch('time.sleep', return_value=None), \
+         patch('time.time', return_value=30.0):
+        res = call_gemini_llm("model", [], {}, "Hello", mock_cursor, "sess", "msg", "tbl",
+                              api_key="test_key", on_complete=on_complete)
+
+    assert res == "Success after quota wait"
+    feedbacks = [c[0][0] for c in on_complete.call_args_list]
+    assert any("Quota exceeded (429)" in f for f in feedbacks)
+
+@patch('agent.llm_providers.get_config')
+@patch('agent.llm_providers.genai.Client')
 def test_call_gemini_llm_429_mid_tool_loop_resumes_from_failure(mock_client_cls, mock_get_config, mock_cursor):
     mock_get_config.side_effect = lambda key, default=None: default
     mock_client = MagicMock()

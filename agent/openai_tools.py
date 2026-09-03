@@ -11,6 +11,41 @@ import uuid
 from agent.db_feedback import insert_feedback
 from database import get_config
 
+# Number of times a transient 429 rate-limit / quota error is retried before
+# propagating to the model fallback chain (mirrors the Gemini loop's max_retries).
+_RATE_LIMIT_MAX_RETRIES = 5
+# Fallback wait when the provider does not return a "retry in Xs" hint.
+_RATE_LIMIT_DEFAULT_WAIT = 30.0
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """True for HTTP 429 / RESOURCE_EXHAUSTED / generic rate-limit errors that
+    are transient and worth retrying after a short wait."""
+    error_str = str(error)
+    lowered = error_str.lower()
+    code = getattr(error, "code", None)
+    return (
+        ("429" in error_str or code == 429 or "resource_exhausted" in lowered)
+        and (
+            "quota" in lowered
+            or "rate limit" in lowered
+            or "rate-limit" in lowered
+            or "retry in" in lowered
+        )
+    )
+
+
+def _wait_seconds_for_rate_limit(error: Exception) -> float:
+    """Respects the provider's own '"retry in Xs'" hint (e.g. Gemini), otherwise
+    falls back to a fixed 30s wait."""
+    match = re.search(r"retry in\s+([\d.]+)\s*s", str(error), re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return _RATE_LIMIT_DEFAULT_WAIT
+
 
 def convert_to_openai_tool(func) -> dict:
     """
@@ -162,22 +197,44 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             if limit_tokens:
                 call_args["max_completion_tokens"] = limit_tokens
 
-        try:
-            response = client.chat.completions.create(**call_args)
-        except Exception as e:
-            err_msg = str(e).lower()
-            if "max_tokens" in err_msg or "unsupported" in err_msg or "parameter" in err_msg:
-                fallback_args = {
-                    "model": model_name,
-                    "messages": messages,
-                }
-                if openai_tools:
-                    fallback_args["tools"] = openai_tools
-                if limit_tokens:
-                    fallback_args["max_completion_tokens"] = limit_tokens
-                response = client.chat.completions.create(**fallback_args)
-            else:
-                raise e
+        # Call the API, retrying transient 429 rate-limit / quota errors with
+        # real-time feedback, before giving up and letting the model fallback
+        # chain take over.
+        for retry_attempt in range(_RATE_LIMIT_MAX_RETRIES):
+            try:
+                response = client.chat.completions.create(**call_args)
+                break
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "max_tokens" in err_msg or "unsupported" in err_msg or "parameter" in err_msg:
+                    # Older / compatible APIs reject `max_tokens`; retry with the
+                    # `max_completion_tokens` alias used by reasoning models.
+                    fallback_args = {
+                        "model": model_name,
+                        "messages": messages,
+                    }
+                    if openai_tools:
+                        fallback_args["tools"] = openai_tools
+                    if limit_tokens:
+                        fallback_args["max_completion_tokens"] = limit_tokens
+                    response = client.chat.completions.create(**fallback_args)
+                    break
+                if not _is_rate_limit_error(e):
+                    raise e
+                if retry_attempt >= _RATE_LIMIT_MAX_RETRIES - 1:
+                    raise e  # retries exhausted: propagate for model fallback
+                wait_seconds = _wait_seconds_for_rate_limit(e)
+                retry_feedback = (
+                    f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_RATE_LIMIT_MAX_RETRIES}. "
+                    f"Waiting {wait_seconds:.0f}s to retry..."
+                )
+                insert_feedback(cursor, table, session_id, message_in_id, retry_feedback)
+                if on_complete:
+                    try:
+                        on_complete(retry_feedback)
+                    except Exception:
+                        pass
+                time.sleep(wait_seconds)
 
         if not response.choices:
             iteration += 1
