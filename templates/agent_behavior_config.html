@@ -60,6 +60,24 @@
                     </label>
                 </div>
 
+                <div style="margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Plan Before Execution</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">When enabled, the user's prompt is wrapped with instructions for the agent to review the available tools and outline a step-by-step plan before executing.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">
+                        <input type="checkbox" id="planBeforeExecutionToggle" {% if plan_before_execution %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="planBeforeExecutionKnob"></span>
+                    </label>
+                </div>
+
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div style="flex: 1; margin-right: 16px;">
                         <label

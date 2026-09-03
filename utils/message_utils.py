@@ -378,6 +378,35 @@ def process_tools_for_llm(tools):
     return processed
 
 
+# Instruction prefix prepended to the user's prompt when PLAN_BEFORE_EXECUTION is enabled.
+PLAN_BEFORE_EXECUTION_PROMPT = """[Plan Before Execution]
+Before fulfilling the request below, you MUST first:
+1. Review the list of tools available to you in this conversation.
+2. Present a concise step-by-step plan describing which tools you will use, in what order, and why each step is necessary to fully deliver the result requested by the user.
+3. Then execute the plan using the tools, step by step, and provide the final result requested.
+
+The user's request follows below:"""
+
+
+def apply_plan_before_execution(content):
+    """
+    When the PLAN_BEFORE_EXECUTION config is enabled, wraps the user's content
+    with instructions asking the LLM to review the available tools and outline
+    a step-by-step plan before executing. Otherwise (or for empty content),
+    returns the content unmodified.
+    """
+    if not content:
+        return content
+
+    from database import get_config
+    enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
+    if not enabled:
+        return content
+
+    return f"{PLAN_BEFORE_EXECUTION_PROMPT}\n\n{content}"
+
+
+
 def resolve_target_jid(data):
     """
     Extract the target JID for replies from the webhook payload.

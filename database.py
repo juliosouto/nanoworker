@@ -444,6 +444,12 @@ def init_db():
     if not row:
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('USE_RECIPES_AS_TOOLS', 'true')")
 
+    # Default Plan Before Execution Config
+    cursor.execute("SELECT value FROM app_config WHERE key = 'PLAN_BEFORE_EXECUTION'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('PLAN_BEFORE_EXECUTION', 'false')")
+
     # Default Autonomous Mode Config
     cursor.execute("SELECT value FROM app_config WHERE key = 'AUTONOMOUS_MODE'")
     row = cursor.fetchone()

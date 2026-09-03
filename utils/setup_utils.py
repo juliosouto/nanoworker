@@ -34,7 +34,7 @@ def setup_app_config():
     cursor = conn.cursor()
     try:
         keys_to_clear = [
-            'agent_name', 'USE_RECIPES_AS_TOOLS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
+            'agent_name', 'USE_RECIPES_AS_TOOLS', 'PLAN_BEFORE_EXECUTION', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
             'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL',
             'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR',
             'MESSAGE_SLICE_SIZE_TOKENS'
@@ -49,6 +49,7 @@ def setup_app_config():
             ('agent_name', 'Nano'),
             ('REQUIRE_AT_PREFIX', 'false'),
             ('USE_RECIPES_AS_TOOLS', 'false'),
+            ('PLAN_BEFORE_EXECUTION', 'false'),
             ('AUTONOMOUS_MODE', '1'),
             ('DEFAULT_LLM_PROVIDER', 'Google'),
             ('DEFAULT_LLM_MODEL', 'gemini-3.1-flash-lite'),

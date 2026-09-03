@@ -12,7 +12,8 @@ from utils.message_utils import (
     format_document_search_results,
     process_tools_for_llm,
     resolve_target_jid,
-    check_wa_permissions
+    check_wa_permissions,
+    apply_plan_before_execution
 )
 
 @pytest.fixture
@@ -304,3 +305,25 @@ def test_process_tools_for_llm_empty_or_false(mocker):
     def my_tool(): pass
     tools = [my_tool]
     assert process_tools_for_llm(tools) == tools
+
+
+def test_apply_plan_before_execution_empty_or_disabled(mocker):
+    # Empty / None content is returned unmodified regardless of the flag.
+    mocker.patch('database.get_config', return_value="true")
+    assert apply_plan_before_execution("") == ""
+    assert apply_plan_before_execution(None) is None
+
+    # Disabled -> content returned unmodified.
+    mocker.patch('database.get_config', return_value="false")
+    content = "hello world"
+    assert apply_plan_before_execution(content) == content
+
+
+def test_apply_plan_before_execution_enabled(mocker):
+    mocker.patch('database.get_config', return_value="true")
+    result = apply_plan_before_execution("please do this")
+
+    assert result.startswith("[Plan Before Execution]")
+    assert "Review the list of tools" in result
+    assert "step-by-step plan" in result
+    assert result.endswith("please do this")

@@ -17,6 +17,7 @@ from utils.message_utils import (
     process_tools_for_llm,
     resolve_worker_from_content,
     clean_mention,
+    apply_plan_before_execution,
 )
 from utils.session import current_session_id
 
@@ -226,6 +227,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
+    content = apply_plan_before_execution(content)
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part
@@ -398,7 +400,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             show_tools_results=True,
         )
 
-        mock_response = execute_autonomous_loop(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
+        mock_response = execute_autonomous_loop(history, config_kwargs, apply_plan_before_execution(content), models_to_try, cursor, session_id, message_in_id, is_ide=True)
 
     except Exception as e:
         mock_response = f"Error calling LLM API: {str(e)}"

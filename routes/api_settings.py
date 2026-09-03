@@ -115,7 +115,8 @@ def save_settings():
         'perm_screenshot': 'PERM_SCREENSHOT',
         'perm_web_search': 'PERM_WEB_SEARCH',
         'perm_tool_creator': 'PERM_TOOL_CREATOR',
-        'tool_creator_double_check': 'TOOL_CREATOR_DOUBLE_CHECK'
+        'tool_creator_double_check': 'TOOL_CREATOR_DOUBLE_CHECK',
+        'plan_before_execution': 'PLAN_BEFORE_EXECUTION'
     }
     
     for json_key, db_key in bool_mapping.items():
