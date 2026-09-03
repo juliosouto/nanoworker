@@ -106,8 +106,8 @@ class TestRateLimitRetry(unittest.TestCase):
         c.choices = [MagicMock(message=msg)]
         return c
 
-    @patch("time.sleep", return_value=None)
-    def test_429_retries_then_succeeds(self, mock_sleep):
+    @patch("agent.openai_tools.sleep_interruptible", return_value=False)
+    def test_429_retries_then_succeeds(self, mock_sleep_interruptible):
         mock_client = MagicMock()
         calls = {"n": 0}
 
@@ -129,12 +129,13 @@ class TestRateLimitRetry(unittest.TestCase):
 
         self.assertEqual(result, "final answer")
         self.assertEqual(mock_client.chat.completions.create.call_count, 2)
-        mock_sleep.assert_called_once()
+        # Wait respects the provider's "retry in 5s" hint.
+        mock_sleep_interruptible.assert_called_once_with(5.0)
         feedbacks = [c[0][0] for c in on_complete.call_args_list]
         self.assertTrue(any("Rate limit (429)" in f for f in feedbacks))
 
-    @patch("time.sleep", return_value=None)
-    def test_429_persistent_raises_after_all_retries(self, mock_sleep):
+    @patch("agent.openai_tools.sleep_interruptible", return_value=False)
+    def test_429_persistent_raises_after_all_retries(self, mock_sleep_interruptible):
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception(
             "429 RESOURCE_EXHAUSTED. rate limit exceeded"
@@ -149,7 +150,7 @@ class TestRateLimitRetry(unittest.TestCase):
 
         self.assertIn("429", str(ctx.exception))
         # 5 attempts -> only the first 4 wait (last attempt re-raises)
-        self.assertEqual(mock_sleep.call_count, 4)
+        self.assertEqual(mock_sleep_interruptible.call_count, 4)
 
     def test_non_rate_limit_error_raises_immediately(self):
         mock_client = MagicMock()

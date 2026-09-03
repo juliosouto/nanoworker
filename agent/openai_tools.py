@@ -5,10 +5,10 @@ for OpenAI-compatible LLM providers (OpenAI, Groq, Qwen).
 import inspect
 import json
 import re
-import time
 import uuid
 
 from agent.db_feedback import insert_feedback
+from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
 # Number of times a transient 429 rate-limit / quota error is retried before
@@ -234,7 +234,8 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                         on_complete(retry_feedback)
                     except Exception:
                         pass
-                time.sleep(wait_seconds)
+                if sleep_interruptible(wait_seconds):
+                    raise StopRequestedError()
 
         if not response.choices:
             iteration += 1
@@ -242,7 +243,8 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 return "Error: Model returned empty responses after maximum retries."
             insert_feedback(cursor, table, session_id, message_in_id,
                 f"⚠️ Empty response from model (attempt {iteration}/{max_iterations}). Retrying...")
-            time.sleep(2)
+            if sleep_interruptible(2):
+                raise StopRequestedError()
             continue
 
         message = response.choices[0].message

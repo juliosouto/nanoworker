@@ -6,6 +6,7 @@ import logging
 import uuid
 
 from agent.db_feedback import insert_feedback
+from agent.stop_check import StopRequestedError
 import agent.llm_providers as _providers
 
 logger = logging.getLogger(__name__)
@@ -247,6 +248,10 @@ def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models
         try:
             response_text = route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide, on_complete=on_complete)
             return response_text
+        except StopRequestedError:
+            # The user requested /stop while a retry was in flight: abort the
+            # whole fallback chain instead of switching to the next model.
+            raise
         except Exception as e:
             error_str = str(e)
             if i < len(models_to_try) - 1:

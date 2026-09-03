@@ -10,6 +10,7 @@ from google.genai import types
 
 from agent.db_feedback import insert_feedback
 from agent.openai_tools import execute_openai_compatible_llm
+from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
 
@@ -115,7 +116,8 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                             on_complete(feedback)
                         except Exception:
                             pass
-                    time.sleep(2)
+                    if sleep_interruptible(2):
+                        raise StopRequestedError()
                     continue
                 elif _is_minute_quota_exceeded(error_str, e):
                     if attempt >= max_retries - 1:
@@ -130,7 +132,8 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                             on_complete(feedback)
                         except Exception:
                             pass
-                    time.sleep(wait_seconds)
+                    if sleep_interruptible(wait_seconds):
+                        raise StopRequestedError()
                     continue
                 elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
                     raise e

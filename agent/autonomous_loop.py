@@ -10,6 +10,7 @@ from google.genai import types
 
 from agent.db_feedback import insert_feedback
 from agent.llm_router import invoke_llm_with_fallback
+from agent.stop_check import StopRequestedError, reset_stop_check, set_stop_check
 from database import get_config
 
 
@@ -177,79 +178,97 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
     current_send_content = list(initial_content) if isinstance(initial_content, list) else [initial_content]
     final_response = ""
     table = "ide_messages_out" if is_ide else "messages_out"
+    table_in = "ide_messages_in" if is_ide else "messages_in"
 
-    for iteration in range(autonomous_limit):
-        # Check for /stop command
-        table_in = "ide_messages_in" if is_ide else "messages_in"
+    def _stop_requested() -> bool:
+        """True when a newer /stop command has been issued for this message.
+        Polled while retries are sleeping so the wait is interruptible."""
         cursor.execute(f'''
             SELECT id FROM {table_in} 
             WHERE session_id = ? AND LOWER(TRIM(content)) = '/stop' AND rowid > (SELECT rowid FROM {table_in} WHERE id = ?)
         ''', (session_id, message_in_id))
-        stop_msg = cursor.fetchone()
-        if stop_msg:
-            final_response = "🛑 Processamento interrompido pelo usuário (/stop)."
-            break
+        return cursor.fetchone() is not None
 
-        mock_response_raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide, on_complete=on_complete)
+    def _abort_with_stop_message():
+        """Stops the loop cleanly with the /stop confirmation when requested."""
+        nonlocal final_response
+        final_response = "🛑 Processamento interrompido pelo usuário (/stop)."
 
-        parsed_json = _parse_json_response(mock_response_raw)
-
-        if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and ("is_the_user_request_completely_satisfied" in parsed_json or "critical_system_failure" in parsed_json):
-            final_response = parsed_json["llm_response"]
-            is_satisfied = _coerce_bool(parsed_json.get("is_the_user_request_completely_satisfied"))
-            critical_system_failure = _coerce_bool(parsed_json.get("critical_system_failure", False))
-            user_prompt_val = parsed_json.get("user_prompt", "")
-
-            # Surface the plan as its own intermediate message, mirroring the
-            # existing feedback pattern (e.g. "⚙️ Executed tools: ..."). The plan
-            # lives in its own JSON field, so it never contaminates llm_response.
-            plan_val = parsed_json.get("execution_plan")
-            if plan_val and isinstance(plan_val, str) and plan_val.strip():
-                plan_msg = f"📋 Execution Plan:\n{plan_val.strip()}"
-                if show_plan_in_chat:
-                    try:
-                        insert_feedback(cursor, table, session_id, message_in_id, plan_msg)
-                    except Exception:
-                        pass
-                    if on_complete:
-                        try:
-                            on_complete(plan_msg)
-                        except Exception as e:
-                            print(f"Failed to call on_complete: {e}")
-
-            if critical_system_failure is True:
+    token = set_stop_check(_stop_requested)
+    try:
+        for iteration in range(autonomous_limit):
+            # Check for /stop command between LLM calls
+            if _stop_requested():
+                _abort_with_stop_message()
                 break
-            elif is_satisfied is True:
+
+            try:
+                mock_response_raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide, on_complete=on_complete)
+            except StopRequestedError:
+                # /stop triggered while a rate-limit/quota retry was waiting.
+                _abort_with_stop_message()
                 break
-            else:
-                if iteration < autonomous_limit - 1:
-                    feedback_text = f"Your response does not completely answer the user's prompt. Try a different approach or tool.\n{{\n  \"user_prompt\": {json.dumps(user_prompt_val)},\n  \"llm_response\": {json.dumps(final_response)},\n  \"is_the_user_request_completely_satisfied\": null,\n  \"critical_system_failure\": null\n}}\nPlease try again."
 
-                    user_feedback_msg = f"🔄 Agent reflecting (Iteration {iteration + 1}/{autonomous_limit})..."
-                    try:
-                        insert_feedback(cursor, table, session_id, message_in_id, user_feedback_msg)
-                    except:
-                        pass
+            parsed_json = _parse_json_response(mock_response_raw)
 
-                    if on_complete:
+            if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and ("is_the_user_request_completely_satisfied" in parsed_json or "critical_system_failure" in parsed_json):
+                final_response = parsed_json["llm_response"]
+                is_satisfied = _coerce_bool(parsed_json.get("is_the_user_request_completely_satisfied"))
+                critical_system_failure = _coerce_bool(parsed_json.get("critical_system_failure", False))
+                user_prompt_val = parsed_json.get("user_prompt", "")
+
+                # Surface the plan as its own intermediate message, mirroring the
+                # existing feedback pattern (e.g. "⚙️ Executed tools: ..."). The plan
+                # lives in its own JSON field, so it never contaminates llm_response.
+                plan_val = parsed_json.get("execution_plan")
+                if plan_val and isinstance(plan_val, str) and plan_val.strip():
+                    plan_msg = f"📋 Execution Plan:\n{plan_val.strip()}"
+                    if show_plan_in_chat:
                         try:
-                            on_complete(user_feedback_msg)
-                        except Exception as e:
-                            print(f"Failed to call on_complete: {e}")
+                            insert_feedback(cursor, table, session_id, message_in_id, plan_msg)
+                        except Exception:
+                            pass
+                        if on_complete:
+                            try:
+                                on_complete(plan_msg)
+                            except Exception as e:
+                                print(f"Failed to call on_complete: {e}")
 
-                    parts = []
-                    for p in current_send_content:
-                        if isinstance(p, str):
-                            parts.append(types.Part.from_text(text=p))
-                        else:
-                            parts.append(p)
-                    history.append(types.Content(role="user", parts=parts))
-                    history.append(types.Content(role="model", parts=[types.Part.from_text(text=mock_response_raw)]))
-                    current_send_content = [types.Part.from_text(text=feedback_text)]
-                else:
+                if critical_system_failure is True:
                     break
-        else:
-            final_response = mock_response_raw
-            break
+                elif is_satisfied is True:
+                    break
+                else:
+                    if iteration < autonomous_limit - 1:
+                        feedback_text = f"Your response does not completely answer the user's prompt. Try a different approach or tool.\n{{\n  \"user_prompt\": {json.dumps(user_prompt_val)},\n  \"llm_response\": {json.dumps(final_response)},\n  \"is_the_user_request_completely_satisfied\": null,\n  \"critical_system_failure\": null\n}}\nPlease try again."
+
+                        user_feedback_msg = f"🔄 Agent reflecting (Iteration {iteration + 1}/{autonomous_limit})..."
+                        try:
+                            insert_feedback(cursor, table, session_id, message_in_id, user_feedback_msg)
+                        except:
+                            pass
+
+                        if on_complete:
+                            try:
+                                on_complete(user_feedback_msg)
+                            except Exception as e:
+                                print(f"Failed to call on_complete: {e}")
+
+                        parts = []
+                        for p in current_send_content:
+                            if isinstance(p, str):
+                                parts.append(types.Part.from_text(text=p))
+                            else:
+                                parts.append(p)
+                        history.append(types.Content(role="user", parts=parts))
+                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=mock_response_raw)]))
+                        current_send_content = [types.Part.from_text(text=feedback_text)]
+                    else:
+                        break
+            else:
+                final_response = mock_response_raw
+                break
+    finally:
+        reset_stop_check(token)
 
     return final_response

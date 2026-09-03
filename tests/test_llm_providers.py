@@ -158,14 +158,14 @@ def test_call_gemini_llm_429_waits_until_next_minute_and_resumes(mock_client_cls
     mock_response.text = "Success after quota wait"
     mock_chat.send_message.side_effect = [Exception(err_429), mock_response]
 
-    with patch('time.sleep', return_value=None) as mock_sleep, \
+    with patch('agent.llm_providers.sleep_interruptible', return_value=False) as mock_sleep_interruptible, \
          patch('time.time', return_value=42.5):
         res = call_gemini_llm("model", [], {}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key")
 
     assert res == "Success after quota wait"
     assert mock_chat.send_message.call_count == 2
     # 60 - 42.5 + 3 = 20.5s (significantly larger than the 10.14s provider retryDelay)
-    mock_sleep.assert_called_once_with(20.5)
+    mock_sleep_interruptible.assert_called_once_with(20.5)
 
 @patch('agent.llm_providers.get_config')
 @patch('agent.llm_providers.genai.Client')
@@ -245,13 +245,13 @@ def test_call_gemini_llm_429_exhausts_retries_raises(mock_client_cls, mock_get_c
 
     mock_chat.send_message.side_effect = Exception(err_429)
 
-    with patch('time.sleep', return_value=None) as mock_sleep, \
+    with patch('agent.llm_providers.sleep_interruptible', return_value=False) as mock_sleep_interruptible, \
          patch('time.time', return_value=30.0), \
          pytest.raises(Exception, match="RESOURCE_EXHAUSTED"):
         call_gemini_llm("model", [], {}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key")
 
     # 5 attempts, only the first 4 wait (last attempt must re-raise for fallback)
-    assert mock_sleep.call_count == 4
+    assert mock_sleep_interruptible.call_count == 4
 
 @patch('agent.llm_providers.get_config')
 @patch('agent.llm_providers.genai.Client')
