@@ -11,11 +11,45 @@ from agent.db_feedback import insert_feedback
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
-# Number of times a transient 429 rate-limit / quota error is retried before
-# propagating to the model fallback chain (mirrors the Gemini loop's max_retries).
-_RATE_LIMIT_MAX_RETRIES = 5
+# Number of times a transient error (429 rate-limit / quota, or a false 402 from
+# an upstream provider) is retried before propagating to the model fallback chain
+# (mirrors the Gemini loop's max_retries).
+_API_CALL_MAX_RETRIES = 5
 # Fallback wait when the provider does not return a "retry in Xs" hint.
 _RATE_LIMIT_DEFAULT_WAIT = 30.0
+# Wait before retrying a false 402 "insufficient balance" from an upstream
+# provider. OpenRouter re-routes the request to another provider of the same
+# model, so this is much shorter than the 429 per-minute-quota wait.
+_PROVIDER_BALANCE_WAIT = 10.0
+
+
+def _is_provider_balance_error(error: Exception) -> bool:
+    """True for a "false" 402 Payment Required coming from an upstream provider
+    instead of the user's own account balance.
+
+    Example (OpenRouter, a free `:free` model)::
+
+        {'error': {'message': 'Provider returned error', 'code': 402,
+         'metadata': {'raw': '{"error":"Insufficient balance", ...}',
+                      'provider_name': 'GMICloud', 'is_byok': False}}, ...}
+
+    Free OpenRouter models are hosted by third-party providers that occasionally
+    run out of capacity/balance, which produces this transient 402. A retry often
+    succeeds because OpenRouter re-routes to another healthy provider of the same
+    model. A genuine 402 ``"Insufficient credits"`` (the caller's own OpenRouter
+    balance) is NOT retried, since immediate retries cannot fix it.
+    """
+    error_str = str(error)
+    lowered = error_str.lower()
+    code = getattr(error, "code", None)
+    is_payment_required = "402" in error_str or code == 402
+    is_provider_side = (
+        "provider returned error" in lowered
+        or "insufficient balance" in lowered
+        or "provider_name" in lowered
+    )
+    is_own_balance = "insufficient credits" in lowered
+    return is_payment_required and is_provider_side and not is_own_balance
 
 
 def _is_rate_limit_error(error: Exception) -> bool:
@@ -197,10 +231,16 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             if limit_tokens:
                 call_args["max_completion_tokens"] = limit_tokens
 
-        # Call the API, retrying transient 429 rate-limit / quota errors with
-        # real-time feedback, before giving up and letting the model fallback
-        # chain take over.
-        for retry_attempt in range(_RATE_LIMIT_MAX_RETRIES):
+        # Call the API, retrying transient errors with real-time feedback before
+        # giving up and letting the model fallback chain take over. Covers:
+        #   - 429 rate-limit / quota errors (wait for the provider's hint).
+        #   - "false" 402 Provider returned error / Insufficient balance from an
+        #     upstream provider (common with OpenRouter `:free` models whose hosting
+        #     provider runs out of capacity). Retrying works because OpenRouter
+        #     re-routes the request to another healthy provider of the same model.
+        #     A genuine 402 "insufficient credits" (the user's own balance) is NOT
+        #     retried here.
+        for retry_attempt in range(_API_CALL_MAX_RETRIES):
             try:
                 response = client.chat.completions.create(**call_args)
                 break
@@ -219,15 +259,27 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                         fallback_args["max_completion_tokens"] = limit_tokens
                     response = client.chat.completions.create(**fallback_args)
                     break
-                if not _is_rate_limit_error(e):
+
+                if _is_provider_balance_error(e):
+                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                        raise e  # retries exhausted: propagate for model fallback
+                    wait_seconds = _PROVIDER_BALANCE_WAIT
+                    retry_feedback = (
+                        f"💳 Model provider temporarily unavailable (402, insufficient balance) on "
+                        f"attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                        f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
+                elif _is_rate_limit_error(e):
+                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                        raise e  # retries exhausted: propagate for model fallback
+                    wait_seconds = _wait_seconds_for_rate_limit(e)
+                    retry_feedback = (
+                        f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                        f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
+                else:
                     raise e
-                if retry_attempt >= _RATE_LIMIT_MAX_RETRIES - 1:
-                    raise e  # retries exhausted: propagate for model fallback
-                wait_seconds = _wait_seconds_for_rate_limit(e)
-                retry_feedback = (
-                    f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_RATE_LIMIT_MAX_RETRIES}. "
-                    f"Waiting {wait_seconds:.0f}s to retry..."
-                )
+
                 insert_feedback(cursor, table, session_id, message_in_id, retry_feedback)
                 if on_complete:
                     try:

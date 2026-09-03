@@ -3,12 +3,14 @@ Message processing entry points for WhatsApp/chat and IDE channels.
 These are the two main public functions consumed by router.py and sweeper.py.
 """
 import logging
+import re
 import time
 import uuid
 
 from google.genai import types
 
 from agent.autonomous_loop import execute_autonomous_loop
+from agent.openai_tools import _is_provider_balance_error
 from agent.prompt_builder import build_system_prompt, build_config_kwargs
 from agent.stop_check import StopRequestedError
 from database import get_config, get_db
@@ -27,10 +29,12 @@ logger = logging.getLogger(__name__)
 
 def _friendly_llm_error(error_str: str) -> str:
     """Returns a short, human-friendly message for LLM API failures caused by
-    per-minute rate limits / quota exhaustion (HTTP 429, RESOURCE_EXHAUSTED),
-    instead of leaking the raw API error payload to the user. Any other error
-    keeps the previous generic message unchanged."""
+    per-minute rate limits / quota exhaustion (HTTP 429, RESOURCE_EXHAUSTED) or a
+    false 402 from an upstream provider, instead of leaking the raw API error
+    payload to the user. Any other error keeps the previous generic message
+    unchanged."""
     lowered = error_str.lower()
+
     is_rate_limit = ("429" in error_str or "resource_exhausted" in lowered) and (
         "quota" in lowered
         or "rate limit" in lowered
@@ -43,7 +47,48 @@ def _friendly_llm_error(error_str: str) -> str:
             "I retried automatically several times but it is still rate-limited. "
             "Please resend your message in a few minutes."
         )
+
+    # A false 402 (Provider returned error / Insufficient balance) from an
+    # upstream provider hosting a free OpenRouter model. Retries already ran and
+    # the provider is still unavailable; reassure the user instead of leaking the
+    # raw metadata (provider_name, user_id, ...).
+    proxy_error = _as_exception(error_str)
+    if _is_provider_balance_error(proxy_error):
+        return (
+            "💳 The free model provider is temporarily unavailable (HTTP 402). "
+            "I retried automatically several times without success. "
+            "Please resend your message in a few minutes."
+        )
+    if "402" in error_str and "insufficient credits" in lowered:
+        return (
+            "💳 The AI service account has run out of credits in the gateway "
+            "(HTTP 402 - Insufficient credits). Please top up the API balance "
+            "and resend your message."
+        )
+
     return f"Error calling LLM API: {error_str}"
+
+
+class _FakeError(Exception):
+    """Adapter so the shared openai_tools detect helpers can inspect a raw string
+    as if it were the exception raised by the API client."""
+
+    def __init__(self, text: str, code=None):
+        super().__init__(text)
+        self.code = code
+
+
+def _as_exception(text: str) -> _FakeError:
+    """Wraps an error string so helper predicates that read ``str(exc)`` / ``exc.code``
+    work on it (the string may include the ``Error code: 402`` prefix)."""
+    code = None
+    m = re.search(r"Error code[: ](\d+)", text)
+    if m:
+        try:
+            code = int(m.group(1))
+        except ValueError:
+            code = None
+    return _FakeError(text, code=code)
 
 
 def _detect_wa_channel_type(channel_id: str):
