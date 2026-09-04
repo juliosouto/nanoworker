@@ -97,12 +97,15 @@ def webhook():
 
         allowed, reason = check_wa_permissions(data, content)
         if not allowed:
-            if reason == "permissions_or_disabled":
-                return jsonify({"status": "ignored", "reason": "permissions_or_disabled"}), 200
-            elif reason == "rate_limit":
+            # Every refusal must short-circuit here. should_process_wa_message returns
+            # specific reasons (e.g. "no_worker_mentioned_in_transcription",
+            # "sender_not_allowed", "bot_disabled"), so any reason not explicitly
+            # handled below MUST still return before routing — otherwise refused
+            # messages (e.g. audios without a worker mention) would be processed anyway.
+            if reason == "rate_limit":
                 callback = _build_wa_callback(target_jid)
                 callback("Rate limit reached. Please wait a minute.")
-                return jsonify({"status": "ignored", "reason": "rate_limit"}), 200
+            return jsonify({"status": "ignored", "reason": reason or "permissions_or_disabled"}), 200
 
         on_complete = _build_wa_callback(target_jid)
         _send_composing_presence(target_jid)
