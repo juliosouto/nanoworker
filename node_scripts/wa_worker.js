@@ -159,7 +159,11 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: false,
         logger: logger,
-        browser: Browsers.macOS('Chrome')
+        browser: Browsers.macOS('Chrome'),
+        // Keeps the account "offline" so the phone keeps receiving notifications
+        // and messages remain unread. Reading/routing messages locally never
+        // sends a read receipt — only explicit readMessages() calls would.
+        markOnlineOnConnect: false
     });
 
     sock.ev.on('connection.update', (update) => {
