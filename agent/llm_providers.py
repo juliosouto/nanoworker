@@ -366,3 +366,37 @@ def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, con
     )
     limit_tokens = max_output_tokens if max_output_tokens else None
     return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
+def call_nvidia_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
+    """
+    Makes a call to the NVIDIA NIM API (OpenAI compatible).
+
+    Arguments:
+        model_name (str): The NVIDIA NIM model name, prefixed with "nvidia/"
+            (e.g. "nvidia/poolside/laguna-xs-2.1"). The prefix is stripped
+            before calling the API.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): NVIDIA NIM API Key. Raises exception if missing.
+        max_output_tokens (int, optional): Maximum limit for output tokens.
+
+    Returns:
+        str: The generated response text.
+    """
+    import openai
+    if not api_key:
+        raise ValueError("API Key for NVIDIA model is not set.")
+
+    # Strip the "nvidia/" prefix if it exists to pass the correct model name
+    actual_model_name = model_name[7:] if model_name.lower().startswith("nvidia/") else model_name
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url="https://integrate.api.nvidia.com/v1",
+    )
+    limit_tokens = max_output_tokens if max_output_tokens else None
+    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)

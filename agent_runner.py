@@ -16,6 +16,7 @@ from agent import (
     call_qwen_llm,
     call_groq_llm,
     call_openai_llm,
+    call_nvidia_llm,
     convert_to_openai_tool,
     execute_openai_compatible_llm,
     execute_autonomous_loop,

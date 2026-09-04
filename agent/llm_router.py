@@ -184,7 +184,14 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
     # Only active when 'Context Window' is set; otherwise history is passed as-is.
     history = _prune_history_to_fit(history, context_window, local_kwargs, content, max_output_tokens or None)
 
-    if provider == "qwen" or model_name.lower().startswith("qwen"):
+    # NVIDIA is checked first (before the Qwen/OpenAI branches) because NIM hosts
+    # models whose last path segment overlaps other providers' heuristics, e.g.
+    # "nvidia/qwen/qwen3-next-80b-a3b-instruct" or "nvidia/openai/gpt-oss-120b".
+    # Relying on the "provider" column (user-configured) is the source of truth;
+    # "nvidia/" prefix fallback covers models not registered in llm_config.
+    if provider == "nvidia" or model_name.lower().startswith("nvidia/"):
+        return _providers.call_nvidia_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
+    elif provider == "qwen" or model_name.lower().startswith("qwen"):
         return _providers.call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, on_complete=on_complete)
     elif provider == "groq" or model_name.lower().startswith("groq/"):
         return _providers.call_groq_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)

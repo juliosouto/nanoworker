@@ -7,7 +7,8 @@ from agent.llm_providers import (
     call_groq_llm,
     call_openai_llm,
     call_ollama_llm,
-    call_openrouter_llm
+    call_openrouter_llm,
+    call_nvidia_llm
 )
 
 @pytest.fixture
@@ -330,3 +331,17 @@ def test_call_openrouter_llm_success(mock_openai, mock_execute, mock_cursor):
     assert res == "OpenRouter Response"
     args, kwargs = mock_execute.call_args
     assert args[1] == "llama"
+
+def test_call_nvidia_llm_no_api_key():
+    with pytest.raises(ValueError, match="API Key for NVIDIA"):
+        call_nvidia_llm("model", [], {}, "content", MagicMock(), "sess", "msg", "tbl")
+
+@patch('agent.llm_providers.execute_openai_compatible_llm')
+@patch('openai.OpenAI')
+def test_call_nvidia_llm_success(mock_openai, mock_execute, mock_cursor):
+    mock_execute.return_value = "NVIDIA Response"
+    res = call_nvidia_llm("nvidia/poolside/laguna-xs-2.1", [], {}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key")
+    assert res == "NVIDIA Response"
+    # Ensure the "nvidia/" prefix was stripped before calling the API
+    args, kwargs = mock_execute.call_args
+    assert args[1] == "poolside/laguna-xs-2.1"

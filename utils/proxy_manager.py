@@ -121,6 +121,7 @@ EXCLUDED_DOMAINS = (
     'localhost',
     'api.openai.com',
     'api.groq.com',
+    'integrate.api.nvidia.com',
     'generativelanguage.googleapis.com'
 )
 

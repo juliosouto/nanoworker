@@ -169,7 +169,9 @@ def setup_llm_config():
             ('ollama/llama3.1', 'Ollama', None, 1, 1, 1, 1, 128000, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
             ('openrouter/openai/gpt-4o', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
             ('openrouter/anthropic/claude-3.5-sonnet', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
-            ('openrouter/meta-llama/llama-3.1-70b-instruct', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0)
+            ('openrouter/meta-llama/llama-3.1-70b-instruct', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('nvidia/poolside/laguna-xs-2.1', 'NVIDIA', None, 1, 1, 0, 1, None, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('nvidia/meta/llama-3.3-70b-instruct', 'NVIDIA', None, 1, 1, 0, 1, 131072, None, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
         ]
         for model in default_models:
             cursor.execute('''
