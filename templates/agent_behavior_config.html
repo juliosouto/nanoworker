@@ -97,7 +97,7 @@
                     <div style="flex: 1; margin-right: 16px;">
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Message Slice Size (Tokens)</label>
-                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Truncate long WhatsApp group messages to a specific token limit.</small>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Maximum combined size (history + current message) sent to the LLM. Oldest messages are dropped first.</small>
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                         <button type="button" id="sliceSizeMinus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">-</button>

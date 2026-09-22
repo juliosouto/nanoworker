@@ -17,6 +17,7 @@ from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.message_utils import (
     truncate_message,
+    slice_conversation_to_budget,
     process_tools_for_llm,
     resolve_worker_from_content,
     clean_mention,
@@ -295,6 +296,11 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             ids = f"{current_sender_id} / {current_sender_id_alt}"
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
     content = apply_plan_before_execution(content)
+
+    # Slice the WHOLE conversation (history + current message) to the combined
+    # MESSAGE_SLICE_SIZE_TOKENS budget: oldest history messages are dropped
+    # first; the current message is only truncated if it alone overflows.
+    history, content = slice_conversation_to_budget(history, content)
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part

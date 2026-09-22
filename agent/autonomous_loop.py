@@ -12,6 +12,24 @@ from agent.db_feedback import insert_feedback
 from agent.llm_router import invoke_llm_with_fallback
 from agent.stop_check import StopRequestedError, reset_stop_check, set_stop_check
 from database import get_config
+from utils.message_utils import MEDIA_PLACEHOLDER, slice_conversation_to_budget
+
+
+def _strip_media_parts(send_content):
+    """
+    Replaces media parts (images/files) with a short text placeholder so media
+    is only sent to the LLM on the first call of a working session, not on
+    every subsequent reflection/tool-loop invocation. Returns the text length
+    kept (for budget accounting).
+    """
+    new_parts = []
+    for p in send_content:
+        has_media = not isinstance(p, str) and not getattr(p, "text", None)
+        if has_media:
+            new_parts.append(types.Part.from_text(text=MEDIA_PLACEHOLDER))
+        else:
+            new_parts.append(p)
+    return new_parts
 
 
 def _coerce_bool(value):
@@ -254,15 +272,20 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
                             except Exception as e:
                                 print(f"Failed to call on_complete: {e}")
 
+                        # Media (images/files) already seen by the model is not
+                        # re-sent on subsequent iterations: swap media parts for
+                        # a placeholder before promoting the content to history.
                         parts = []
-                        for p in current_send_content:
+                        for p in _strip_media_parts(current_send_content):
                             if isinstance(p, str):
-                                parts.append(types.Part.from_text(text=p))
-                            else:
-                                parts.append(p)
+                                p = types.Part.from_text(text=p)
+                            parts.append(p)
                         history.append(types.Content(role="user", parts=parts))
                         history.append(types.Content(role="model", parts=[types.Part.from_text(text=mock_response_raw)]))
-                        current_send_content = [types.Part.from_text(text=feedback_text)]
+                        # Re-apply the combined slice budget, since the history
+                        # just grew by the previous turn + reflection feedback.
+                        history, trimmed = slice_conversation_to_budget(history, feedback_text)
+                        current_send_content = [types.Part.from_text(text=trimmed)]
                     else:
                         break
             else:

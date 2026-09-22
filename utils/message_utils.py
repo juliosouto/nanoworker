@@ -243,6 +243,48 @@ def truncate_message(content, max_length=None):
         return content[-max_length:]
     return content
 
+# Placeholder used when a media part (image/file) must not be re-sent to the LLM.
+MEDIA_PLACEHOLDER = "[midia/anexo enviado anteriormente - ja visualizado]"
+
+
+def _history_text_len(history) -> int:
+    """Total characters of text across all parts of a Gemini-format history list."""
+    total = 0
+    for msg in history:
+        for p in getattr(msg, "parts", []) or []:
+            total += len(getattr(p, "text", "") or "")
+    return total
+
+
+def slice_conversation_to_budget(history, current_text):
+    """
+    Applies MESSAGE_SLICE_SIZE_TOKENS as a COMBINED budget over the conversation
+    (history + current message), instead of per-message truncation.
+
+    - Oldest history messages are dropped first until history + current fits.
+    - The current message is never dropped; it is truncated (keeping the tail)
+      only when it alone exceeds the budget.
+    - History items are Gemini-format types.Content objects.
+
+    Returns:
+        tuple: (history, current_text) possibly trimmed.
+    """
+    from database import get_config
+    try:
+        tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "2000"))
+    except Exception:
+        tokens = 2000
+    max_chars = tokens * 4
+
+    if current_text and len(current_text) > max_chars:
+        current_text = current_text[-max_chars:]
+
+    history = list(history)
+    current_len = len(current_text or "")
+    while history and _history_text_len(history) + current_len > max_chars:
+        history.pop(0)
+    return history, current_text
+
 def check_rate_limit(sender_id):
     """
     Checks if the sender has exceeded their rate limit.

@@ -1,12 +1,15 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+from google.genai import types
+
 from utils.message_utils import (
     get_default_worker,
     resolve_worker_from_content,
     should_process_wa_message,
     clean_mention,
     truncate_message,
+    slice_conversation_to_budget,
     check_rate_limit,
     format_dict_to_lines,
     format_document_search_results,
@@ -98,6 +101,57 @@ def test_truncate_message(mocker):
     long_msg = "A" * 30
     assert len(truncate_message(long_msg)) == 20
     assert len(truncate_message("Short")) == 5
+
+# ---------------------------------------------------------------------------
+# slice_conversation_to_budget: combined (history + current message) budget
+# ---------------------------------------------------------------------------
+
+def _msg(text, role="user"):
+    return types.Content(role=role, parts=[types.Part.from_text(text=text)])
+
+def test_slice_noop_when_under_budget(mocker):
+    mocker.patch('database.get_config', return_value="2000")
+    history = [_msg("hello"), _msg("world", "model")]
+    h2, cur = slice_conversation_to_budget(history, "current message")
+    assert len(h2) == 2
+    assert cur == "current message"
+
+def test_slice_drops_oldest_history_first(mocker):
+    mocker.patch('database.get_config', return_value="5")  # 5 tokens = 20 chars
+    history = [_msg("A" * 15), _msg("B" * 15, "model"), _msg("C" * 15)]
+    h2, cur = slice_conversation_to_budget(history, "tail")
+    # 20 chars budget - 4 ("tail") -> only the last message fits
+    assert len(h2) == 1
+    assert h2[0].parts[0].text == "C" * 15
+    assert cur == "tail"
+
+def test_slice_truncates_current_when_alone_exceeds_budget(mocker):
+    mocker.patch('database.get_config', return_value="5")  # 20 chars
+    current = "HEAD" + "x" * 30 + "TAIL"
+    h2, cur = slice_conversation_to_budget([], current)
+    assert h2 == []
+    assert len(cur) == 20
+    assert cur.endswith("TAIL")
+
+def test_slice_keeps_at_least_current_even_with_huge_history(mocker):
+    mocker.patch('database.get_config', return_value="2000")
+    history = [_msg("Z" * 100000)]
+    h2, cur = slice_conversation_to_budget(history, "hello")
+    assert h2 == []
+    assert cur == "hello"
+
+def test_slice_empty_inputs(mocker):
+    mocker.patch('database.get_config', return_value="2000")
+    h2, cur = slice_conversation_to_budget([], "")
+    assert h2 == []
+    assert cur == ""
+
+def test_slice_does_not_mutate_original_history(mocker):
+    mocker.patch('database.get_config', return_value="5")
+    history = [_msg("A" * 15), _msg("B" * 15, "model"), _msg("C" * 15)]
+    slice_conversation_to_budget(history, "tail")
+    assert len(history) == 3  # original untouched
+
 
 def test_check_rate_limit(mock_db, mocker):
 
