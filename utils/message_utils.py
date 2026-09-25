@@ -36,16 +36,24 @@ def resolve_worker_from_content(content):
     from database import get_config
     require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
     
+    # If content has a [Quoted message from...] block, strip it for mention inspection
+    lookup_content = content_lower
+    if lookup_content.startswith("[quoted message from:"):
+        # The actual message comment starts after the double newline following the quote block
+        split_parts = lookup_content.split("\n\n", 1)
+        if len(split_parts) > 1:
+            lookup_content = split_parts[1].strip()
+
     # 1. Check for text mention at the start (handling both with/without spaces)
     for worker in workers:
         worker_name_clean = worker['worker_name'].strip().lower()
         worker_name_no_spaces = worker_name_clean.replace(" ", "")
         
-        if content_lower.startswith(f"@{worker_name_clean}") or content_lower.startswith(f"@{worker_name_no_spaces}"):
+        if lookup_content.startswith(f"@{worker_name_clean}") or lookup_content.startswith(f"@{worker_name_no_spaces}"):
             return worker
             
         if not require_at:
-            if content_lower.startswith(worker_name_clean) or content_lower.startswith(worker_name_no_spaces):
+            if lookup_content.startswith(worker_name_clean) or lookup_content.startswith(worker_name_no_spaces):
                 return worker
 
     # 2. Check for audio mention in transcription
@@ -210,6 +218,14 @@ def clean_mention(content, agent_name=None):
             if cleaned_content.lower().startswith(prefix):
                 cleaned_content = cleaned_content[len(prefix):].strip()
                 break
+            # Also clean if preceded by a [Quoted message from...] block
+            if cleaned_content.lower().startswith("[quoted message from:") and "\n\n" in cleaned_content:
+                header_quote, comment_body = cleaned_content.split("\n\n", 1)
+                comment_body_stripped = comment_body.strip()
+                if comment_body_stripped.lower().startswith(prefix):
+                    cleaned_comment = comment_body_stripped[len(prefix):].strip()
+                    cleaned_content = f"{header_quote}\n\n{cleaned_comment}"
+                    break
             
         if '\n[Transcription]: ' in cleaned_content:
             parts = cleaned_content.split('\n[Transcription]: ', 1)

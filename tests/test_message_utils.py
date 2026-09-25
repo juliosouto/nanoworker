@@ -411,3 +411,23 @@ def test_build_system_prompt_schema_plan_disabled(mocker):
     assert JSON_SCHEMA_PROMPT in out
     assert JSON_SCHEMA_PROMPT_WITH_PLAN not in out
     assert "execution_plan" not in out
+
+
+def test_resolve_worker_and_clean_mention_with_quoted_context(mock_db, mocker):
+    mock_db.fetchall.return_value = [{'is_default': False, 'worker_name': 'Investigator'}]
+    mocker.patch('database.get_config', return_value='true')
+
+    quoted_content = (
+        "[Quoted message from: 551199999999]\n"
+        "Segue a planilha com os dados de vendas de março.\n\n"
+        "@Investigator analise esta planilha e me dê os totais"
+    )
+
+    worker = resolve_worker_from_content(quoted_content)
+    assert worker is not None
+    assert worker['worker_name'] == 'Investigator'
+
+    cleaned = clean_mention(quoted_content)
+    assert "@Investigator" not in cleaned
+    assert "[Quoted message from: 551199999999]" in cleaned
+    assert "analise esta planilha e me dê os totais" in cleaned

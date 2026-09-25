@@ -18,7 +18,7 @@ BAILEYS_URL = 'http://127.0.0.1:3000'
 # Helper functions (specific to this endpoint's integration with Baileys API)
 # ---------------------------------------------------------------------------
 
-def _build_wa_callback(target_jid):
+def _build_wa_callback(target_jid, reply_to_msg_id=None):
     """Build an on_complete callback that sends the agent reply via Baileys."""
     from utils.audio_utils import extract_and_generate_audio
 
@@ -28,7 +28,10 @@ def _build_wa_callback(target_jid):
             text_to_send, audio_path = extract_and_generate_audio(out_text)
 
             if text_to_send:
-                resp = req.post(f'{BAILEYS_URL}/send', json={"text": text_to_send, "jid": target_jid}, timeout=5)
+                payload = {"text": text_to_send, "jid": target_jid}
+                if reply_to_msg_id:
+                    payload["quoted_msg_id"] = reply_to_msg_id
+                resp = req.post(f'{BAILEYS_URL}/send', json=payload, timeout=5)
                 logging.info(f"Text send response: {resp.status_code} {resp.text}")
 
             if audio_path:
@@ -90,6 +93,15 @@ def webhook():
     if 'audio_base64' in data:
         content = transcribe_webhook_audio(content, data['audio_base64'], data.get('mimetype', ''))
 
+    # Transcribe quoted audio if present
+    quoted_text = data.get('quoted_text') or ''
+    if 'quoted_audio_base64' in data:
+        quoted_text = transcribe_webhook_audio(
+            quoted_text or '[Quoted audio received, waiting for transcription...]',
+            data['quoted_audio_base64'],
+            data.get('quoted_mimetype', '')
+        )
+
     # 2. WhatsApp-specific checks
     on_complete = None
     if data['channel_id'].startswith('wa_web:'):
@@ -103,15 +115,36 @@ def webhook():
             # handled below MUST still return before routing — otherwise refused
             # messages (e.g. audios without a worker mention) would be processed anyway.
             if reason == "rate_limit":
-                callback = _build_wa_callback(target_jid)
+                callback = _build_wa_callback(target_jid, data.get('message_id'))
                 callback("Rate limit reached. Please wait a minute.")
             return jsonify({"status": "ignored", "reason": reason or "permissions_or_disabled"}), 200
 
-        on_complete = _build_wa_callback(target_jid)
+        on_complete = _build_wa_callback(target_jid, data.get('message_id'))
         _send_composing_presence(target_jid)
 
     # 3. Save attachment
     file_path = save_webhook_attachment(data)
+    file_mime_type = data.get('file_mime_type')
+    file_name = data.get('file_name')
+
+    # If current message doesn't have an attachment but quoted message does, use quoted attachment
+    if not file_path and 'quoted_image_base64' in data:
+        from utils.file_utils import save_base64_attachment
+        quoted_mime = data.get('quoted_mimetype') or 'image/jpeg'
+        ext = 'jpg'
+        if 'png' in quoted_mime: ext = 'png'
+        elif 'pdf' in quoted_mime: ext = 'pdf'
+        elif 'mp4' in quoted_mime: ext = 'mp4'
+        elif 'ogg' in quoted_mime: ext = 'ogg'
+        file_path = save_base64_attachment(data['quoted_image_base64'], f'quoted_media.{ext}')
+        file_mime_type = quoted_mime
+        file_name = f'quoted_media.{ext}'
+
+    # Build enriched content with quoted context if present
+    if quoted_text or data.get('quoted_sender'):
+        quoted_sender = data.get('quoted_sender') or 'User'
+        quoted_header = f"[Quoted message from: {quoted_sender}]"
+        content = f"{quoted_header}\n{quoted_text}\n\n{content}"
 
     # 4. Route message
     in_id, session_id, is_sync = route_inbound_message(
@@ -121,8 +154,8 @@ def webhook():
         sender_id_alt=data.get('sender_id_alt'),
         sender_name=data.get('sender_name'),
         image_base64=file_path,
-        file_mime_type=data.get('file_mime_type'),
-        file_name=data.get('file_name'),
+        file_mime_type=file_mime_type,
+        file_name=file_name,
         on_complete=on_complete,
         client_message_id=data.get('message_id')
     )

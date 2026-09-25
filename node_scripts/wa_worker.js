@@ -98,6 +98,17 @@ function extractTextContent(msgContent) {
     return '';
 }
 
+function extractQuotedInfo(msgContent) {
+    if (!msgContent) return null;
+    const contextInfo = msgContent.extendedTextMessage?.contextInfo ||
+                        msgContent.imageMessage?.contextInfo ||
+                        msgContent.videoMessage?.contextInfo ||
+                        msgContent.audioMessage?.contextInfo ||
+                        msgContent.documentMessage?.contextInfo;
+    if (!contextInfo || !contextInfo.quotedMessage) return null;
+    return contextInfo;
+}
+
 function isGroupChat(remoteJid) {
     if (!remoteJid) return false;
     // Canonical group JIDs always carry the '@g.us' suffix. Keep this check
@@ -304,6 +315,91 @@ async function connectToWhatsApp() {
 
             if (!text) continue;
 
+            // Extract Quoted Message Information if present
+            const quotedInfo = extractQuotedInfo(msgContent);
+            let quotedText = null;
+            let quotedSender = null;
+            let quotedMsgId = null;
+            let quotedAudioBase64 = null;
+            let quotedImageBase64 = null;
+            let quotedMimeType = null;
+
+            if (quotedInfo && quotedInfo.quotedMessage) {
+                const qMsg = quotedInfo.quotedMessage;
+                quotedMsgId = quotedInfo.stanzaId || null;
+                quotedSender = quotedInfo.participant ? quotedInfo.participant.split('@')[0].split(':')[0] : null;
+                
+                quotedText = extractTextContent(qMsg);
+
+                // Check for media in quoted message
+                const qMsgWrapper = {
+                    key: {
+                        remoteJid: remoteJid,
+                        id: quotedMsgId,
+                        participant: quotedInfo.participant
+                    },
+                    message: qMsg
+                };
+
+                if (qMsg.audioMessage) {
+                    quotedMimeType = qMsg.audioMessage.mimetype || 'audio/ogg';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedAudioBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted audio downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted audio:', err.message);
+                    }
+                } else if (qMsg.imageMessage) {
+                    quotedMimeType = qMsg.imageMessage.mimetype || 'image/jpeg';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedImageBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted image downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted image:', err.message);
+                    }
+                } else if (qMsg.videoMessage) {
+                    quotedMimeType = qMsg.videoMessage.mimetype || 'video/mp4';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedImageBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted video downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted video:', err.message);
+                    }
+                } else if (qMsg.documentMessage) {
+                    quotedMimeType = qMsg.documentMessage.mimetype || 'application/octet-stream';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedImageBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted document downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted document:', err.message);
+                    }
+                }
+            }
+
             // Use the FULL remoteJid (including the '@lid' / '@g.us' / '@s.whatsapp.net' suffix)
             // as the channel ID. This preserves the correct addressing mode so the agent can
             // later reply to the exact chat (group vs private LID chat vs note-to-self).
@@ -349,6 +445,23 @@ async function connectToWhatsApp() {
                     payload.image_base64 = imageBase64;
                     payload.mimetype = mimeType;
                 }
+                if (quotedText) {
+                    payload.quoted_text = quotedText;
+                }
+                if (quotedSender) {
+                    payload.quoted_sender = quotedSender;
+                }
+                if (quotedMsgId) {
+                    payload.quoted_msg_id = quotedMsgId;
+                }
+                if (quotedAudioBase64) {
+                    payload.quoted_audio_base64 = quotedAudioBase64;
+                    payload.quoted_mimetype = quotedMimeType;
+                }
+                if (quotedImageBase64) {
+                    payload.quoted_image_base64 = quotedImageBase64;
+                    payload.quoted_mimetype = quotedMimeType;
+                }
                 await axios.post(FLASK_WEBHOOK_URL, payload, {
                     headers: {
                         'X-Webhook-Secret': process.env.WEBHOOK_SECRET || ''
@@ -379,7 +492,7 @@ app.post('/send', async (req, res) => {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
     }
 
-    const { text, jid } = req.body;
+    const { text, jid, quoted_msg_id } = req.body;
     if (!text) {
         return res.status(400).json({ error: 'Missing text parameter' });
     }
@@ -391,13 +504,23 @@ app.post('/send', async (req, res) => {
 
     try {
         console.log(`[Baileys Outbound] to ${targetJid}: ${text}`);
-        const sentMsg = await sock.sendMessage(targetJid, { text: text });
+        const sendOptions = {};
+        if (quoted_msg_id) {
+            sendOptions.quoted = {
+                key: {
+                    remoteJid: targetJid,
+                    id: quoted_msg_id
+                },
+                message: {}
+            };
+        }
+        const sentMsg = await sock.sendMessage(targetJid, { text: text }, sendOptions);
         if (sentMsg && sentMsg.key && sentMsg.key.id) {
             botSentMsgIds.add(sentMsg.key.id);
             // Optional: prevent the Set from growing indefinitely
             if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
         }
-        res.json({ status: 'sent', target: targetJid });
+        res.json({ status: 'sent', target: targetJid, message_id: sentMsg?.key?.id });
     } catch (err) {
         console.error('Failed to send message via Baileys:', err);
         res.status(500).json({ error: 'Failed to send message' });
