@@ -1,4 +1,4 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
@@ -166,7 +166,17 @@ async function connectToWhatsApp() {
     const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+    let version;
+    try {
+        const waVersion = await fetchLatestWaWebVersion();
+        version = waVersion.version;
+        console.log(`[Baileys] Using WhatsApp Web version: ${version.join('.')}, isLatest: ${waVersion.isLatest}`);
+    } catch (err) {
+        console.warn('[Baileys] Failed to fetch latest WA Web version, falling back to default:', err.message);
+    }
+
     sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
         logger: logger,
@@ -514,7 +524,17 @@ app.post('/send', async (req, res) => {
                 message: {}
             };
         }
-        const sentMsg = await sock.sendMessage(targetJid, { text: text }, sendOptions);
+        let sentMsg;
+        try {
+            sentMsg = await sock.sendMessage(targetJid, { text: text }, sendOptions);
+        } catch (quotedErr) {
+            if (quoted_msg_id) {
+                console.warn(`[Baileys Outbound] Failed to send with quoted message (${quotedErr.message}), retrying without quoted...`);
+                sentMsg = await sock.sendMessage(targetJid, { text: text });
+            } else {
+                throw quotedErr;
+            }
+        }
         if (sentMsg && sentMsg.key && sentMsg.key.id) {
             botSentMsgIds.add(sentMsg.key.id);
             // Optional: prevent the Set from growing indefinitely

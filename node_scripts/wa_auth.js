@@ -1,4 +1,4 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
 
@@ -9,7 +9,16 @@ async function connectToWhatsApp() {
     const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+    let version;
+    try {
+        const waVersion = await fetchLatestWaWebVersion();
+        version = waVersion.version;
+    } catch (err) {
+        // fallback to default
+    }
+
     const sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
         logger: logger,
