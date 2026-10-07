@@ -22,17 +22,42 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None):
     """Build an on_complete callback that sends the agent reply via Baileys."""
     from utils.audio_utils import extract_and_generate_audio
 
+    last_progress_msg_id = None
+
     def on_complete(out_text):
+        nonlocal last_progress_msg_id
         try:
             logging.info(f"on_complete triggered for {target_jid} with text length {len(out_text)}")
             text_to_send, audio_path = extract_and_generate_audio(out_text)
 
+            is_progress_msg = bool(
+                text_to_send and (
+                    "Agent reflecting" in text_to_send
+                    or "Error on attempt" in text_to_send
+                    or "Quota exceeded" in text_to_send
+                    or "Rate limit (" in text_to_send
+                    or "Model provider temporarily unavailable" in text_to_send
+                    or "Empty response from model" in text_to_send
+                )
+            )
+
             if text_to_send:
                 payload = {"text": text_to_send, "jid": target_jid}
-                if reply_to_msg_id:
+                if is_progress_msg and last_progress_msg_id:
+                    payload["edit_msg_id"] = last_progress_msg_id
+                elif reply_to_msg_id:
                     payload["quoted_msg_id"] = reply_to_msg_id
+
                 resp = req.post(f'{BAILEYS_URL}/send', json=payload, timeout=5)
                 logging.info(f"Text send response: {resp.status_code} {resp.text}")
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    msg_id = data.get("message_id")
+                    if is_progress_msg and msg_id:
+                        last_progress_msg_id = msg_id
+                    elif not is_progress_msg:
+                        last_progress_msg_id = None
 
             if audio_path:
                 resp = req.post(f'{BAILEYS_URL}/send_audio', json={"file_path": audio_path, "jid": target_jid}, timeout=5)

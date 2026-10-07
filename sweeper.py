@@ -21,6 +21,7 @@ def make_baileys_callback(jid: str):
     Retorna:
         function: A função de callback a ser executada ao concluir uma tarefa.
     """
+    last_progress_msg_id = None
     def callback(out_text: str):
         """
         Gera áudio (se aplicável) e envia a resposta de texto ou áudio via API interna.
@@ -28,14 +29,39 @@ def make_baileys_callback(jid: str):
         Argumentos:
             out_text (str): O texto gerado pelo agente para envio.
         """
+        nonlocal last_progress_msg_id
         import requests as req
         from utils.audio_utils import extract_and_generate_audio
         try:
             logger.info(f"Cron job Baileys callback triggered for JID {jid}")
             text_to_send, audio_path = extract_and_generate_audio(out_text)
+            
+            is_progress_msg = bool(
+                text_to_send and (
+                    "Agent reflecting" in text_to_send
+                    or "Error on attempt" in text_to_send
+                    or "Quota exceeded" in text_to_send
+                    or "Rate limit (" in text_to_send
+                    or "Model provider temporarily unavailable" in text_to_send
+                    or "Empty response from model" in text_to_send
+                )
+            )
+
             if text_to_send:
-                resp = req.post('http://127.0.0.1:3000/send', json={"text": text_to_send, "jid": jid}, timeout=5)
+                payload = {"text": text_to_send, "jid": jid}
+                if is_progress_msg and last_progress_msg_id:
+                    payload["edit_msg_id"] = last_progress_msg_id
+                
+                resp = req.post('http://127.0.0.1:3000/send', json=payload, timeout=5)
                 logger.info(f"Baileys text response code: {resp.status_code}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    msg_id = data.get("message_id")
+                    if is_progress_msg and msg_id:
+                        last_progress_msg_id = msg_id
+                    elif not is_progress_msg:
+                        last_progress_msg_id = None
+
             if audio_path:
                 resp = req.post('http://127.0.0.1:3000/send_audio', json={"file_path": audio_path, "jid": jid}, timeout=5)
                 logger.info(f"Baileys audio response code: {resp.status_code}")

@@ -502,7 +502,7 @@ app.post('/send', async (req, res) => {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
     }
 
-    const { text, jid, quoted_msg_id } = req.body;
+    const { text, jid, quoted_msg_id, edit_msg_id } = req.body;
     if (!text) {
         return res.status(400).json({ error: 'Missing text parameter' });
     }
@@ -513,34 +513,54 @@ app.post('/send', async (req, res) => {
     clearTyping(targetJid);
 
     try {
-        console.log(`[Baileys Outbound] to ${targetJid}: ${text}`);
-        const sendOptions = {};
-        if (quoted_msg_id) {
-            sendOptions.quoted = {
-                key: {
-                    remoteJid: targetJid,
-                    id: quoted_msg_id
-                },
-                message: {}
-            };
-        }
+        console.log(`[Baileys Outbound] to ${targetJid} (edit: ${edit_msg_id || 'none'}): ${text}`);
         let sentMsg;
-        try {
-            sentMsg = await sock.sendMessage(targetJid, { text: text }, sendOptions);
-        } catch (quotedErr) {
-            if (quoted_msg_id) {
-                console.warn(`[Baileys Outbound] Failed to send with quoted message (${quotedErr.message}), retrying without quoted...`);
-                sentMsg = await sock.sendMessage(targetJid, { text: text });
-            } else {
-                throw quotedErr;
+
+        if (edit_msg_id) {
+            try {
+                sentMsg = await sock.sendMessage(targetJid, {
+                    text: text,
+                    edit: {
+                        remoteJid: targetJid,
+                        id: edit_msg_id,
+                        fromMe: true
+                    }
+                });
+            } catch (editErr) {
+                console.warn(`[Baileys Outbound] Failed to edit message ${edit_msg_id} (${editErr.message}), sending new message instead...`);
             }
         }
-        if (sentMsg && sentMsg.key && sentMsg.key.id) {
-            botSentMsgIds.add(sentMsg.key.id);
+
+        if (!sentMsg) {
+            const sendOptions = {};
+            if (quoted_msg_id) {
+                sendOptions.quoted = {
+                    key: {
+                        remoteJid: targetJid,
+                        id: quoted_msg_id
+                    },
+                    message: {}
+                };
+            }
+            try {
+                sentMsg = await sock.sendMessage(targetJid, { text: text }, sendOptions);
+            } catch (quotedErr) {
+                if (quoted_msg_id) {
+                    console.warn(`[Baileys Outbound] Failed to send with quoted message (${quotedErr.message}), retrying without quoted...`);
+                    sentMsg = await sock.sendMessage(targetJid, { text: text });
+                } else {
+                    throw quotedErr;
+                }
+            }
+        }
+
+        const msgId = sentMsg?.key?.id || edit_msg_id || null;
+        if (msgId) {
+            botSentMsgIds.add(msgId);
             // Optional: prevent the Set from growing indefinitely
             if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
         }
-        res.json({ status: 'sent', target: targetJid, message_id: sentMsg?.key?.id });
+        res.json({ status: 'sent', target: targetJid, message_id: msgId });
     } catch (err) {
         console.error('Failed to send message via Baileys:', err);
         res.status(500).json({ error: 'Failed to send message' });
