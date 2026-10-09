@@ -39,8 +39,17 @@ _OPENAI_COMPAT_DEFAULT_TEMPERATURE = 1.0
 _GROQ_DEFAULT_MAX_TOKENS = 1024
 
 
-def resolve_provider(provider: Optional[str], model_name: str) -> str:
+def resolve_provider(
+    provider: Optional[str],
+    model_name: str,
+    default: str = "gemini",
+) -> Optional[str]:
     """Resolve the effective provider name for a model.
+
+    Single source of truth for provider detection — shared by the LangChain
+    factory, the structured-output gate (``lc.outputs.resolve_provider_for_
+    model``) and, transitively, the message pipeline. ``route_llm_call`` keeps
+    its own dispatch chain because it also encodes which legacy loop to call.
 
     Precedence (identical to ``route_llm_call``):
         1. the user-configured ``provider`` column (already lower-cased);
@@ -48,14 +57,16 @@ def resolve_provider(provider: Optional[str], model_name: str) -> str:
            whose last path segment overlaps other providers' prefixes, e.g.
            ``nvidia/qwen/...`` or ``nvidia/openai/...``), then qwen/groq/openai/
            ollama/openrouter;
-        3. the default branch: 'gemini'.
+        3. ``default`` ('gemini' unless the caller overrides it — e.g.
+           ``lc.outputs`` passes ``None`` to express "no native branch").
 
     Args:
         provider: value of the ``llm_config.provider`` column (or None).
         model_name: the model name, possibly prefixed with ``<provider>/``.
+        default: value returned when neither the column nor a prefix matches.
 
     Returns:
-        str: the resolved provider name.
+        str | None: the resolved provider name.
     """
     if provider:
         return str(provider).lower()
@@ -73,7 +84,7 @@ def resolve_provider(provider: Optional[str], model_name: str) -> str:
         return "ollama"
     if lower.startswith("openrouter/"):
         return "openrouter"
-    return "gemini"
+    return default
 
 
 

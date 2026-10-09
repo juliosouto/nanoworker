@@ -153,7 +153,9 @@ def resolve_provider_for_model(model_name: str) -> Optional[str]:
 
     Mirrors the provider detection used by route_llm_call so the caller
     (message_processor) can decide native-vs-prompt BEFORE building the prompt
-    without duplicating the routing logic.
+    without duplicating the routing logic. The prefix table is delegated to
+    ``lc.models.resolve_provider`` (single source of truth); ``None`` here
+    means "no native branch" (route_llm_call's default branch is Gemini).
     """
     if not model_name:
         return None
@@ -174,21 +176,12 @@ def resolve_provider_for_model(model_name: str) -> Optional[str]:
     except Exception:
         pass
 
-    # Fall back to the same prefix heuristics as route_llm_call.
-    lower = model_name.lower()
-    if lower.startswith("nvidia/"):
-        return "nvidia"
-    if lower.startswith("openai/"):
-        return "openai"
-    if lower.startswith("groq/"):
-        return "groq"
-    if lower.startswith("ollama/"):
-        return "ollama"
-    if lower.startswith("openrouter/"):
-        return "openrouter"
-    if lower.startswith("qwen"):
-        return "qwen"
-    return None  # default branch in route_llm_call is gemini
+    # Fall back to the same prefix heuristics as route_llm_call, delegated to
+    # the shared resolver (None = default branch, which is Gemini in the
+    # legacy router and handled internally by the LangChain factory).
+    from agent.lc.models import resolve_provider
+
+    return resolve_provider(None, model_name, default=None)
 
 
 def gemini_response_config() -> dict:

@@ -44,6 +44,14 @@ class TestResolveProvider(unittest.TestCase):
     def test_empty_model_name_is_gemini(self):
         self.assertEqual(resolve_provider(None, ""), "gemini")
 
+    def test_custom_default(self):
+        # lc.outputs.resolve_provider_for_model delegates with default=None to
+        # express "no native branch" (route_llm_call's default is Gemini).
+        self.assertIsNone(resolve_provider(None, "unknown-model", default=None))
+        self.assertIsNone(resolve_provider(None, "", default=None))
+        # Known prefixes still win over the custom default.
+        self.assertEqual(resolve_provider(None, "qwen-max", default=None), "qwen")
+
 
 class TestGeminiModel(unittest.TestCase):
     """Gemini → ChatGoogleGenerativeAI with 2.0 default temperature."""
