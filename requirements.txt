@@ -9,6 +9,9 @@ qrcode
 playwright
 croniter
 faster-whisper
+# PyAV is faster-whisper's audio decoder; old cached versions (<9.0) break it
+# with "TypeError: open() got an unexpected keyword argument 'metadata_errors'".
+av>=11.0.0
 kokoro-onnx
 soundfile
 cryptography

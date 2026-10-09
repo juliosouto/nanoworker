@@ -136,6 +136,70 @@ def test_transcribe_audio_error(mock_db_config):
     res = transcribe_audio("fake.ogg")
     assert "transcription error" in res
 
+def test_transcribe_audio_ffmpeg_fallback_on_old_av(mock_db_config, mocker):
+    """Regression (cloud): an old PyAV raises
+    "TypeError: open() got an unexpected keyword argument 'metadata_errors'"
+    inside faster-whisper's decode_audio. transcribe_audio must retry with an
+    ffmpeg-decoded numpy array instead of surfacing the error."""
+    import numpy as np
+
+    mock_model = MagicMock()
+    mock_segment = MagicMock()
+    mock_segment.text = "ola mundo"
+    mock_model.transcribe.side_effect = [
+        TypeError("open() got an unexpected keyword argument 'metadata_errors'"),
+        ([mock_segment], None),
+    ]
+    au._whisper_model = mock_model
+    au._current_whisper_model_name = "model_name"
+    mocker.patch(
+        "utils.audio_utils._decode_audio_with_ffmpeg",
+        return_value=np.zeros(1600, dtype="float32"),
+    )
+
+    res = transcribe_audio("fake.ogg")
+    assert res == "ola mundo"
+    assert mock_model.transcribe.call_count == 2
+    # The retry must feed decoded samples, not the original file path
+    second_audio = mock_model.transcribe.call_args_list[1][0][0]
+    assert not isinstance(second_audio, str)
+
+def test_transcribe_audio_fallback_unavailable_keeps_error(mock_db_config, mocker):
+    """When the ffmpeg fallback cannot decode either, the original error must
+    still surface through the standard '[Audio transcription error: ...]'."""
+    mock_model = MagicMock()
+    mock_model.transcribe.side_effect = TypeError(
+        "open() got an unexpected keyword argument 'metadata_errors'"
+    )
+    au._whisper_model = mock_model
+    au._current_whisper_model_name = "model_name"
+    mocker.patch("utils.audio_utils._decode_audio_with_ffmpeg", return_value=None)
+
+    res = transcribe_audio("fake.ogg")
+    assert "transcription error" in res
+    assert "metadata_errors" in res
+
+def test_decode_audio_with_ffmpeg_success(mocker):
+    import numpy as np
+
+    mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value.returncode = 0
+    mocker.patch("utils.file_utils.get_temp_file_path", return_value="/tmp/fb.wav")
+    mocker.patch("os.path.exists", return_value=True)
+    mocker.patch("os.unlink")
+    mocker.patch("soundfile.read", return_value=(np.array([[0.1, 0.2]], dtype="float32"), 16000))
+
+    audio = au._decode_audio_with_ffmpeg("/input.ogg")
+    assert audio is not None
+    assert audio.dtype == np.float32
+
+def test_decode_audio_with_ffmpeg_failure_returns_none(mocker):
+    mocker.patch("subprocess.run")  # returncode 0, but file not written
+    mocker.patch("utils.file_utils.get_temp_file_path", return_value="/tmp/fb.wav")
+    mocker.patch("os.path.exists", return_value=False)
+
+    assert au._decode_audio_with_ffmpeg("/input.ogg") is None
+
 def test_process_base64_audio_to_text(mocker):
     mocker.patch('base64.b64decode', return_value=b"audio data")
     mocker.patch('utils.audio_utils.transcribe_audio', return_value="Decoded text")

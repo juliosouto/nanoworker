@@ -162,6 +162,46 @@ def get_whisper_model():
             _current_whisper_model_name = model_name
     return _whisper_model
 
+def _decode_audio_with_ffmpeg(file_path):
+    """
+    Fallback decoder used when faster-whisper's native PyAV decode fails
+    (e.g. old/incompatible `av` versions raising "TypeError: open() got an
+    unexpected keyword argument 'metadata_errors'").
+
+    Converts the input to 16 kHz mono WAV with the system ffmpeg binary
+    (installed in the Docker image) and loads it as float32 numpy samples,
+    which model.transcribe() accepts directly — bypassing PyAV entirely.
+
+    Returns a float32 numpy array, or None when ffmpeg is unavailable or the
+    conversion fails.
+    """
+    try:
+        import numpy as np
+
+        wav_path = get_temp_file_path("whisper_fallback.wav")
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", file_path, "-ac", "1", "-ar", "16000", wav_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+        if proc.returncode != 0 or not os.path.exists(wav_path):
+            logger.warning(f"ffmpeg fallback decode failed (exit {proc.returncode})")
+            return None
+        audio, _sample_rate = sf.read(wav_path, dtype="float32", always_2d=True)
+        try:
+            os.unlink(wav_path)
+        except OSError:
+            pass
+        return audio.mean(axis=1).astype(np.float32)
+    except FileNotFoundError:
+        logger.warning("ffmpeg binary not found; fallback decode unavailable")
+        return None
+    except Exception as e:
+        logger.warning(f"ffmpeg fallback decode failed: {e}")
+        return None
+
+
 def transcribe_audio(file_path):
     """Transcribe audio file using faster-whisper."""
     model = get_whisper_model()
@@ -190,7 +230,18 @@ def transcribe_audio(file_path):
         except Exception:
             prompt = None
 
-        segments, info = model.transcribe(file_path, beam_size=5, initial_prompt=prompt)
+        try:
+            segments, info = model.transcribe(file_path, beam_size=5, initial_prompt=prompt)
+        except Exception as decode_err:
+            # Old/incompatible PyAV versions fail inside faster-whisper's
+            # decode_audio ("TypeError: open() got an unexpected keyword
+            # argument 'metadata_errors'"). Retry with a system-ffmpeg decoded
+            # numpy array, which bypasses PyAV completely.
+            logger.warning(f"faster-whisper native decode failed ({decode_err}); trying ffmpeg fallback")
+            audio_array = _decode_audio_with_ffmpeg(file_path)
+            if audio_array is None:
+                raise
+            segments, info = model.transcribe(audio_array, beam_size=5, initial_prompt=prompt)
         text = " ".join([segment.text for segment in segments]).strip()
         return f"{text}" if text else "[Audio received, but no text detected]"
     except Exception as e:
