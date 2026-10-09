@@ -17,12 +17,11 @@ from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.message_utils import (
     truncate_message,
-    slice_conversation_to_budget,
-    process_tools_for_llm,
     resolve_worker_from_content,
     clean_mention,
     apply_plan_before_execution,
 )
+from agent.lc.summarizer import summarize_then_trim
 from utils.session import current_session_id
 
 logger = logging.getLogger(__name__)
@@ -297,10 +296,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
     content = apply_plan_before_execution(content)
 
-    # Slice the WHOLE conversation (history + current message) to the combined
-    # MESSAGE_SLICE_SIZE_TOKENS budget: oldest history messages are dropped
-    # first; the current message is only truncated if it alone overflows.
-    history, content = slice_conversation_to_budget(history, content)
+    # Phase-3: slice the whole conversation (history + current message) with
+    # progressive summarization instead of dropping oldest messages blindly:
+    # old blocks are compressed into a cached running summary (sessions.summary)
+    # while the most recent LC_KEEP_RECENT_MSGS stay verbatim; a real-token
+    # langchain_core trimmer is the last resort.
+    history, content = summarize_then_trim(history, content, session_id, cursor, message_in_id)
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part
@@ -327,6 +328,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
         # Build system prompt
         worker_name = worker['worker_name'] if worker else None
+        # Fase 1: decide whether the first model enforces the JSON contract
+        # natively (structured output) so the builder can omit the prose block.
+        from agent.lc import outputs as lc_outputs
+        _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
+        native_structured = lc_outputs.structured_output_enabled(
+            _provider0, models_to_try[0] if models_to_try else ""
+        )
         system_prompt = build_system_prompt(
             cursor=cursor,
             worker=worker,
@@ -334,6 +342,9 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             include_tool_rules=include_tool_rules,
             has_image=bool(current_image_base64),
             worker_name=worker_name,
+            native_structured=native_structured,
+            models_to_try=models_to_try,
+            message_query=content,
         )
 
         # Build config kwargs
@@ -441,7 +452,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         
         SELECT 'model' as role, content, created_at 
         FROM ide_messages_out 
-        WHERE session_id = ?
+        WHERE session_id = ? AND in_reply_to != 'summarize-0'
         
         ORDER BY created_at ASC
     ''', (session_id, message_in_id, session_id))
@@ -462,9 +473,18 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
 
         # Build system prompt
+        # Fase 1: decide native-vs-prompt structured output from the first model.
+        from agent.lc import outputs as lc_outputs
+        _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
+        native_structured = lc_outputs.structured_output_enabled(
+            _provider0, models_to_try[0] if models_to_try else ""
+        )
         system_prompt = build_system_prompt(
             cursor=cursor,
             ide_prompt=ide_prompt,
+            native_structured=native_structured,
+            models_to_try=models_to_try,
+            message_query=content,
         )
 
         # Build config kwargs

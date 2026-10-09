@@ -100,3 +100,57 @@
 .msg-footer {
     display: none !important;
 }
+
+/* IDE Layout Responsiveness */
+.ide-layout-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    grid-template-rows: 1fr 400px;
+    gap: 20px;
+    align-items: stretch;
+    height: calc(100vh - 120px);
+}
+
+.ide-explorer-panel {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+.ide-editor-panel {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+}
+
+.ide-agent-panel {
+    grid-column: 1;
+    grid-row: 2;
+}
+
+@media (max-width: 900px) {
+    .ide-layout-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        height: auto;
+        min-height: calc(100vh - 100px);
+        gap: 16px;
+    }
+
+    .ide-explorer-panel {
+        grid-column: 1;
+        grid-row: auto;
+        max-height: 250px;
+    }
+
+    .ide-editor-panel {
+        grid-column: 1;
+        grid-row: auto;
+        min-height: 450px;
+    }
+
+    .ide-agent-panel {
+        grid-column: 1;
+        grid-row: auto;
+        min-height: 350px;
+    }
+}
+

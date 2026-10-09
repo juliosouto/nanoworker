@@ -325,7 +325,8 @@ def slice_conversation_to_budget(history, current_text):
 
     if mode == "heuristic":
         # Legacy char-based accounting, kept byte-identical for rollback.
-        max_chars = tokens * 4
+        from agent.lc.tokens import CHARS_PER_TOKEN
+        max_chars = tokens * CHARS_PER_TOKEN
         if current_text and len(current_text) > max_chars:
             current_text = current_text[-max_chars:]
         current_len = len(current_text or "")

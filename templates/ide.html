@@ -14,11 +14,10 @@
     <div class="app-container">
         <main class="main-content" style="padding: 20px; width: 100%; display: block;">
             <div class="content-area">
-                <div
-                    style="display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 1fr 400px; gap: 20px; align-items: stretch; height: calc(100vh - 120px);">
+                <div class="ide-layout-grid">
                     <!-- History Sidebar (Explorer) -->
-                    <div class="glass-panel"
-                        style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden; grid-column: 1; grid-row: 1;">
+                    <div class="glass-panel ide-explorer-panel"
+                        style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
                         <div
                             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                             <h3 style="margin: 0; font-size: 1.1rem;">Explorer</h3>
@@ -38,8 +37,8 @@
                     </div>
 
                     <!-- Editor Panel -->
-                    <div id="editor-panel" class="glass-panel"
-                        style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden; grid-column: 2; grid-row: 1 / span 2;">
+                    <div id="editor-panel" class="glass-panel ide-editor-panel"
+                        style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
                         <div
                             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                             <h3 id="editor-title" style="margin: 0; font-size: 1.1rem;">Editor</h3>
@@ -60,8 +59,8 @@
                     </div>
 
                     <!-- Agent Chat -->
-                    <div class=""
-                        style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden; grid-column: 1; grid-row: 2;">
+                    <div class="glass-panel ide-agent-panel"
+                        style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
                         <div
                             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                             <h3 style="margin: 0; font-size: 1.1rem;">Agent</h3>

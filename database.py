@@ -221,6 +221,15 @@ def add_user_memory(instruction: str) -> int:
     conn.commit()
     inserted_id = cursor.lastrowid
     conn.close()
+
+    try:
+        from agent.lc import memory_rag
+
+        retriever = memory_rag.MemoryRetriever()
+        retriever.upsert(inserted_id, instruction)
+    except Exception:
+        pass  # index failure must never break the DB write
+
     return inserted_id
 
 def get_all_user_memories() -> list:
@@ -281,6 +290,15 @@ def delete_user_memory(memory_id: int) -> bool:
     conn.commit()
     success = cursor.rowcount > 0
     conn.close()
+
+    try:
+        from agent.lc import memory_rag
+
+        retriever = memory_rag.MemoryRetriever()
+        retriever.remove(memory_id)
+    except Exception:
+        pass  # index failure must never break the DB write
+
     return success
 
 def update_user_memory(memory_id: int, instruction: str) -> bool:
@@ -300,6 +318,15 @@ def update_user_memory(memory_id: int, instruction: str) -> bool:
     conn.commit()
     success = cursor.rowcount > 0
     conn.close()
+
+    try:
+        from agent.lc import memory_rag
+
+        retriever = memory_rag.MemoryRetriever()
+        retriever.upsert(memory_id, instruction)
+    except Exception:
+        pass  # index failure must never break the DB write
+
     return success
 
 def get_tool_enabled(tool_name: str) -> bool:
@@ -467,6 +494,11 @@ def init_db():
     if not row:
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LC_TOKEN_COUNTER', 'tiktoken')")
 
+    cursor.execute("SELECT value FROM app_config WHERE key = 'LC_STRUCTURED_OUTPUT'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LC_STRUCTURED_OUTPUT', 'auto')")
+
     # LLM Config Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS llm_config (
@@ -528,6 +560,18 @@ def init_db():
         cursor.execute("ALTER TABLE sessions ADD COLUMN project_path TEXT")
     except sqlite3.OperationalError:
         # Column already exists
+        pass
+
+    # Session summary cache for the phase-3 progressive summarization.
+    # Idempotent: if the column already exists, the ALTER raises OperationalError
+    # and the column is left untouched.
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN summary TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN summary_until TEXT")
+    except sqlite3.OperationalError:
         pass
 
     # Cron Jobs Table
@@ -823,8 +867,53 @@ def init_db():
         # Delete old key from app_config
         cursor.execute('DELETE FROM app_config WHERE key = ?', (key,))
 
+    # LLM Usage Table (Fase 6): token accounting per agent turn, collected from
+    # usage_metadata (LangChain runner) and the native usage fields of the
+    # legacy provider loops. The `stack` column ('legacy' | 'langchain') powers
+    # the before/after comparison shown on the dashboard.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS llm_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT,
+        message_in_id TEXT,
+        stack TEXT NOT NULL DEFAULT 'legacy',
+        model TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_created ON llm_usage (created_at)
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_stack_created ON llm_usage (stack, created_at)
+    ''')
+
     conn.commit()
     conn.close()
+
+
+def clear_session_summary(session_id: str) -> None:
+    """Clears the progressive summarization cache for a session (e.g. after
+    '/new' resets messages_in/messages_out) so a stale summary cannot leak
+    into a fresh conversation.
+    """
+    from database import get_db
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            'UPDATE sessions SET summary = NULL, summary_until = NULL WHERE id = ?',
+            (session_id,),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Column does not exist on very old databases: nothing to clear.
+        pass
+    finally:
+        conn.close()
+
 
 if __name__ == '__main__':
     init_db()

@@ -2,12 +2,14 @@
 OpenAI tool schema conversion and the shared execution loop
 for OpenAI-compatible LLM providers (OpenAI, Groq, Qwen).
 """
+
 import inspect
 import json
 import re
-import uuid
 
 from agent.db_feedback import insert_feedback
+from agent.lc import settings as lc_settings
+from agent.lc.tools_lc import first_line_description
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
@@ -58,14 +60,11 @@ def _is_rate_limit_error(error: Exception) -> bool:
     error_str = str(error)
     lowered = error_str.lower()
     code = getattr(error, "code", None)
-    return (
-        ("429" in error_str or code == 429 or "resource_exhausted" in lowered)
-        and (
-            "quota" in lowered
-            or "rate limit" in lowered
-            or "rate-limit" in lowered
-            or "retry in" in lowered
-        )
+    return ("429" in error_str or code == 429 or "resource_exhausted" in lowered) and (
+        "quota" in lowered
+        or "rate limit" in lowered
+        or "rate-limit" in lowered
+        or "retry in" in lowered
     )
 
 
@@ -87,9 +86,14 @@ def convert_to_openai_tool(func) -> dict:
     """
     name = func.__name__
 
-    # Docstring parsing for description
+    # Phase 4: use a short first-line description when compact schema mode is on.
     doc = func.__doc__ or ""
-    description = doc.strip().split("\n\n")[0].strip() if doc else f"Executes function {name}"
+    if lc_settings.tool_compact_schema():
+        description = first_line_description(func)
+    else:
+        description = (
+            doc.strip().split("\n\n")[0].strip() if doc else f"Executes function {name}"
+        )
 
     sig = inspect.signature(func)
     properties = {}
@@ -102,7 +106,7 @@ def convert_to_openai_tool(func) -> dict:
         float: "number",
         bool: "boolean",
         list: "array",
-        dict: "object"
+        dict: "object",
     }
 
     for param_name, param in sig.parameters.items():
@@ -121,16 +125,17 @@ def convert_to_openai_tool(func) -> dict:
                         param_desc = parts[1].strip()
                         break
 
-        properties[param_name] = {
-            "type": param_type,
-            "description": param_desc
-        }
+        properties[param_name] = {"type": param_type, "description": param_desc}
 
         # Detect fixed-choice values ("Must be one of: 'a', 'b', 'c'.") and expose
         # them as an enum so small models don't send invalid values.
         one_of = re.search(r"Must be one of[:\s]*([^.]+)", param_desc)
         if one_of:
-            choices = [v.strip().strip("'\"") for v in re.split(r"[,]|\bor\b", one_of.group(1)) if v.strip()]
+            choices = [
+                v.strip().strip("'\"")
+                for v in re.split(r"[,]|\bor\b", one_of.group(1))
+                if v.strip()
+            ]
             if len(choices) >= 2:
                 properties[param_name]["enum"] = choices
 
@@ -145,9 +150,9 @@ def convert_to_openai_tool(func) -> dict:
             "parameters": {
                 "type": "object",
                 "properties": properties,
-                "required": required
-            }
-        }
+                "required": required,
+            },
+        },
     }
 
 
@@ -161,12 +166,28 @@ def _describe_tool_args(func) -> str:
     for pname, param in sig.parameters.items():
         if pname in ("self", "args", "kwargs"):
             continue
-        default = "" if param.default is inspect.Parameter.empty else f" (default: {param.default!r})"
+        default = (
+            ""
+            if param.default is inspect.Parameter.empty
+            else f" (default: {param.default!r})"
+        )
         parts.append(f"{pname}{default}")
     return ", ".join(parts) if parts else "(no arguments)"
 
 
-def execute_openai_compatible_llm(client, model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, limit_tokens: int = None, on_complete=None) -> str:
+def execute_openai_compatible_llm(
+    client,
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    limit_tokens: int = None,
+    on_complete=None,
+) -> str:
     """
     Unified recursive executor loop for OpenAI-compatible LLM providers that dynamically
     converts tools and executes python function calls.
@@ -174,13 +195,18 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     # 1. Map history and content to OpenAI format
     messages = []
     show_tools_results = config_kwargs.pop("show_tools_results", True)
+    # Fase 1: structured output contract injected by route_llm_call for
+    # providers that support the native response_format parameter.
+    response_format = config_kwargs.pop("lc_openai_response_format", None)
 
     if "system_instruction" in config_kwargs:
-        messages.append({"role": "system", "content": config_kwargs["system_instruction"]})
+        messages.append(
+            {"role": "system", "content": config_kwargs["system_instruction"]}
+        )
 
     for msg in history:
         role = "user" if msg.role == "user" else "assistant"
-        text_parts = [p.text for p in msg.parts if getattr(p, 'text', None)]
+        text_parts = [p.text for p in msg.parts if getattr(p, "text", None)]
         messages.append({"role": role, "content": " ".join(text_parts)})
 
     if isinstance(content, list):
@@ -188,7 +214,7 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
         for p in content:
             if isinstance(p, str):
                 text_parts.append(p)
-            elif getattr(p, 'text', None):
+            elif getattr(p, "text", None):
                 text_parts.append(p.text)
     else:
         text_parts = [content]
@@ -196,18 +222,26 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
 
     # 2. Convert raw python functions into OpenAI tool schemas
     permitted_tools = config_kwargs.get("tools", [])
-    openai_tools = [convert_to_openai_tool(f) for f in permitted_tools] if permitted_tools else None
+    openai_tools = (
+        [convert_to_openai_tool(f) for f in permitted_tools]
+        if permitted_tools
+        else None
+    )
 
     # Normalize model name for reasoning detection
     model_lower = model_name.lower()
     model_base = model_lower.split("/")[-1] if "/" in model_lower else model_lower
-    is_reasoning = model_base.startswith("o1") or model_base.startswith("o3") or "nano" in model_base
+    is_reasoning = (
+        model_base.startswith("o1")
+        or model_base.startswith("o3")
+        or "nano" in model_base
+    )
 
     try:
         max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
     except Exception:
         max_iterations = 10
-    
+
     try:
         agent_name = get_config("agent_name", "Agent")
     except Exception:
@@ -215,6 +249,25 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
 
     # 3. Tool execution loop
     iteration = 0
+    # Fase 6: usage accounting. usage_in/usage_out accumulate response.usage
+    # across loop iterations; log_usage() flushes ONE aggregated row per turn.
+    # Defining it as a closure avoids try/finally re-indenting the whole loop
+    # body: every return below calls it first.
+    usage_in = 0
+    usage_out = 0
+
+    def log_usage():
+        try:
+            from agent.llm_usage import log_llm_usage
+
+            if usage_in or usage_out:
+                log_llm_usage(
+                    session_id, message_in_id, "legacy", model_name,
+                    usage_in, usage_out,
+                )
+        except Exception:
+            pass
+
     while iteration < max_iterations:
         call_args = {
             "model": model_name,
@@ -231,6 +284,11 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             if limit_tokens:
                 call_args["max_completion_tokens"] = limit_tokens
 
+        # Fase 1: enforce the AgentResponse JSON contract natively. Skipped for
+        # reasoning models (o1/o3), which reject response_format on some gateways.
+        if response_format and not is_reasoning:
+            call_args["response_format"] = response_format
+
         # Call the API, retrying transient errors with real-time feedback before
         # giving up and letting the model fallback chain take over. Covers:
         #   - 429 rate-limit / quota errors (wait for the provider's hint).
@@ -246,7 +304,21 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 break
             except Exception as e:
                 err_msg = str(e).lower()
-                if "max_tokens" in err_msg or "unsupported" in err_msg or "parameter" in err_msg:
+                if response_format and (
+                    "response_format" in err_msg or "json_schema" in err_msg
+                ):
+                    # Fase 1: this gateway rejects the response_format parameter
+                    # (or our json_schema variant). Drop it and retry once; the
+                    # prose JSON-schema block stays absent, but the balanced
+                    # parser still recovers the contract from plain text.
+                    response_format = None
+                    call_args.pop("response_format", None)
+                    continue
+                if (
+                    "max_tokens" in err_msg
+                    or "unsupported" in err_msg
+                    or "parameter" in err_msg
+                ):
                     # Older / compatible APIs reject `max_tokens`; retry with the
                     # `max_completion_tokens` alias used by reasoning models.
                     fallback_args = {
@@ -280,7 +352,9 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 else:
                     raise e
 
-                insert_feedback(cursor, table, session_id, message_in_id, retry_feedback)
+                insert_feedback(
+                    cursor, table, session_id, message_in_id, retry_feedback
+                )
                 if on_complete:
                     try:
                         on_complete(retry_feedback)
@@ -289,40 +363,60 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 if sleep_interruptible(wait_seconds):
                     raise StopRequestedError()
 
+        # Fase 6: accumulate this iteration's usage before any early exit.
+        try:
+            resp_usage = getattr(response, "usage", None)
+            if resp_usage is not None:
+                usage_in += getattr(resp_usage, "prompt_tokens", 0) or 0
+                usage_out += getattr(resp_usage, "completion_tokens", 0) or 0
+        except Exception:
+            pass
+
         if not response.choices:
             iteration += 1
             if iteration >= max_iterations:
+                log_usage()
                 return "Error: Model returned empty responses after maximum retries."
-            insert_feedback(cursor, table, session_id, message_in_id,
-                f"⚠️ Empty response from model (attempt {iteration}/{max_iterations}). Retrying...")
+            insert_feedback(
+                cursor,
+                table,
+                session_id,
+                message_in_id,
+                f"⚠️ Empty response from model (attempt {iteration}/{max_iterations}). Retrying...",
+            )
             if sleep_interruptible(2):
                 raise StopRequestedError()
             continue
 
         message = response.choices[0].message
-        tool_calls = getattr(message, 'tool_calls', None)
+        tool_calls = getattr(message, "tool_calls", None)
 
         if not tool_calls:
             # We reached the final text answer, return it
+            log_usage()
             return message.content or ""
 
         # We have tool calls!
         # A. Append assistant message with tool calls to standard OpenAI history
         serialized_tool_calls = []
         for tc in tool_calls:
-            serialized_tool_calls.append({
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments
+            serialized_tool_calls.append(
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
                 }
-            })
-        messages.append({
-            "role": "assistant",
-            "content": message.content,
-            "tool_calls": serialized_tool_calls
-        })
+            )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": serialized_tool_calls,
+            }
+        )
 
         # B. Execute the tools in Python and log feedback in the output table
         tools_used = []
@@ -339,7 +433,9 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                 try:
                     args = json.loads(arguments_str)
                     if not isinstance(args, dict):
-                        args_error = f"expected a JSON object but got a {type(args).__name__}"
+                        args_error = (
+                            f"expected a JSON object but got a {type(args).__name__}"
+                        )
                 except Exception as je:
                     args_error = f"invalid JSON ({str(je)})"
 
@@ -348,27 +444,37 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             insert_feedback(cursor, table, session_id, message_in_id, msg_start)
 
             tool_func = next(
-                (f for f in permitted_tools if getattr(f, '__name__', '') == tool_name),
+                (f for f in permitted_tools if getattr(f, "__name__", "") == tool_name),
                 None,
             )
             result = "Tool not found"
             if tool_func is None:
-                available = ", ".join(
-                    sorted(getattr(f, '__name__', '') for f in permitted_tools)) or "none"
-                result = (f"Error: tool '{tool_name}' does not exist. "
-                          f"Available tools: {available}. Call one of these instead.")
+                available = (
+                    ", ".join(
+                        sorted(getattr(f, "__name__", "") for f in permitted_tools)
+                    )
+                    or "none"
+                )
+                result = (
+                    f"Error: tool '{tool_name}' does not exist. "
+                    f"Available tools: {available}. Call one of these instead."
+                )
             elif args_error:
                 expected = _describe_tool_args(tool_func)
-                result = (f"Error: arguments for {tool_name} could not be parsed ({args_error}). "
-                          f"Expected arguments: {expected}. "
-                          f"Provide a valid JSON object with ONLY those keys.")
+                result = (
+                    f"Error: arguments for {tool_name} could not be parsed ({args_error}). "
+                    f"Expected arguments: {expected}. "
+                    f"Provide a valid JSON object with ONLY those keys."
+                )
             else:
                 try:
                     result = tool_func(**args)
                 except TypeError as te:
                     expected = _describe_tool_args(tool_func)
-                    result = (f"Error executing {tool_name}: {str(te)}. "
-                              f"Expected arguments: {expected}.")
+                    result = (
+                        f"Error executing {tool_name}: {str(te)}. "
+                        f"Expected arguments: {expected}."
+                    )
                 except Exception as ex:
                     result = f"Error executing {tool_name}: {str(ex)}"
 
@@ -377,12 +483,14 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             tool_results.append(str(result))
 
             # Append tool response message to OpenAI history
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "name": tool_name,
-                "content": str(result)
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tool_name,
+                    "content": str(result),
+                }
+            )
 
         # Log execution finished
         if tools_used:
@@ -400,8 +508,10 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
         if iteration == max_iterations:
             messages.append({"role": "user", "content": f"{agent_name} continue"})
             max_iterations += int(get_config("AUTONOMOUS_MODE", "10"))
-            
+
             if iteration > 100:  # Hard safety limit
+                log_usage()
                 return "Error: Tool execution loop exceeded absolute maximum limit."
 
+    log_usage()
     return "Error: Tool execution loop exceeded maximum iterations."

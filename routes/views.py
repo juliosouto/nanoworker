@@ -528,6 +528,21 @@ def dashboard_page():
     
     login_enabled = get_config('LOGIN_ENABLED', 'false') == 'true'
     login_token = get_config('LOGIN_TOKEN', '') if login_enabled else ''
+    # Fase 6: LLM usage before/after (legacy vs langchain) for the dashboard
+    # card. days comes from ?days=N (default 14); the helpers clamp 1..90.
+    # Missing llm_usage table on pre-Fase-6 databases yields empty lists,
+    # which the template renders as a "no data yet" note.
+    from flask import request
+
+    from agent.llm_usage import get_usage_by_model, get_usage_summary
+
+    try:
+        usage_days = int(request.args.get('days', 14))
+    except (TypeError, ValueError):
+        usage_days = 14
+    usage_summary = get_usage_summary(usage_days)
+    usage_by_model = get_usage_by_model(usage_days)
+
     
     return render_template('dashboard.html', 
                            user_tokens=user_tokens,
@@ -544,4 +559,7 @@ def dashboard_page():
                            total_max=total_max,
                            double_check_tokens=double_check_tokens,
                            login_enabled=login_enabled,
-                           login_token=login_token)
+                           login_token=login_token,
+                           usage_days=usage_days,
+                           usage_summary=usage_summary,
+                           usage_by_model=usage_by_model)

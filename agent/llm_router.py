@@ -2,8 +2,8 @@
 LLM routing logic: selects the correct provider based on database config,
 and implements fallback across multiple models.
 """
+
 import logging
-import uuid
 
 from agent.db_feedback import insert_feedback
 from agent.stop_check import StopRequestedError
@@ -51,14 +51,15 @@ def _history_text(msg) -> str:
             return content
         if isinstance(content, list):
             return " ".join(
-                c.get("text", "") if isinstance(c, dict) else str(c)
-                for c in content
+                c.get("text", "") if isinstance(c, dict) else str(c) for c in content
             )
         return str(content) if content else ""
     return str(getattr(msg, "content", "") or "")
 
 
-def _prune_history_to_fit(history, context_window, config_kwargs, content, max_output_tokens=None):
+def _prune_history_to_fit(
+    history, context_window, config_kwargs, content, max_output_tokens=None
+):
     """
     Trims old conversation history to fit within the model's context window.
 
@@ -84,23 +85,40 @@ def _prune_history_to_fit(history, context_window, config_kwargs, content, max_o
     # "Max Output Tokens" for the model we use it; otherwise we mirror the output
     # reservation that API gateways (e.g. OpenRouter) apply by default (32000).
     try:
-        reserve_output = int(max_output_tokens) if max_output_tokens else _DEFAULT_OUTPUT_RESERVE
+        reserve_output = (
+            int(max_output_tokens) if max_output_tokens else _DEFAULT_OUTPUT_RESERVE
+        )
     except (ValueError, TypeError):
         reserve_output = _DEFAULT_OUTPUT_RESERVE
 
     # Cost of the system prompt, the tools and the current user message.
     # The token counter mode is resolved once for the whole pruning pass.
     mode = lc_settings.token_counter_mode()
-    system_token = _estimate_tokens(config_kwargs.get("system_instruction", ""), mode=mode)
+    system_token = _estimate_tokens(
+        config_kwargs.get("system_instruction", ""), mode=mode
+    )
+    # Phase 4: count the tools payload with the effective description
+    # (first line when compact schema mode is on, first section otherwise),
+    # matching exactly what is sent to the LLM.
     tools_token = 0
     for tool in config_kwargs.get("tools", []) or []:
-        tools_token += _estimate_tokens(getattr(tool, "__doc__", "") or "", mode=mode)
+        doc = getattr(tool, "__doc__", "") or ""
+        if lc_settings.tool_compact_schema():
+            for line in doc.splitlines():
+                if line.strip():
+                    tools_token += _estimate_tokens(line.strip(), mode=mode)
+                    break
+        else:
+            tools_token += _estimate_tokens(
+                doc.strip().split("\n\n")[0].strip(), mode=mode
+            )
 
     current_token = _estimate_tokens(content, mode=mode)
     if isinstance(content, list):
-        current_token = _estimate_tokens(" ".join(
-            p.text if getattr(p, "text", None) else str(p) for p in content
-        ), mode=mode)
+        current_token = _estimate_tokens(
+            " ".join(p.text if getattr(p, "text", None) else str(p) for p in content),
+            mode=mode,
+        )
 
     budget = (
         context
@@ -129,7 +147,18 @@ def _prune_history_to_fit(history, context_window, config_kwargs, content, max_o
     return history
 
 
-def route_llm_call(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, is_ide: bool, on_complete=None) -> str:
+def route_llm_call(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    is_ide: bool,
+    on_complete=None,
+    summarize: bool = False,
+) -> str:
     """
     Routes the LLM call to the appropriate provider (Qwen, Groq, OpenAI, or Gemini)
     based on the configurations stored in the database for the requested model.
@@ -151,9 +180,13 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
     table = "ide_messages_out" if is_ide else "messages_out"
 
     from database import get_db, decrypt_value
+
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT provider, api_key, thinking, context_window, max_output_tokens FROM llm_config WHERE model_name = ?", (model_name,))
+    c.execute(
+        "SELECT provider, api_key, thinking, context_window, max_output_tokens FROM llm_config WHERE model_name = ?",
+        (model_name,),
+    )
     row = c.fetchone()
     conn.close()
 
@@ -164,34 +197,72 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
     max_output_tokens = None
     if row:
         try:
-            provider = row['provider'].lower() if row['provider'] else None
+            provider = row["provider"].lower() if row["provider"] else None
         except (KeyError, IndexError, TypeError):
             provider = None
         try:
-            if row['api_key']:
-                api_key = decrypt_value(row['api_key'])
+            if row["api_key"]:
+                api_key = decrypt_value(row["api_key"])
         except (KeyError, IndexError, TypeError):
             api_key = None
         try:
-            model_thinking = bool(row['thinking'])
+            model_thinking = bool(row["thinking"])
         except (KeyError, IndexError, TypeError):
             model_thinking = False
         try:
-            context_window = row['context_window']
+            context_window = row["context_window"]
         except (KeyError, IndexError, TypeError):
             context_window = None
         try:
-            max_output_tokens = row['max_output_tokens']
+            max_output_tokens = row["max_output_tokens"]
         except (KeyError, IndexError, TypeError):
             max_output_tokens = None
 
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
-        local_kwargs.pop('thinking_config', None)
+        local_kwargs.pop("thinking_config", None)
+
+    # Fase 1: enforce the AgentResponse JSON contract natively when the
+    # LangChain stack is active and the provider supports structured output.
+    # local_kwargs is a per-model copy, so these additions never leak into the
+    # next model of the fallback chain.
+    from agent.lc import outputs as lc_outputs
+
+    # When route_llm_call is used as a summarizer backend (no contract), skip
+    # the native structured-output patch that would otherwise break the call.
+    if not summarize:
+        if lc_outputs.structured_output_enabled(provider, model_name):
+            local_kwargs.update(lc_outputs.build_structured_kwargs(provider))
 
     # Trim old history to the model's context window configured in the LLM models UI.
     # Only active when 'Context Window' is set; otherwise history is passed as-is.
-    history = _prune_history_to_fit(history, context_window, local_kwargs, content, max_output_tokens or None)
+    history = _prune_history_to_fit(
+        history, context_window, local_kwargs, content, max_output_tokens or None
+    )
+
+    # Fase 5: LangChain execution stack. When LLM_STACK=langchain, route through
+    # the unified LangChainAgentRunner instead of the provider-specific loops.
+    # Kept above every provider branch so it reuses the already-resolved
+    # provider/api_key/max_output_tokens and the structured-output kwargs. The
+    # summarizer backend (summarize=True) stays on the legacy path: it expects a
+    # plain-text completion, not the AgentResponse JSON contract the runner enforces.
+    if lc_settings.stack_enabled() and not summarize:
+        from agent.lc import runner as lc_runner
+
+        return lc_runner.run_langchain_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            provider=provider,
+            api_key=api_key,
+            max_output_tokens=max_output_tokens,
+            on_complete=on_complete,
+        )
 
     # NVIDIA is checked first (before the Qwen/OpenAI branches) because NIM hosts
     # models whose last path segment overlaps other providers' heuristics, e.g.
@@ -199,24 +270,117 @@ def route_llm_call(model_name: str, history: list, config_kwargs: dict, content,
     # Relying on the "provider" column (user-configured) is the source of truth;
     # "nvidia/" prefix fallback covers models not registered in llm_config.
     if provider == "nvidia" or model_name.lower().startswith("nvidia/"):
-        return _providers.call_nvidia_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
+        return _providers.call_nvidia_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            max_output_tokens,
+            on_complete=on_complete,
+        )
     elif provider == "qwen" or model_name.lower().startswith("qwen"):
-        return _providers.call_qwen_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, on_complete=on_complete)
+        return _providers.call_qwen_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            on_complete=on_complete,
+        )
     elif provider == "groq" or model_name.lower().startswith("groq/"):
-        return _providers.call_groq_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
+        return _providers.call_groq_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            max_output_tokens,
+            on_complete=on_complete,
+        )
     elif provider == "openai" or model_name.lower().startswith("openai/"):
-        return _providers.call_openai_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
+        return _providers.call_openai_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            max_output_tokens,
+            on_complete=on_complete,
+        )
     elif provider == "ollama" or model_name.lower().startswith("ollama/"):
         from database import get_config
+
         ollama_base_url = get_config("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        return _providers.call_ollama_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, ollama_base_url, max_output_tokens, on_complete=on_complete)
+        return _providers.call_ollama_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            ollama_base_url,
+            max_output_tokens,
+            on_complete=on_complete,
+        )
     elif provider == "openrouter" or model_name.lower().startswith("openrouter/"):
-        return _providers.call_openrouter_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, max_output_tokens, on_complete=on_complete)
+        return _providers.call_openrouter_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            max_output_tokens,
+            on_complete=on_complete,
+        )
     else:
-        return _providers.call_gemini_llm(model_name, history, local_kwargs, content, cursor, session_id, message_in_id, table, api_key, on_complete=on_complete)
+        return _providers.call_gemini_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            on_complete=on_complete,
+        )
 
 
-def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models_to_try: list, cursor, session_id: str, message_in_id: str, is_ide: bool = False, on_complete=None) -> str:
+def invoke_llm_with_fallback(
+    history: list,
+    config_kwargs: dict,
+    content,
+    models_to_try: list,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    is_ide: bool = False,
+    on_complete=None,
+) -> str:
     """
     Iteratively tries to invoke a list of preferred models in case of failure.
     Logs feedback messages in the database informing model changes.
@@ -237,39 +401,55 @@ def invoke_llm_with_fallback(history: list, config_kwargs: dict, content, models
     """
     table = "ide_messages_out" if is_ide else "messages_out"
 
-    cursor.execute(f'''
+    cursor.execute(
+        f"""
         SELECT content FROM {table} 
         WHERE session_id = ? 
         AND (content LIKE 'Using %' OR content LIKE 'Changing to %')
         ORDER BY rowid DESC LIMIT 1
-    ''', (session_id,))
+    """,
+        (session_id,),
+    )
     last_feedback = cursor.fetchone()
 
     last_model = None
     if last_feedback:
-        last_content = last_feedback['content']
-        if last_content.startswith('Using '):
+        last_content = last_feedback["content"]
+        if last_content.startswith("Using "):
             last_model = last_content[6:]
-        elif last_content.startswith('Changing to '):
+        elif last_content.startswith("Changing to "):
             last_model = last_content[12:]
 
     first_model = models_to_try[0]
     if first_model != last_model:
-        insert_feedback(cursor, table, session_id, message_in_id, f"Using {first_model}")
+        insert_feedback(
+            cursor, table, session_id, message_in_id, f"Using {first_model}"
+        )
 
     for i, model_name in enumerate(models_to_try):
         if i > 0:
-            insert_feedback(cursor, table, session_id, message_in_id, f"Changing to {model_name}")
+            insert_feedback(
+                cursor, table, session_id, message_in_id, f"Changing to {model_name}"
+            )
 
         try:
-            response_text = route_llm_call(model_name, history, config_kwargs, content, cursor, session_id, message_in_id, is_ide, on_complete=on_complete)
+            response_text = route_llm_call(
+                model_name,
+                history,
+                config_kwargs,
+                content,
+                cursor,
+                session_id,
+                message_in_id,
+                is_ide,
+                on_complete=on_complete,
+            )
             return response_text
         except StopRequestedError:
             # The user requested /stop while a retry was in flight: abort the
             # whole fallback chain instead of switching to the next model.
             raise
         except Exception as e:
-            error_str = str(e)
             if i < len(models_to_try) - 1:
                 continue
             else:

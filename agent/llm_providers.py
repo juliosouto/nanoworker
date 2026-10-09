@@ -2,14 +2,15 @@
 LLM provider-specific call functions.
 Each function handles the API client setup and delegates to the appropriate execution loop.
 """
+
 import time
-import uuid
 
 from google import genai
 from google.genai import types
 
 from agent.db_feedback import insert_feedback
 from agent.openai_tools import execute_openai_compatible_llm
+from agent.lc import settings as lc_settings
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
@@ -22,7 +23,9 @@ def _is_minute_quota_exceeded(error_str: str, exception: Exception) -> bool:
     Daily quotas ("PerDay") are excluded: waiting for the minute is useless there.
     """
     code = getattr(exception, "code", None)
-    is_quota_429 = ("429" in error_str or code == 429) and "RESOURCE_EXHAUSTED" in error_str
+    is_quota_429 = (
+        "429" in error_str or code == 429
+    ) and "RESOURCE_EXHAUSTED" in error_str
     return is_quota_429 and "PerDay" not in error_str
 
 
@@ -35,14 +38,29 @@ def _wait_seconds_for_quota(error_str: str) -> float:
     retry_delay = 0.0
     if "Please retry in " in error_str:
         try:
-            retry_delay = float(error_str.split("Please retry in ")[1].split("s")[0].strip())
+            retry_delay = float(
+                error_str.split("Please retry in ")[1].split("s")[0].strip()
+            )
         except (IndexError, ValueError):
             retry_delay = 0.0
-    next_minute_wait = 60 - (time.time() % 60) + 3  # seconds until the minute turns, plus margin
+    next_minute_wait = (
+        60 - (time.time() % 60) + 3
+    )  # seconds until the minute turns, plus margin
     return max(retry_delay, next_minute_wait)
 
 
-def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, on_complete=None) -> str:
+def call_gemini_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the Google Gemini API.
     Supports tool calls (function calling) with a manual loop
@@ -70,18 +88,37 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     # Extract show_tools_results so it's not passed to the Gemini API
     show_tools_results = config_kwargs.pop("show_tools_results", True)
 
+    # Fase 1: Gemini rejects response_schema when function calling is enabled;
+    # keep only the JSON mime type in that case (structured output degrades to
+    # plain JSON mode, which the balanced parser still validates).
+    if config_kwargs.get("tools"):
+        config_kwargs.pop("response_schema", None)
+
     # Disable automatic function calling so we can handle it manually
     if "tools" in config_kwargs and config_kwargs["tools"]:
-        config_kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
+        config_kwargs["automatic_function_calling"] = (
+            types.AutomaticFunctionCallingConfig(disable=True)
+        )
+
+    # Phase 4: build explicit FunctionDeclaration schemas (slim descriptions)
+    # instead of letting the SDK extract the full docstring as description.
+    # NOTE: keep a reference to the original callables for manual execution
+    # below; the SDK-only declarations are sent to the model but never used to
+    # dispatch function calls.
+    tool_functions = config_kwargs.get("tools")
+    if tool_functions and lc_settings.tool_compact_schema():
+        from agent.lc.tools_lc import gemini_tool_declarations
+
+        config_kwargs["tools"] = gemini_tool_declarations(tool_functions)
 
     # Apply the worker-configured temperature if present; otherwise keep Gemini's
     # default (2.0 as before).
-    config_kwargs.setdefault('temperature', 2.0)
+    config_kwargs.setdefault("temperature", 2.0)
 
     chat = client.chats.create(
         model=model_name,
         history=history,
-        config=types.GenerateContentConfig(**config_kwargs)
+        config=types.GenerateContentConfig(**config_kwargs),
     )
 
     success = False
@@ -92,7 +129,7 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
         max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
     except Exception:
         max_iterations = 10
-        
+
     try:
         agent_name = get_config("agent_name", "Agent")
     except Exception:
@@ -100,6 +137,24 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
 
     # Tool execution loop
     iteration = 0
+    # Fase 6: usage accounting. usage_in/usage_out accumulate
+    # response.usage_metadata across loop iterations; log_usage() flushes ONE
+    # aggregated row per turn (called before every return below).
+    usage_in = 0
+    usage_out = 0
+
+    def log_usage():
+        try:
+            from agent.llm_usage import log_llm_usage
+
+            if usage_in or usage_out:
+                log_llm_usage(
+                    session_id, message_in_id, "legacy", model_name,
+                    usage_in, usage_out,
+                )
+        except Exception:
+            pass
+
     while iteration < max_iterations:
         response = None
         for attempt in range(max_retries):
@@ -135,7 +190,24 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                     if sleep_interruptible(wait_seconds):
                         raise StopRequestedError()
                     continue
-                elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
+                elif "response_schema" in error_str and getattr(e, "code", 0) == 400:
+                    # Gemini rejected response_schema (e.g. unsupported JSON schema
+                    # shape/fields for this model/version). Degrade to plain JSON mode
+                    # (response_mime_type stays) and retry once without the schema key.
+                    if attempt >= max_retries - 1:
+                        raise e  # retries exhausted: fall back to the model fallback chain
+                    config_kwargs = {
+                        k: v for k, v in config_kwargs.items() if k != "response_schema"
+                    }
+                    chat = client.chats.create(
+                        model=model_name,
+                        history=history,
+                        config=types.GenerateContentConfig(**config_kwargs),
+                    )
+                    continue
+                elif any(
+                    err in error_str for err in ["400", "401", "403", "429"]
+                ) or getattr(e, "code", 0) in [400, 401, 403, 429]:
                     raise e
                 else:
                     raise e
@@ -143,10 +215,23 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
         if not response:
             break  # All retries failed
 
-        function_calls = getattr(response, 'function_calls', []) or []
-        if not function_calls and hasattr(response, 'candidates') and response.candidates:
+        # Fase 6: accumulate this iteration's usage before any early exit.
+        try:
+            um = getattr(response, "usage_metadata", None)
+            if um is not None:
+                usage_in += getattr(um, "prompt_token_count", 0) or 0
+                usage_out += getattr(um, "candidates_token_count", 0) or 0
+        except Exception:
+            pass
+
+        function_calls = getattr(response, "function_calls", []) or []
+        if (
+            not function_calls
+            and hasattr(response, "candidates")
+            and response.candidates
+        ):
             for part in response.candidates[0].content.parts:
-                if getattr(part, 'function_call', None):
+                if getattr(part, "function_call", None):
                     function_calls.append(part.function_call)
 
         if not function_calls:
@@ -154,7 +239,9 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
             success = True
             break
 
-        permitted_tools = config_kwargs.get("tools", [])
+        # NOTE: use the original callables for dispatch (declarations were sent
+        # to the model but do not carry executable functions).
+        permitted_tools = tool_functions or []
         tools_used = []
         tool_results = []
         function_responses = []
@@ -170,7 +257,7 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
             # Execute Python function
             result = "Tool not found"
             for f in permitted_tools:
-                if getattr(f, '__name__', '') == tool_name:
+                if getattr(f, "__name__", "") == tool_name:
                     try:
                         result = f(**args)
                     except Exception as ex:
@@ -182,10 +269,9 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
             tool_results.append(str(result))
 
             resp_dict = result if isinstance(result, dict) else {"result": result}
-            function_responses.append(types.Part.from_function_response(
-                name=tool_name,
-                response=resp_dict
-            ))
+            function_responses.append(
+                types.Part.from_function_response(name=tool_name, response=resp_dict)
+            )
 
         # Log execution finished
         if tools_used:
@@ -201,20 +287,36 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
 
         iteration += 1
         if iteration == max_iterations:
-            function_responses.append(types.Part.from_text(text=f"{agent_name} continue"))
+            function_responses.append(
+                types.Part.from_text(text=f"{agent_name} continue")
+            )
             max_iterations += int(get_config("AUTONOMOUS_MODE", "10"))
-            
+
             if iteration > 100:  # Hard safety limit
+                log_usage()
                 return "Error: Tool execution loop exceeded absolute maximum limit."
 
         current_content = function_responses
 
     if success:
+        log_usage()
         return response_text or "Executed tool calls successfully."
+    log_usage()
     return "Error: Gemini model failed or exceeded maximum iterations."
 
 
-def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, on_complete=None) -> str:
+def call_qwen_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the OpenAI API compatible with Qwen models (DashScope).
 
@@ -233,6 +335,7 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content, 
         str: The generated response text.
     """
     import openai
+
     if not api_key:
         raise ValueError("API Key for Qwen model is not set.")
 
@@ -240,10 +343,33 @@ def call_qwen_llm(model_name: str, history: list, config_kwargs: dict, content, 
         api_key=api_key,
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     )
-    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, on_complete=on_complete)
+    return execute_openai_compatible_llm(
+        client,
+        model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        on_complete=on_complete,
+    )
 
 
-def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
+def call_groq_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    max_output_tokens: int = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the Groq API.
 
@@ -263,15 +389,40 @@ def call_groq_llm(model_name: str, history: list, config_kwargs: dict, content, 
         str: The generated response text.
     """
     from groq import Groq
+
     if not api_key:
         raise ValueError("API Key for Groq model is not set.")
 
     client = Groq(api_key=api_key)
     limit_tokens = max_output_tokens if max_output_tokens else 1024
-    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
+    return execute_openai_compatible_llm(
+        client,
+        model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        limit_tokens,
+        on_complete=on_complete,
+    )
 
 
-def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
+def call_openai_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    max_output_tokens: int = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the OpenAI API.
 
@@ -291,15 +442,40 @@ def call_openai_llm(model_name: str, history: list, config_kwargs: dict, content
         str: The generated response text.
     """
     import openai
+
     if not api_key:
         raise ValueError("API Key for OpenAI model is not set.")
 
     client = openai.OpenAI(api_key=api_key)
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
+    return execute_openai_compatible_llm(
+        client,
+        model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        limit_tokens,
+        on_complete=on_complete,
+    )
 
 
-def call_ollama_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, base_url: str = "http://localhost:11434/v1", max_output_tokens: int = None, on_complete=None) -> str:
+def call_ollama_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    base_url: str = "http://localhost:11434/v1",
+    max_output_tokens: int = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the Ollama API locally (OpenAI compatible).
 
@@ -321,15 +497,41 @@ def call_ollama_llm(model_name: str, history: list, config_kwargs: dict, content
     import openai
 
     # Strip the "ollama/" prefix if it exists to pass the correct model name to Ollama
-    actual_model_name = model_name[7:] if model_name.lower().startswith("ollama/") else model_name
+    actual_model_name = (
+        model_name[7:] if model_name.lower().startswith("ollama/") else model_name
+    )
 
     # We use a dummy API key because Ollama doesn't require one, but openai client does
     client = openai.OpenAI(api_key="ollama", base_url=base_url)
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
+    return execute_openai_compatible_llm(
+        client,
+        actual_model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        limit_tokens,
+        on_complete=on_complete,
+    )
 
 
-def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
+def call_openrouter_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    max_output_tokens: int = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the OpenRouter API.
 
@@ -349,24 +551,53 @@ def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, con
         str: The generated response text.
     """
     import openai
+
     if not api_key:
         raise ValueError("API Key for OpenRouter model is not set.")
 
     # Strip the "openrouter/" prefix if it exists
-    actual_model_name = model_name[11:] if model_name.lower().startswith("openrouter/") else model_name
+    actual_model_name = (
+        model_name[11:] if model_name.lower().startswith("openrouter/") else model_name
+    )
 
     # OpenRouter requires default headers for ranking, passing them here
     client = openai.OpenAI(
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
         default_headers={
-            "HTTP-Referer": "https://github.com/nanoworker", 
-            "X-OpenRouter-Title": "NanoWorker"
-        }
+            "HTTP-Referer": "https://github.com/nanoworker",
+            "X-OpenRouter-Title": "NanoWorker",
+        },
     )
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
-def call_nvidia_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
+    return execute_openai_compatible_llm(
+        client,
+        actual_model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        limit_tokens,
+        on_complete=on_complete,
+    )
+
+
+def call_nvidia_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    max_output_tokens: int = None,
+    on_complete=None,
+) -> str:
     """
     Makes a call to the NVIDIA NIM API (OpenAI compatible).
 
@@ -388,15 +619,30 @@ def call_nvidia_llm(model_name: str, history: list, config_kwargs: dict, content
         str: The generated response text.
     """
     import openai
+
     if not api_key:
         raise ValueError("API Key for NVIDIA model is not set.")
 
     # Strip the "nvidia/" prefix if it exists to pass the correct model name
-    actual_model_name = model_name[7:] if model_name.lower().startswith("nvidia/") else model_name
+    actual_model_name = (
+        model_name[7:] if model_name.lower().startswith("nvidia/") else model_name
+    )
 
     client = openai.OpenAI(
         api_key=api_key,
         base_url="https://integrate.api.nvidia.com/v1",
     )
     limit_tokens = max_output_tokens if max_output_tokens else None
-    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
+    return execute_openai_compatible_llm(
+        client,
+        actual_model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        limit_tokens,
+        on_complete=on_complete,
+    )

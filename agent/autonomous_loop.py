@@ -227,7 +227,15 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
                 _abort_with_stop_message()
                 break
 
-            parsed_json = _parse_json_response(mock_response_raw)
+            # Fase 1: try the validated AgentResponse contract first (Pydantic,
+            # coerces bools, drops malformed keys). Falls back to the legacy
+            # lenient parser when native structured output is not in play.
+            from agent.lc import outputs as lc_outputs
+            agent_resp = lc_outputs.parse_agent_response(mock_response_raw)
+            if agent_resp is not None:
+                parsed_json = agent_resp.to_legacy_dict()
+            else:
+                parsed_json = _parse_json_response(mock_response_raw)
 
             if parsed_json and isinstance(parsed_json, dict) and "llm_response" in parsed_json and ("is_the_user_request_completely_satisfied" in parsed_json or "critical_system_failure" in parsed_json):
                 final_response = parsed_json["llm_response"]

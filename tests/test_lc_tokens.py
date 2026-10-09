@@ -91,17 +91,82 @@ class TestTruncateTail:
 
 
 # ---------------------------------------------------------------------------
+# tiktoken fallback paths (offline / broken encoding)
+# ---------------------------------------------------------------------------
+
+def _simulate_missing_tiktoken(monkeypatch):
+    """Makes `import tiktoken` raise and resets the module-level cache."""
+    import sys
+    import agent.lc.tokens as tokens_mod
+    monkeypatch.setitem(sys.modules, "tiktoken", None)  # import raises ImportError
+    monkeypatch.setattr(tokens_mod, "_ENCODINGS", {})
+    monkeypatch.setattr(tokens_mod, "_ENCODING_FAILED", False)
+    return tokens_mod
+
+
+def test_count_tokens_falls_back_when_tiktoken_missing(monkeypatch):
+    tokens_mod = _simulate_missing_tiktoken(monkeypatch)
+    # The tiktoken mode degrades to the legacy heuristic math.
+    assert count_tokens("abcd", mode="tiktoken") == 1
+    assert count_tokens("a" * 4000, mode="tiktoken") == 1000
+    assert tokens_mod._ENCODING_FAILED is True  # failure is cached
+
+
+def test_truncate_tail_falls_back_when_tiktoken_missing(monkeypatch):
+    _simulate_missing_tiktoken(monkeypatch)
+    text = "HEAD" + "x" * 30 + "TAIL"
+    out = truncate_tail(text, 5, mode="tiktoken")
+    assert out == text[-20:]  # heuristic tail slice
+
+
+def test_count_tokens_encode_failure_uses_heuristic(monkeypatch):
+    """A present-but-broken encoding (encode raising) must not crash."""
+    import agent.lc.tokens as tokens_mod
+
+    class BadEnc:
+        def encode(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+        def decode(self, tokens):
+            raise RuntimeError("boom")
+
+    monkeypatch.setitem(tokens_mod._ENCODINGS, tokens_mod._ENCODING_NAME, BadEnc())
+    assert count_tokens("abcd", mode="tiktoken") == 1
+    text = "HEAD" + "x" * 30 + "TAIL"
+    assert truncate_tail(text, 5, mode="tiktoken") == text[-20:]
+
+
+# ---------------------------------------------------------------------------
 # settings
 # ---------------------------------------------------------------------------
 
 class TestSettings:
-    def test_stack_default_is_legacy(self, monkeypatch):
+    def test_stack_default_is_langchain(self, monkeypatch):
+        # Fase 6: LLM_STACK defaults to the LangChain stack.
         monkeypatch.delenv("LLM_STACK", raising=False)
-        assert lc_settings.stack_enabled() is False
+        assert lc_settings.stack_enabled() is True
 
     def test_stack_enabled_via_env(self, monkeypatch):
         monkeypatch.setenv("LLM_STACK", "langchain")
         assert lc_settings.stack_enabled() is True
+
+    def test_stack_legacy_via_env(self, monkeypatch):
+        # Rollback hatch kept for one release.
+        monkeypatch.setenv("LLM_STACK", "legacy")
+        assert lc_settings.stack_enabled() is False
+
+    def test_stack_unknown_value_warns_once_and_is_legacy(self, monkeypatch, mocker):
+        monkeypatch.setenv("LLM_STACK", "banana")
+        lc_settings._warned_stack_values.clear()
+        mock_warn = mocker.patch.object(lc_settings.logger, "warning")
+        assert lc_settings.stack_enabled() is False
+        assert lc_settings.stack_enabled() is False
+        assert mock_warn.call_count == 1
+
+    def test_cfg_returns_default_when_db_unavailable(self, mocker):
+        mocker.patch("database.get_config", side_effect=RuntimeError("no db"))
+        assert lc_settings._cfg("ANY_KEY", "fallback") == "fallback"
+        assert lc_settings.memory_top_k() == 5  # still degrades safely
 
     def test_token_counter_mode_env_override(self, monkeypatch):
         monkeypatch.setenv("LC_TOKEN_COUNTER", "heuristic")

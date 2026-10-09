@@ -4,7 +4,7 @@
 
 {% block content %}
 <div style="max-width: 1200px; margin: 0 auto;">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+    <div class="page-header-responsive" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 16px;">
         <div style="display: flex; align-items: center;">
             <a href="/settings"
                 style="color: var(--text-muted); text-decoration: none; margin-right: 12px; font-size: 1.2rem;">
@@ -12,9 +12,9 @@
             </a>
             <h2 style="font-weight: 600; margin: 0;">Tools Management</h2>
         </div>
-        <div style="position: relative;">
+        <div class="search-input-wrapper" style="position: relative; width: 100%; max-width: 280px;">
             <input type="text" id="toolSearchInput" placeholder="Search tools..."
-                style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); padding: 8px 12px 8px 32px; border-radius: 6px; outline: none; width: 250px; font-size: 0.9rem;">
+                style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); padding: 8px 12px 8px 32px; border-radius: 6px; outline: none; width: 100%; font-size: 0.9rem; box-sizing: border-box;">
             <span
                 style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); display: flex;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

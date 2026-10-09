@@ -1,7 +1,12 @@
-<aside class="sidebar">
-    <div class="logo-container" style="max-height: 73px;">
-        <div class="logo-icon"></div>
-        <h1>NanoWorker</h1>
+<aside class="sidebar" id="appSidebar">
+    <div class="logo-container" style="max-height: 73px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="logo-icon"></div>
+            <h1>NanoWorker</h1>
+        </div>
+        <button class="sidebar-close-btn" onclick="toggleSidebar()" aria-label="Close sidebar">
+            &times;
+        </button>
     </div>
 
     <nav class="nav-menu">

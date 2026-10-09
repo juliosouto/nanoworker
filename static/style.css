@@ -436,3 +436,203 @@ body {
     0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
     40% { opacity: 1; transform: scale(1.1); }
 }
+
+/* =========================================================
+   Responsive Design & Mobile Navigation Utilities
+   ========================================================= */
+
+/* Mobile Nav Toggle Button in Topbar (hidden on desktop) */
+.mobile-nav-toggle {
+    display: none;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-main);
+    padding: 6px 8px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.mobile-nav-toggle:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--accent);
+}
+
+.mobile-logo-text {
+    display: none;
+    font-weight: 700;
+    font-size: 1.1rem;
+    letter-spacing: -0.02em;
+    color: var(--text-main);
+}
+
+/* Sidebar Close Button (hidden on desktop) */
+.sidebar-close-btn {
+    display: none;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.6rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.sidebar-close-btn:hover {
+    color: var(--text-main);
+}
+
+/* Backdrop for Mobile Sidebar */
+.sidebar-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 998;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.sidebar-backdrop.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Chat Responsive Grid */
+.chat-layout-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+    align-items: stretch;
+    height: calc(100vh - 120px);
+}
+
+/* Modal Responsive Base */
+.modal {
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.modal-content {
+    max-width: 100%;
+    box-sizing: border-box;
+    word-break: break-word;
+}
+
+/* Media Queries for Tablet and Mobile (<= 768px) */
+@media (max-width: 768px) {
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        z-index: 999;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6);
+        max-width: 80vw;
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .sidebar-backdrop {
+        display: block;
+    }
+
+    .mobile-nav-toggle {
+        display: flex;
+    }
+
+    .mobile-logo-text {
+        display: inline-block;
+    }
+
+    .sidebar-close-btn {
+        display: block;
+    }
+
+    .topbar {
+        padding: 0 16px;
+        height: 60px;
+    }
+
+    .content-area {
+        padding: 16px;
+    }
+
+    .glass-panel {
+        padding: 16px;
+        border-radius: 12px;
+    }
+
+    /* Chat Layout in Mobile */
+    .chat-layout-grid {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: calc(100vh - 100px);
+        gap: 16px;
+    }
+
+    .chat-history-panel {
+        max-height: 220px;
+        height: auto !important;
+    }
+
+    .message-item {
+        max-width: 92%;
+    }
+
+    .message-list {
+        min-height: 300px;
+        max-height: 55vh;
+    }
+
+    /* Page Header Responsiveness */
+    .page-header-responsive {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 12px;
+    }
+
+    .search-input-wrapper {
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+}
+
+/* Media Queries for Small Mobile (<= 480px) */
+@media (max-width: 480px) {
+    .content-area {
+        padding: 12px 8px;
+    }
+
+    .topbar {
+        padding: 0 12px;
+    }
+
+    .btn {
+        padding: 7px 12px;
+        font-size: 0.85rem;
+    }
+
+    .glass-panel {
+        padding: 14px 12px;
+    }
+
+    .message-item {
+        max-width: 96%;
+        padding: 10px 12px;
+    }
+}
+

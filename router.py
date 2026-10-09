@@ -70,6 +70,11 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
     cleaned_content = clean_mention(content, agent_name)
 
     if cleaned_content == "/new":
+        # Phase-3 cleanup: a fresh conversation must not inherit a stale summary
+        # from the old one.
+        from database import clear_session_summary
+
+        clear_session_summary(session_id)
         cursor.execute('DELETE FROM messages_in WHERE session_id = ?', (session_id,))
         cursor.execute('DELETE FROM messages_out WHERE session_id = ?', (session_id,))
         conn.commit()

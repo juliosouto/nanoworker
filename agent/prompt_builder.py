@@ -7,7 +7,6 @@ import logging
 import standard_prompts
 from database import get_config, get_ide_config
 from google.genai import types
-from tools import get_permitted_tools
 from utils.message_utils import process_tools_for_llm
 
 
@@ -114,11 +113,14 @@ def _inject_channel_rules(system_prompt: str, channel_id: str, include_tool_rule
 def build_system_prompt(
     cursor,
     worker=None,
-    channel_id: str = None,
-    include_tool_rules: bool = True,
-    has_image: bool = False,
-    worker_name: str = None,
-    ide_prompt: str = None,
+    channel_id=None,
+    include_tool_rules=True,
+    has_image=False,
+    worker_name=None,
+    ide_prompt=None,
+    native_structured=None,
+    models_to_try=None,
+    message_query: str = "",
 ) -> str:
     """
     Builds the complete system prompt with all rules, memory, and JSON schema.
@@ -131,10 +133,45 @@ def build_system_prompt(
         has_image (bool): Whether the current message has an image/document.
         worker_name (str, optional): Name of the worker for standard rules.
         ide_prompt (str, optional): IDE-specific prompt (for process_ide_message path).
+        native_structured (bool, optional): When True, the prose JSON-schema block
+            is omitted because the provider enforces the contract natively.
+            None (default) auto-detects from the LangChain stack settings + first model.
+        models_to_try (list, optional): Ordered list of model names to try. Used by the
+            auto-detect of `native_structured` to resolve the real provider instead of
+            assuming the gemini default.
+        message_query (str, optional): The current user message text, used as the
+            retrieval query for the RAG memory retriever (Fase 2).
 
     Returns:
         str: The fully assembled system prompt.
     """
+    from agent.lc import settings as lc_settings
+    if lc_settings.stack_enabled():
+        # Fase 1: modular builder with compact rules and optional native
+        # structured output (same output contract, fewer tokens).
+        from agent.lc import prompts as lc_prompts
+        if native_structured is None:
+            from agent.lc import outputs as lc_outputs
+            _provider0 = (
+                lc_outputs.resolve_provider_for_model(models_to_try[0])
+                if models_to_try else None
+            )
+            native_structured = lc_outputs.structured_output_enabled(
+                _provider0, models_to_try[0] if models_to_try else ""
+            )
+        return lc_prompts.build_system_prompt(
+            cursor=cursor,
+            worker=worker,
+            channel_id=channel_id,
+            include_tool_rules=include_tool_rules,
+            has_image=has_image,
+            worker_name=worker_name,
+            ide_prompt=ide_prompt,
+            native_structured=bool(native_structured),
+            models_to_try=models_to_try,
+            message_query=message_query,
+        )
+
     # 1. Base prompt
     if ide_prompt is not None:
         system_prompt = ide_prompt
