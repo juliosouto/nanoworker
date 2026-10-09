@@ -33,8 +33,9 @@
             </span>
         </div>
 
-        <div style="overflow-x: auto; width: 100%;">
-            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+        <!-- Desktop Table View -->
+        <div class="workers-table-wrapper" style="overflow-x: auto; width: 100%;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; min-width: 680px;">
                 <thead>
                     <tr
                         style="border-bottom: 1px solid rgba(255,255,255,0.08); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.8px;">
@@ -108,7 +109,7 @@
                     {% endfor %}
                     {% else %}
                     <tr>
-                        <td colspan="5"
+                        <td colspan="6"
                             style="padding: 40px; text-align: center; color: var(--text-muted); font-style: italic;">
                             No workers configured yet. Click "+ Add Worker" to create your first worker!
                         </td>
@@ -117,20 +118,78 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- Mobile Card View -->
+        <div class="workers-cards-mobile" style="display: none; flex-direction: column; gap: 14px;">
+            {% if workers %}
+            {% for w in workers %}
+            <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                    <div>
+                        <div style="font-weight: 600; font-size: 1.05rem; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+                            {{ w.worker_name }}
+                            {% if w.is_default %}
+                            <span style="background: rgba(46, 204, 113, 0.15); color: #2ecc71; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 500;">Default</span>
+                            {% endif %}
+                        </div>
+                        <div style="color: #3498db; font-size: 0.85rem; font-weight: 500; margin-top: 2px;">
+                            {{ w.worker_model }}
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <button type="button" onclick="editWorkerById({{ w.id }})" title="Edit Worker"
+                            style="background: rgba(46,204,113,0.1); border: 1px solid rgba(46,204,113,0.3); color: #2ecc71; cursor: pointer; padding: 8px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button type="button" onclick="deleteWorker({{ w.id }}, '{{ w.worker_name }}')" title="Delete Worker"
+                            style="background: rgba(255,71,87,0.1); border: 1px solid rgba(255,71,87,0.3); color: #ff4757; cursor: pointer; padding: 8px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 6px; font-weight: 500; background: {% if w.thinking_enabled %}rgba(52, 152, 219, 0.15); color: #3498db;{% else %}rgba(255,255,255,0.06); color: var(--text-muted);{% endif %}">
+                        Thinking: {{ 'Enabled' if w.thinking_enabled else 'Disabled' }}
+                    </span>
+                    <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 6px; font-weight: 500; background: {% if w.tools_enabled %}rgba(46, 204, 113, 0.15); color: #2ecc71;{% else %}rgba(255,255,255,0.06); color: var(--text-muted);{% endif %}">
+                        Tools: {{ 'Enabled' if w.tools_enabled else 'Disabled' }}
+                    </span>
+                </div>
+
+                {% if w.worker_instructions %}
+                <div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; background: rgba(0,0,0,0.2); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.04);">
+                    {{ w.worker_instructions }}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% else %}
+            <div style="padding: 32px; text-align: center; color: var(--text-muted); font-style: italic;">
+                No workers configured yet. Click "+ Add Worker" to create your first worker!
+            </div>
+            {% endif %}
+        </div>
     </div>
 </div>
 
 <!-- Modal for Adding / Editing Workers -->
 <div id="workerModal" class="modal"
-    style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+    style="display: none; position: fixed; z-index: 1050; inset: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.75); align-items: center; justify-content: center; backdrop-filter: blur(4px); padding: 12px; box-sizing: border-box;">
     <div class="modal-content glass-panel"
-        style="background: rgba(20, 20, 20, 0.95); padding: 24px; border-radius: 12px; width: 90%; max-width: 480px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); height: auto !important;">
+        style="background: rgba(18, 18, 22, 0.98); padding: 24px; border-radius: 14px; width: 100%; max-width: 520px; max-height: 92vh; height: auto; overflow-y: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.1);">
         <div
             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
             <h3 id="modalTitle" style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-main);">Add
                 New Worker</h3>
             <span onclick="closeWorkerModal()"
-                style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted); transition: color 0.2s;"
+                style="cursor: pointer; font-size: 1.6rem; color: var(--text-muted); line-height: 1; transition: color 0.2s;"
                 onmouseover="this.style.color='var(--text-main)'"
                 onmouseout="this.style.color='var(--text-muted)'">&times;</span>
         </div>
@@ -140,7 +199,7 @@
                 <label class="premium-label" for="worker_name">Worker Name *</label>
                 <input type="text" id="worker_name" required class="premium-input" placeholder="e.g. Nano">
             </div>
-            <div class="premium-input-container" style="margin-bottom: 24px;">
+            <div class="premium-input-container" style="margin-bottom: 20px;">
                 <label class="premium-label" for="worker_model">Worker Model *</label>
                 <div class="premium-select-wrapper"
                     style="position: relative; border-radius: 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1);">
@@ -162,41 +221,43 @@
                 </div>
             </div>
 
-            <div class="premium-input-container" style="margin-bottom: 24px;">
+            <div class="premium-input-container" style="margin-bottom: 20px;">
                 <label class="premium-label" for="worker_instructions">Worker Instructions</label>
                 <textarea id="worker_instructions" class="premium-input" style="height: 100px; resize: vertical;" placeholder="Enter system instructions or behavior guidelines for the worker..."></textarea>
             </div>
 
-            <div class="premium-input-container" style="margin-bottom: 24px;">
+            <div class="premium-input-container" style="margin-bottom: 20px;">
                 <label class="premium-label" for="worker_temperature">Temperature</label>
                 <input type="number" id="worker_temperature" class="premium-input" min="0" max="2" step="0.1"
                     placeholder="Default (Gemini: 2.0, OpenAI-compatible: 1.0)" style="-moz-appearance: textfield;">
             </div>
 
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                <input type="checkbox" id="thinking_enabled" style="cursor: pointer; width: 16px; height: 16px;">
-                <label for="thinking_enabled" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Enable Thinking (step-by-step reasoning)</label>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <input type="checkbox" id="thinking_enabled" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;">
+                    <span style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Enable Thinking (step-by-step reasoning)</span>
+                </label>
+
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <input type="checkbox" id="tools_enabled" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;" checked>
+                    <span style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Enable Tools (allow database, terminal, browser, etc.)</span>
+                </label>
+
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <input type="checkbox" id="show_tools_results" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;" checked>
+                    <span style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Show Tools Results (real-time output in chat)</span>
+                </label>
+
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <input type="checkbox" id="is_default" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;">
+                    <span style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Set as Default Worker</span>
+                </label>
             </div>
 
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                <input type="checkbox" id="tools_enabled" style="cursor: pointer; width: 16px; height: 16px;" checked>
-                <label for="tools_enabled" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Enable Tools (allow LLM to call database, terminal, browser, etc.)</label>
-            </div>
-
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                <input type="checkbox" id="show_tools_results" style="cursor: pointer; width: 16px; height: 16px;" checked>
-                <label for="show_tools_results" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Show Tools Results (show tool outputs in real-time in chat)</label>
-            </div>
-
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 24px;">
-                <input type="checkbox" id="is_default" style="cursor: pointer; width: 16px; height: 16px;">
-                <label for="is_default" style="font-size: 0.85rem; color: var(--text-main); cursor: pointer; font-weight: 500;">Set as Default Worker</label>
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; gap: 12px;">
+            <div style="display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px; flex-wrap: wrap;">
                 <button type="button" class="btn secondary" onclick="closeWorkerModal()"
-                    style="border-radius: 6px;">Cancel</button>
-                <button type="submit" class="btn primary" style="border-radius: 6px;">Save Worker</button>
+                    style="padding: 10px 18px; border-radius: 8px; font-size: 0.9rem;">Cancel</button>
+                <button type="submit" class="btn primary" style="padding: 10px 22px; border-radius: 8px; font-size: 0.9rem;">Save Worker</button>
             </div>
         </form>
     </div>
@@ -204,23 +265,25 @@
 
 <!-- Modal for Deleting Workers -->
 <div id="deleteWorkerModal" class="modal"
-    style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+    style="display: none; position: fixed; z-index: 1060; inset: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.75); align-items: center; justify-content: center; backdrop-filter: blur(4px); padding: 12px; box-sizing: border-box;">
     <div class="modal-content glass-panel"
-        style="background: rgba(20, 20, 20, 0.95); padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; height: auto !important;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-            <h3 style="margin: 0; font-size: 1.2rem; font-weight: 600; color: var(--text-main);">Delete Worker</h3>
+        style="background: rgba(18, 18, 22, 0.98); padding: 24px; border-radius: 14px; width: 100%; max-width: 420px; height: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(239, 68, 68, 0.3);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+            <h3 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: #ef4444;">Delete Worker</h3>
             <span onclick="closeDeleteModal()"
-                style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted);">&times;</span>
+                style="cursor: pointer; font-size: 1.6rem; color: var(--text-muted); line-height: 1; transition: color 0.2s;"
+                onmouseover="this.style.color='var(--text-main)'"
+                onmouseout="this.style.color='var(--text-muted)'">&times;</span>
         </div>
-        <p style="margin-bottom: 24px; font-size: 0.95rem; color: var(--text-muted);">
+        <p style="margin-bottom: 24px; font-size: 0.95rem; color: var(--text-muted); line-height: 1.5;">
             Are you sure you want to delete worker <strong id="deleteWorkerNameText"
                 style="color: var(--text-main);"></strong>?
         </p>
         <div style="display: flex; justify-content: flex-end; gap: 12px;">
             <button type="button" class="btn secondary" onclick="closeDeleteModal()"
-                style="border-radius: 6px;">Cancel</button>
+                style="padding: 9px 18px; border-radius: 8px; font-size: 0.9rem;">Cancel</button>
             <button type="button" class="btn" onclick="confirmDeleteWorker()"
-                style="background: #ff4757; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">
+                style="background: #ef4444; color: white; border: none; padding: 9px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;">
                 Delete
             </button>
         </div>

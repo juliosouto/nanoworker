@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 from agent.db_feedback import insert_feedback
-from agent.openai_tools import execute_openai_compatible_llm
+from agent.openai_tools import execute_openai_compatible_llm, _describe_tool_args
 from agent.lc import settings as lc_settings
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
@@ -254,15 +254,36 @@ def call_gemini_llm(
             msg_start = f"⚙️ Executing local tool: {tool_name}..."
             insert_feedback(cursor, table, session_id, message_in_id, msg_start)
 
-            # Execute Python function
-            result = "Tool not found"
-            for f in permitted_tools:
-                if getattr(f, "__name__", "") == tool_name:
-                    try:
-                        result = f(**args)
-                    except Exception as ex:
-                        result = f"Error executing {tool_name}: {str(ex)}"
-                    break
+            # Execute Python function with didactic feedback for unknown tools or
+            # bad arguments (parity with the OpenAI-compatible loop). A bare
+            # "Tool not found" made small models hallucinate builtins like open()
+            # and report errors to the user instead of recovering.
+            tool_func = next(
+                (f for f in permitted_tools if getattr(f, "__name__", "") == tool_name),
+                None,
+            )
+            if tool_func is None:
+                available = (
+                    ", ".join(
+                        sorted(getattr(f, "__name__", "") for f in permitted_tools)
+                    )
+                    or "none"
+                )
+                result = (
+                    f"Error: tool '{tool_name}' does not exist. "
+                    f"Available tools: {available}. Call one of these instead."
+                )
+            else:
+                try:
+                    result = tool_func(**args)
+                except TypeError as te:
+                    expected = _describe_tool_args(tool_func)
+                    result = (
+                        f"Error executing {tool_name}: {str(te)}. "
+                        f"Expected arguments: {expected}."
+                    )
+                except Exception as ex:
+                    result = f"Error executing {tool_name}: {str(ex)}"
 
             if tool_name not in tools_used:
                 tools_used.append(tool_name)

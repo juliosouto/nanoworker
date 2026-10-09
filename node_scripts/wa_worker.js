@@ -364,6 +364,11 @@ async function connectToWhatsApp() {
                         console.log(`[Baileys Inbound] Quoted audio downloaded, size: ${buffer.length} bytes`);
                     } catch (err) {
                         console.error('Failed to download quoted audio:', err.message);
+                        // Explicit marker so the backend/model knows the quoted media is
+                        // unavailable instead of silently forwarding an empty quoted
+                        // message (which made small models hallucinate an open() call
+                        // trying to "read" the audio they could not see).
+                        quotedText = '[Quoted audio - transcription unavailable: media download failed]';
                     }
                 } else if (qMsg.imageMessage) {
                     quotedMimeType = qMsg.imageMessage.mimetype || 'image/jpeg';

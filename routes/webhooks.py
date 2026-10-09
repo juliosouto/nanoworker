@@ -171,6 +171,17 @@ def webhook():
         quoted_header = f"[Quoted message from: {quoted_sender}]"
         content = f"{quoted_header}\n{quoted_text}\n\n{content}"
 
+    # Anti-hallucination guard: when audio arrives already transcribed, tell the
+    # model explicitly. Small models have been observed hallucinating a call to
+    # the nonexistent open() tool to "read the audio file" instead of answering
+    # from the [Transcription]: text that was already in the prompt.
+    if '[Transcription]:' in content:
+        content = (
+            f"{content}\n\n"
+            "(Internal note: any audio in this message is already transcribed as text above. "
+            "Never try to open or read audio/media files, and only call tools that are explicitly available.)"
+        )
+
     # 4. Route message
     in_id, session_id, is_sync = route_inbound_message(
         channel_id=data['channel_id'],

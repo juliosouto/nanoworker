@@ -6,7 +6,8 @@
 <div style="max-width: 1200px; margin: 0 auto;">
     <h2 style="margin-bottom: 24px; font-weight: 600;">Manage Cron Jobs</h2>
     
-    <div style="background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--border-color); overflow-x: auto; width: 100%;">
+    <!-- Desktop Table View -->
+    <div class="cron-table-wrapper" style="background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--border-color); overflow-x: auto; width: 100%;">
         <table style="width: 100%; border-collapse: collapse; text-align: left; min-width: 600px;">
             <thead>
                 <tr style="background: rgba(255,255,255,0.05); border-bottom: 1px solid var(--border-color);">
@@ -54,6 +55,48 @@
                 {% endif %}
             </tbody>
         </table>
+    </div>
+
+    <!-- Mobile Cards View -->
+    <div class="cron-cards-mobile" style="display: none; flex-direction: column; gap: 12px;">
+        {% if jobs %}
+            {% for job in jobs %}
+            <div class="glass-panel" style="padding: 16px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.25);">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; font-size: 1rem; color: var(--text-main); word-break: break-word;">{{ job['description'] }}</div>
+                        <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 4px;">Session: {{ job['channel_id'] }}</div>
+                    </div>
+                    <label style="position: relative; display: inline-block; width: 48px; height: 24px; cursor: pointer; flex-shrink: 0;">
+                        <input type="checkbox" onchange="toggleJobStatus('{{ job['id'] }}', this)" {% if job['is_active'] %}checked{% endif %} style="opacity: 0; width: 0; height: 0;">
+                        <span class="toggle-bg" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: {% if job['is_active'] %}rgba(16, 185, 129, 0.6){% else %}rgba(255,255,255,0.15){% endif %}; border-radius: 24px; transition: 0.3s;"></span>
+                        <span class="toggle-knob" style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s; transform: {% if job['is_active'] %}translateX(24px){% else %}translateX(0){% endif %};"></span>
+                    </label>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85rem; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
+                    <div>
+                        <span style="color: var(--text-muted); display: block; font-size: 0.75rem;">Cron Expression:</span>
+                        <span style="font-family: monospace; color: var(--accent-color); font-weight: 500;">{{ job['cron_expression'] }}</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-muted); display: block; font-size: 0.75rem;">Next Run:</span>
+                        <span style="color: var(--text-main);">{{ job['next_run'] }}</span>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; padding-top: 4px;">
+                    <button onclick="deleteJob('{{ job['id'] }}')" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;">
+                        Delete
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="glass-panel" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                No cron jobs scheduled.
+            </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

@@ -93,6 +93,81 @@ def test_call_gemini_llm_tool_call(mock_client_cls, mock_cursor):
     res = call_gemini_llm("model", [], {"tools": [dummy_tool]}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key", on_complete=MagicMock())
     assert res == "Final Tool Response"
 
+@patch('agent.llm_providers.genai.Client')
+def test_call_gemini_llm_unknown_tool_feedback(mock_client_cls, mock_cursor):
+    """Regression: a hallucinated tool call (e.g. open()) used to receive a bare
+    'Tool not found' that small models could not recover from — they then told
+    the user there was an error using a nonexistent open(). The loop must return
+    didactic feedback listing the available tools instead."""
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+
+    # First response: call to a tool that does not exist
+    mock_fc = MagicMock()
+    mock_fc.name = "open"
+    mock_fc.args = {"file": "/audio.ogg"}
+
+    mock_resp1 = MagicMock()
+    mock_resp1.function_calls = [mock_fc]
+
+    # Second response: model recovers with a final text answer
+    mock_resp2 = MagicMock()
+    mock_resp2.function_calls = []
+    mock_resp2.text = "Recovered after tool feedback"
+
+    mock_chat.send_message.side_effect = [mock_resp1, mock_resp2]
+
+    def dummy_tool(arg1):
+        return "never called"
+
+    res = call_gemini_llm("model", [], {"tools": [dummy_tool]}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key")
+
+    assert res == "Recovered after tool feedback"
+    last_parts = mock_chat.send_message.call_args_list[-1][0][0]
+    fn_response = last_parts[0].function_response
+    assert fn_response.name == "open"
+    assert "tool 'open' does not exist" in fn_response.response["result"]
+    assert "Available tools" in fn_response.response["result"]
+    assert "dummy_tool" in fn_response.response["result"]
+
+@patch('agent.llm_providers.genai.Client')
+def test_call_gemini_llm_bad_args_feedback(mock_client_cls, mock_cursor):
+    """An existing tool called with wrong arguments must get feedback listing
+    the expected arguments so small models can self-correct (parity with the
+    OpenAI-compatible loop)."""
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+
+    # First response: existing tool, wrong arguments
+    mock_fc = MagicMock()
+    mock_fc.name = "dummy_tool"
+    mock_fc.args = {"wrong_arg": "x"}
+
+    mock_resp1 = MagicMock()
+    mock_resp1.function_calls = [mock_fc]
+
+    mock_resp2 = MagicMock()
+    mock_resp2.function_calls = []
+    mock_resp2.text = "Recovered after args feedback"
+
+    mock_chat.send_message.side_effect = [mock_resp1, mock_resp2]
+
+    def dummy_tool(arg1):
+        return "never called"
+
+    res = call_gemini_llm("model", [], {"tools": [dummy_tool]}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key")
+
+    assert res == "Recovered after args feedback"
+    last_parts = mock_chat.send_message.call_args_list[-1][0][0]
+    fn_response = last_parts[0].function_response
+    assert fn_response.name == "dummy_tool"
+    assert "Expected arguments" in fn_response.response["result"]
+    assert "arg1" in fn_response.response["result"]
+
 @patch('agent.llm_providers.get_config')
 @patch('google.genai.Client')
 def test_call_gemini_llm_intercept(mock_client_cls, mock_get_config, mock_cursor):

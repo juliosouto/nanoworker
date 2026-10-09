@@ -609,6 +609,33 @@ body {
         max-width: 100% !important;
         width: 100% !important;
     }
+
+    /* Workers View Toggle */
+    .workers-table-wrapper {
+        display: none !important;
+    }
+
+    .workers-cards-mobile {
+        display: flex !important;
+    }
+
+    /* Models View Toggle */
+    .models-table-wrapper {
+        display: none !important;
+    }
+
+    .models-cards-mobile {
+        display: flex !important;
+    }
+
+    /* Cron Jobs View Toggle */
+    .cron-table-wrapper {
+        display: none !important;
+    }
+
+    .cron-cards-mobile {
+        display: flex !important;
+    }
 }
 
 /* Media Queries for Small Mobile (<= 480px) */

@@ -11,12 +11,31 @@
 </head>
 
 <body>
-    <div class="app-container">
-        <main class="main-content" style="padding: 20px; width: 100%; display: block;">
-            <div class="content-area">
+    <div class="app-container" style="display: flex; flex-direction: column; min-height: 100vh;">
+        <!-- IDE Top Navigation Bar -->
+        <header class="ide-topbar" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border-color); flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <a href="/chat" class="btn" style="padding: 6px 12px; font-size: 0.85rem; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+                    <span>←</span> <span>Back</span>
+                </a>
+                <h2 style="margin: 0; font-size: 1.15rem; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                    <span>⚡</span> <span>NanoWorker IDE</span>
+                </h2>
+            </div>
+            
+            <!-- Mobile Tab View Switcher (Visible only on mobile/tablet) -->
+            <div class="ide-mobile-tabs" style="display: none;">
+                <button class="ide-tab-btn active" onclick="switchIdeTab('editor', this)">Editor</button>
+                <button class="ide-tab-btn" onclick="switchIdeTab('explorer', this)">Explorer</button>
+                <button class="ide-tab-btn" onclick="switchIdeTab('agent', this)">Agent</button>
+            </div>
+        </header>
+
+        <main class="main-content ide-main-content" style="padding: 16px; width: 100%; flex: 1; display: flex; flex-direction: column; box-sizing: border-box;">
+            <div class="content-area" style="flex: 1; padding: 0;">
                 <div class="ide-layout-grid">
                     <!-- History Sidebar (Explorer) -->
-                    <div class="glass-panel ide-explorer-panel"
+                    <div id="ide-explorer-view" class="glass-panel ide-explorer-panel"
                         style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
                         <div
                             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
@@ -59,7 +78,7 @@
                     </div>
 
                     <!-- Agent Chat -->
-                    <div class="glass-panel ide-agent-panel"
+                    <div id="ide-agent-view" class="glass-panel ide-agent-panel"
                         style="margin: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
                         <div
                             style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
