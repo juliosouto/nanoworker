@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 import time
 from playwright.sync_api import sync_playwright
@@ -7,6 +8,101 @@ logger = logging.getLogger(__name__)
 
 import queue
 import concurrent.futures
+
+# Domains of known Consent Management Platforms (CMPs) / cookie banners.
+# Blocking them at the network layer prevents the consent popups (Sourcepoint,
+# OneTrust, Cookiebot, ...) from ever loading, which keeps headless browsing
+# and screenshots clean on servers without a display.
+_CMP_BLOCK_RE = re.compile(
+    r"https?://([^/?#]+\.)?(?:"
+    r"privacy-mgmt\.com|sp-prod\.net|sourcepoint\.com|"
+    r"onetrust\.com|cookielaw\.org|cookiepro\.com|cookiebot\.com|"
+    r"quantcast\.mgr\.consensu\.org|consensu\.org|"
+    r"usercentrics\.(?:eu|io)|didomi\.io|iubenda\.com|termly\.io|"
+    r"trustarc\.com|truste\.com|osano\.com|klaro\.org|"
+    r"civiccomputing\.com|cookiehub\.(?:com|net)|cookiescript\.info"
+    r")(/|$|\?|#)",
+    re.IGNORECASE,
+)
+
+# Second line of defense: runs in every frame before page scripts. Removes any
+# consent/cookie overlay that still renders (vendor-specific ids/classes are
+# removed outright; generic cookie/consent words only when the node behaves
+# like an overlay) and restores the page scroll the banners usually lock.
+_CONSENT_SWEEP_JS = """
+(() => {
+  const VENDOR_RE = /(onetrust|cookielaw|cookiebot|cookiepro|cybotcookiebot|sourcepoint|privacy-mgmt|sp_message|sp_iframe|sp_veil|sp-prod|didomi|iubenda|klaro|osano|truste|termly|usercentrics|cmpbox|cookiehub|cookiescript|qc-cmp|quantcast-cmp)/i;
+  const GENERIC_RE = /(cookie|consent|gdpr)/i;
+  const CMP_SRC_RE = /(sourcepoint|privacy-mgmt|sp-prod|onetrust|cookielaw|cookiebot|quantcast\\.mgr|consensu\\.org|usercentrics|didomi|osano|trustarc|termly|iubenda|klaro)/i;
+
+  function sweep() {
+    try {
+      const nodes = document.querySelectorAll('div, iframe, section, aside, dialog, ins, form');
+      nodes.forEach((el) => {
+        let hit = false;
+        const id = el.id || '';
+        const cls = (typeof el.className === 'string') ? el.className : ((el.getAttribute && el.getAttribute('class')) || '');
+        const hay = id + ' ' + cls;
+        if (VENDOR_RE.test(hay)) {
+          hit = true;
+        } else if (GENERIC_RE.test(hay)) {
+          try {
+            const s = window.getComputedStyle(el);
+            const z = parseFloat(s.zIndex) || 0;
+            if (s.position === 'fixed' || s.position === 'sticky' || z >= 1000) hit = true;
+          } catch (e) {}
+        }
+        if (!hit && el.tagName === 'IFRAME') {
+          const src = (el.getAttribute && el.getAttribute('src')) || '';
+          if (CMP_SRC_RE.test(src)) hit = true;
+        }
+        if (hit) { try { el.remove(); } catch (e) {} }
+      });
+      [document.documentElement, document.body].forEach((el) => {
+        if (!el || !el.style) return;
+        if (el.style.overflow === 'hidden') el.style.overflow = '';
+        if (el.style.position === 'fixed') el.style.position = '';
+      });
+    } catch (e) {}
+  }
+  window.__nwSweepConsent = sweep;
+  let last = 0;
+  try {
+    const mo = new MutationObserver(() => {
+      const now = Date.now();
+      if (now - last > 300) { last = now; sweep(); }
+    });
+    const startObserving = () => mo.observe(document.documentElement || document, { childList: true, subtree: true });
+    if (document.documentElement) startObserving();
+    else document.addEventListener('DOMContentLoaded', startObserving, { once: true });
+  } catch (e) {}
+  sweep();
+  document.addEventListener('DOMContentLoaded', sweep);
+  window.addEventListener('load', () => { sweep(); setTimeout(sweep, 400); setTimeout(sweep, 1500); });
+})();
+"""
+
+
+def _harden_context(context):
+    """
+    Installs cookie-banner/CMP blocking on a freshly created Playwright context
+    (gated by the BLOCK_COOKIE_BANNERS config, default: enabled).
+    """
+    try:
+        from database import get_config
+        block_banners = get_config("BLOCK_COOKIE_BANNERS", "true").lower() == "true"
+    except Exception:
+        block_banners = True
+    if not block_banners:
+        return
+    try:
+        context.route(_CMP_BLOCK_RE, lambda route: route.abort())
+    except Exception as e:
+        logger.warning(f"Failed to install CMP network blocking: {e}")
+    try:
+        context.add_init_script(_CONSENT_SWEEP_JS)
+    except Exception as e:
+        logger.warning(f"Failed to install consent sweep script: {e}")
 
 class GlobalBrowser:
     """Singleton for the Playwright Chromium instance, running in a dedicated thread"""
@@ -123,6 +219,8 @@ class BrowserManager:
                 
             self.context = global_browser.new_context(**context_options)
             self.page = self.context.new_page()
+            # Block cookie-consent popups/CMP overlays (keeps screenshots clean)
+            _harden_context(self.context)
 
         global_browser.submit_task(_task).result()
 
@@ -139,6 +237,13 @@ class BrowserManager:
                 self.page.goto(url, wait_until="domcontentloaded", timeout=10000)
                 try:
                     self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                # Explicit consent sweep: the init script also fires on load,
+                # but running it here makes banner removal deterministic before
+                # the caller (snapshot/screenshot) proceeds.
+                try:
+                    self.page.evaluate("window.__nwSweepConsent && window.__nwSweepConsent()")
                 except Exception:
                     pass
                 return f"Navigated to {url}"

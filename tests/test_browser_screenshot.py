@@ -63,3 +63,27 @@ def test_browser_screenshot_is_registered_as_tool():
 
     tool_names = [getattr(t, "__name__", "") for t in AVAILABLE_TOOLS]
     assert "browser_screenshot" in tool_names
+
+
+def test_windows_parity_browser_screenshot_and_memory():
+    """Windows must expose the same cross-platform capabilities: the headless
+    browser screenshot tool and the persistent memory tool (both were missing
+    from tools/windows/ while present on macOS/Linux)."""
+    import inspect
+
+    import tools.windows.browser as win_browser
+    import tools.windows.memory as win_memory
+
+    assert callable(win_browser.browser_screenshot)
+    # Docstring must steer the model away from display-dependent tools
+    assert "headless" in win_browser.browser_screenshot.__doc__
+
+    assert callable(win_memory.manage_persistent_memory)
+
+    # Same signature as the Linux/Mac versions (verbatim copy)
+    from tools.linux.memory import manage_persistent_memory as lin_mem
+
+    assert (
+        inspect.signature(win_memory.manage_persistent_memory).parameters.keys()
+        == inspect.signature(lin_mem).parameters.keys()
+    )
