@@ -1,5 +1,6 @@
 from browser.manager import BrowserManager, get_session_browser
 
+from utils.file_utils import get_temp_file_path
 from utils.security_utils import require_permission
 from utils.session import current_session_id
 
@@ -89,3 +90,23 @@ def browser_run_js(script: str) -> str:
     """
     bm = get_browser_manager()
     return bm.run_js(script)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_screenshot(full_page: bool = False) -> str:
+    """
+    Takes a screenshot of the current page using the built-in headless browser and saves it as a PNG file.
+    Use this tool whenever the user asks for a screenshot (or 'print') of a web page. It renders with the
+    internal headless Chromium — never use scrot or X11 tools for web page screenshots.
+    You must call browser_navigate first to load the page.
+    
+    Args:
+        full_page: If True, captures the entire scrollable page. If False (default), captures only the visible viewport.
+        
+    Returns:
+        str: A success message containing the ABSOLUTE path of the saved PNG, or an error message.
+             IMPORTANT: to share the image afterwards, you MUST pass the exact absolute path returned
+             here to the send_whatsapp_file tool — do not reconstruct it.
+    """
+    bm = get_browser_manager()
+    screenshot_path = get_temp_file_path("screenshot.png")
+    return bm.take_screenshot(screenshot_path)
