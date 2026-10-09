@@ -26,6 +26,16 @@ Flask-WTF
 Flask-Talisman
 free-proxy
 
+# LangChain stack (Fase 0+ do plano de migração)
+langchain>=1.4,<2
+langchain-core>=1.6,<2
+langchain-openai>=1.7,<2
+langchain-google-genai>=4.4,<5
+langchain-groq>=1.1,<2
+langchain-community>=0.4,<1
+faiss-cpu
+tiktoken>=0.14
+
 # Testing Dependencies
 pytest
 pytest-flask

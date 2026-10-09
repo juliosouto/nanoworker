@@ -3,6 +3,14 @@ from unittest.mock import patch, MagicMock
 
 from google.genai import types
 
+
+@pytest.fixture(autouse=True)
+def _legacy_token_counter(monkeypatch):
+    """truncate/slice tests below encode the legacy tokens*4 chars budget;
+    pin the heuristic counter so they keep asserting the original math."""
+    monkeypatch.setenv("LC_TOKEN_COUNTER", "heuristic")
+
+
 from utils.message_utils import (
     get_default_worker,
     resolve_worker_from_content,

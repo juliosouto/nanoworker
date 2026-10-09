@@ -461,7 +461,8 @@ def dashboard_page():
     default_name = default_worker['worker_name'] if default_worker else None
     full_system_prompt = apply_standard_rules(system_prompt, worker_name=default_name)
     full_system_prompt = f"{memory_block}\n{full_system_prompt}"
-    system_tokens = len(full_system_prompt) // 4
+    from agent.lc.tokens import count_tokens
+    system_tokens = count_tokens(full_system_prompt)
     
     permitted_tools = get_permitted_tools()
     tools_length_recipes = 0

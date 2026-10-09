@@ -18,6 +18,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-cache the tiktoken BPE encoding so real token counting also works
+# when the container later runs without internet access.
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+
 # Install Playwright OS dependencies and browser
 RUN playwright install --with-deps
 

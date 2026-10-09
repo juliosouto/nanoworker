@@ -456,6 +456,17 @@ def init_db():
     if not row:
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('AUTONOMOUS_MODE', '1')")
 
+    # Default LangChain integration flags (agent.lc)
+    cursor.execute("SELECT value FROM app_config WHERE key = 'LLM_STACK'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LLM_STACK', 'legacy')")
+
+    cursor.execute("SELECT value FROM app_config WHERE key = 'LC_TOKEN_COUNTER'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LC_TOKEN_COUNTER', 'tiktoken')")
+
     # LLM Config Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS llm_config (

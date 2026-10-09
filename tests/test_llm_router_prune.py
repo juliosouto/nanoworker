@@ -13,6 +13,13 @@ from agent.llm_router import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_token_counter(monkeypatch):
+    """These budget tests encode the legacy 1 token ~= 4 chars math; pin the
+    heuristic counter so they stay valid regardless of the default counter."""
+    monkeypatch.setenv("LC_TOKEN_COUNTER", "heuristic")
+
+
 def _dict_history(count, chars=4000):
     """Returns `count` OpenAI-style history items with known-length text."""
     return [{"role": "user", "content": "x" * chars} for _ in range(count)]

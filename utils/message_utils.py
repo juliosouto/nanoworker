@@ -243,17 +243,25 @@ def clean_mention(content, agent_name=None):
 
 def truncate_message(content, max_length=None):
     """
-    Truncates a message if it exceeds max_length characters, keeping the last max_length characters.
-    Useful for very long messages in WhatsApp groups.
-    If max_length is not provided, fetches the token limit from the database and converts it to characters (1 token ≈ 4 chars).
+    Truncates a message keeping the tail (most recent content).
+
+    When `max_length` is provided it is kept as an explicit CHARACTER limit
+    (backward compatibility). When omitted, the limit comes from the
+    MESSAGE_SLICE_SIZE_TOKENS config (token budget) and is enforced by the
+    active token counter: real tiktoken counting by default, or the legacy
+    tokens*4 chars math when LC_TOKEN_COUNTER='heuristic'.
     """
     if max_length is None:
         from database import get_config
+        from agent.lc import settings as lc_settings
+        from agent.lc.tokens import truncate_tail
         try:
             tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "2000"))
         except (ValueError, TypeError):
             tokens = 250
-        max_length = tokens * 4
+        # The counter mode is resolved once here and passed down so
+        # truncate_tail does not re-read the config.
+        return truncate_tail(content, tokens, mode=lc_settings.token_counter_mode())
 
     if content and len(content) > max_length:
         return content[-max_length:]
@@ -272,6 +280,20 @@ def _history_text_len(history) -> int:
     return total
 
 
+def _message_text_len(msg) -> int:
+    """Characters of text across all parts of a single Gemini-format message."""
+    return sum(len(getattr(p, "text", "") or "") for p in getattr(msg, "parts", []) or [])
+
+
+def _message_token_len(msg, mode=None) -> int:
+    """Token count of a single Gemini-format message using the active counter."""
+    from agent.lc.tokens import count_tokens
+    return sum(
+        count_tokens(getattr(p, "text", "") or "", mode=mode)
+        for p in getattr(msg, "parts", []) or []
+    )
+
+
 def slice_conversation_to_budget(history, current_text):
     """
     Applies MESSAGE_SLICE_SIZE_TOKENS as a COMBINED budget over the conversation
@@ -281,25 +303,48 @@ def slice_conversation_to_budget(history, current_text):
     - The current message is never dropped; it is truncated (keeping the tail)
       only when it alone exceeds the budget.
     - History items are Gemini-format types.Content objects.
+    - The budget is measured with the active token counter: real tiktoken
+      counting by default, or the legacy tokens*4 chars math when
+      LC_TOKEN_COUNTER='heuristic' (which reproduces the previous behavior).
+    - O(n): each message's cost is computed once, then subtracted
+      incrementally while walking from the oldest message.
 
     Returns:
         tuple: (history, current_text) possibly trimmed.
     """
     from database import get_config
+    from agent.lc import settings as lc_settings
+    from agent.lc.tokens import count_tokens, truncate_tail
     try:
         tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "2000"))
     except Exception:
         tokens = 2000
-    max_chars = tokens * 4
 
-    if current_text and len(current_text) > max_chars:
-        current_text = current_text[-max_chars:]
-
+    mode = lc_settings.token_counter_mode()
     history = list(history)
-    current_len = len(current_text or "")
-    while history and _history_text_len(history) + current_len > max_chars:
-        history.pop(0)
-    return history, current_text
+
+    if mode == "heuristic":
+        # Legacy char-based accounting, kept byte-identical for rollback.
+        max_chars = tokens * 4
+        if current_text and len(current_text) > max_chars:
+            current_text = current_text[-max_chars:]
+        current_len = len(current_text or "")
+        costs = [_message_text_len(m) for m in history]
+        budget = max_chars
+    else:
+        current_text = truncate_tail(current_text, tokens, mode=mode)
+        current_len = count_tokens(current_text, mode=mode)
+        costs = [_message_token_len(m, mode=mode) for m in history]
+        budget = tokens
+
+    # Drop the oldest messages until the combined budget fits.
+    total = sum(costs) + current_len
+    start = 0
+    while start < len(costs) and total > budget:
+        total -= costs[start]
+        start += 1
+
+    return history[start:], current_text
 
 def check_rate_limit(sender_id):
     """

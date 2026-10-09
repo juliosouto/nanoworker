@@ -8,10 +8,14 @@ import uuid
 from agent.db_feedback import insert_feedback
 from agent.stop_check import StopRequestedError
 import agent.llm_providers as _providers
+import agent.lc.settings as lc_settings
+from agent.lc.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
 
-# Heuristic used across the project: 1 token ~= 4 chars.
+# Legacy heuristic kept for reference: 1 token ~= 4 chars. The effective
+# counter is selected by LC_TOKEN_COUNTER (tiktoken by default, 'heuristic'
+# restores this math).
 _CHARS_PER_TOKEN = 4
 # Safety margin reserved on top of the accounted input tokens.
 _SAFE_MARGIN_TOKENS = 1024
@@ -20,11 +24,14 @@ _SAFE_MARGIN_TOKENS = 1024
 _DEFAULT_OUTPUT_RESERVE = 32000
 
 
-def _estimate_tokens(text) -> int:
-    """Rough token estimate for a string (1 token ~= 4 chars, matching truncate_message)."""
-    if not text:
-        return 0
-    return max(1, len(str(text)) // _CHARS_PER_TOKEN)
+def _estimate_tokens(text, mode=None) -> int:
+    """Token count for budgeting: real tiktoken counting by default, or the
+    legacy 1-token~=4-chars heuristic when LC_TOKEN_COUNTER='heuristic'.
+
+    `mode` lets hot loops (e.g. _prune_history_to_fit) resolve the counter
+    once instead of reading app_config per message.
+    """
+    return count_tokens(text, mode=mode)
 
 
 def _history_text(msg) -> str:
@@ -82,16 +89,18 @@ def _prune_history_to_fit(history, context_window, config_kwargs, content, max_o
         reserve_output = _DEFAULT_OUTPUT_RESERVE
 
     # Cost of the system prompt, the tools and the current user message.
-    system_token = _estimate_tokens(config_kwargs.get("system_instruction", ""))
+    # The token counter mode is resolved once for the whole pruning pass.
+    mode = lc_settings.token_counter_mode()
+    system_token = _estimate_tokens(config_kwargs.get("system_instruction", ""), mode=mode)
     tools_token = 0
     for tool in config_kwargs.get("tools", []) or []:
-        tools_token += _estimate_tokens(getattr(tool, "__doc__", "") or "")
+        tools_token += _estimate_tokens(getattr(tool, "__doc__", "") or "", mode=mode)
 
-    current_token = _estimate_tokens(content)
+    current_token = _estimate_tokens(content, mode=mode)
     if isinstance(content, list):
         current_token = _estimate_tokens(" ".join(
             p.text if getattr(p, "text", None) else str(p) for p in content
-        ))
+        ), mode=mode)
 
     budget = (
         context
@@ -105,7 +114,7 @@ def _prune_history_to_fit(history, context_window, config_kwargs, content, max_o
     oldest = 0  # number of oldest messages to drop
     used = 0
     for i in range(len(history) - 1, -1, -1):
-        used += _estimate_tokens(_history_text(history[i]))
+        used += _estimate_tokens(_history_text(history[i]), mode=mode)
         if used > budget and i != len(history) - 1:
             oldest = i + 1
             break
