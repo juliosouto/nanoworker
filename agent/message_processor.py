@@ -3,24 +3,93 @@ Message processing entry points for WhatsApp/chat and IDE channels.
 These are the two main public functions consumed by router.py and sweeper.py.
 """
 import logging
+import re
 import time
 import uuid
 
 from google.genai import types
 
 from agent.autonomous_loop import execute_autonomous_loop
+from agent.openai_tools import _is_provider_balance_error
 from agent.prompt_builder import build_system_prompt, build_config_kwargs
+from agent.stop_check import StopRequestedError
 from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.message_utils import (
     truncate_message,
+    slice_conversation_to_budget,
     process_tools_for_llm,
     resolve_worker_from_content,
     clean_mention,
+    apply_plan_before_execution,
 )
 from utils.session import current_session_id
 
 logger = logging.getLogger(__name__)
+
+
+def _friendly_llm_error(error_str: str) -> str:
+    """Returns a short, human-friendly message for LLM API failures caused by
+    per-minute rate limits / quota exhaustion (HTTP 429, RESOURCE_EXHAUSTED) or a
+    false 402 from an upstream provider, instead of leaking the raw API error
+    payload to the user. Any other error keeps the previous generic message
+    unchanged."""
+    lowered = error_str.lower()
+
+    is_rate_limit = ("429" in error_str or "resource_exhausted" in lowered) and (
+        "quota" in lowered
+        or "rate limit" in lowered
+        or "rate-limit" in lowered
+        or "retry in" in lowered
+    )
+    if is_rate_limit:
+        return (
+            "⏳ The AI service temporarily exceeded its usage quota (429). "
+            "I retried automatically several times but it is still rate-limited. "
+            "Please resend your message in a few minutes."
+        )
+
+    # A false 402 (Provider returned error / Insufficient balance) from an
+    # upstream provider hosting a free OpenRouter model. Retries already ran and
+    # the provider is still unavailable; reassure the user instead of leaking the
+    # raw metadata (provider_name, user_id, ...).
+    proxy_error = _as_exception(error_str)
+    if _is_provider_balance_error(proxy_error):
+        return (
+            "💳 The free model provider is temporarily unavailable (HTTP 402). "
+            "I retried automatically several times without success. "
+            "Please resend your message in a few minutes."
+        )
+    if "402" in error_str and "insufficient credits" in lowered:
+        return (
+            "💳 The AI service account has run out of credits in the gateway "
+            "(HTTP 402 - Insufficient credits). Please top up the API balance "
+            "and resend your message."
+        )
+
+    return f"Error calling LLM API: {error_str}"
+
+
+class _FakeError(Exception):
+    """Adapter so the shared openai_tools detect helpers can inspect a raw string
+    as if it were the exception raised by the API client."""
+
+    def __init__(self, text: str, code=None):
+        super().__init__(text)
+        self.code = code
+
+
+def _as_exception(text: str) -> _FakeError:
+    """Wraps an error string so helper predicates that read ``str(exc)`` / ``exc.code``
+    work on it (the string may include the ``Error code: 402`` prefix)."""
+    code = None
+    m = re.search(r"Error code[: ](\d+)", text)
+    if m:
+        try:
+            code = int(m.group(1))
+        except ValueError:
+            code = None
+    return _FakeError(text, code=code)
 
 
 def _detect_wa_channel_type(channel_id: str):
@@ -34,7 +103,10 @@ def _detect_wa_channel_type(channel_id: str):
     is_wa_private = False
     if channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):
         clean_channel = channel_id.replace('wa_web:', '').replace('whatsapp:', '')
-        if '-' in clean_channel or clean_channel.startswith('120363'):
+        # Canonical group JIDs carry the '@g.us' suffix. Keep a legacy best-effort
+        # guess for channels stored before JIDs had a suffix (e.g. '120363...' without
+        # '@g.us'), but always prefer the exact suffix match.
+        if clean_channel.endswith('@g.us') or '-' in clean_channel or clean_channel.startswith('120363'):
             is_wa_group = True
         else:
             is_wa_private = True
@@ -46,13 +118,13 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
     Fetches and builds the Gemini-format conversation history from the database.
     """
     cursor.execute('''
-        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_name 
+        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name 
         FROM messages_in 
         WHERE session_id = ? AND id != ?
         
         UNION ALL
         
-        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_name 
+        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_id_alt, NULL as sender_name 
         FROM messages_out 
         WHERE session_id = ?
         
@@ -69,7 +141,15 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
                 msg_content = truncate_message(msg_content)
             if row['sender_id']:
                 sender_label = row['sender_name'] or row['sender_id']
-                msg_content = f"[Message from: {sender_label} ({row['sender_id']})]\n{msg_content}"
+                ids = row['sender_id']
+                if row['sender_id_alt']:
+                    ids = f"{row['sender_id']} / {row['sender_id_alt']}"
+                msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
+        elif role == 'model' and is_wa_group:
+            # Large tool-result feedbacks (⚙️ Executed tools: ...) pollute small
+            # contexts. Gate behind a config flag so it can be toggled per install.
+            if get_config("TRUNCATE_MODEL_HISTORY_IN_GROUPS", "true").lower() == "true":
+                msg_content = truncate_message(msg_content)
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
             from utils.image_utils import build_gemini_part
@@ -190,11 +270,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     history = _build_history_from_db(cursor, session_id, message_in_id, is_wa_group)
 
     # Get current message info
-    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_name FROM messages_in WHERE id = ?', (message_in_id,))
+    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_id_alt, sender_name FROM messages_in WHERE id = ?', (message_in_id,))
     current_msg = cursor.fetchone()
     current_image_base64 = current_msg['image_base64'] if current_msg else None
     current_gemini_uri = current_msg['gemini_file_uri'] if current_msg else None
     current_sender_id = current_msg['sender_id'] if current_msg else None
+    current_sender_id_alt = current_msg['sender_id_alt'] if current_msg else None
     current_sender_name = current_msg['sender_name'] if current_msg else None
 
     # Ensure client is available for fallback handling
@@ -210,7 +291,16 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
     if current_sender_id:
         sender_label = current_sender_name or current_sender_id
-        content = f"[Message from: {sender_label} ({current_sender_id})]\n{content}"
+        ids = current_sender_id
+        if current_sender_id_alt:
+            ids = f"{current_sender_id} / {current_sender_id_alt}"
+        content = f"[Message from: {sender_label} ({ids})]\n{content}"
+    content = apply_plan_before_execution(content)
+
+    # Slice the WHOLE conversation (history + current message) to the combined
+    # MESSAGE_SLICE_SIZE_TOKENS budget: oldest history messages are dropped
+    # first; the current message is only truncated if it alone overflows.
+    history, content = slice_conversation_to_budget(history, content)
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part
@@ -256,10 +346,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             tools=tools,
             thinking_enabled=thinking_enabled,
             show_tools_results=show_tools_results,
+            temperature=worker.get('temperature') if worker else None,
         )
 
-        mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete)
+        mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results)
 
+    except StopRequestedError:
+        mock_response = "🛑 Processamento interrompido pelo usuário (/stop)."
     except Exception as e:
         error_str = str(e)
         if "403" in error_str and "PERMISSION_DENIED" in error_str:
@@ -270,7 +363,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 pass
             mock_response = "⚠️ A permission error occurred with old history files (possible API Key change or expired file). The file cache for this session was cleared automatically to resolve the issue. Please resend your message to proceed!"
         else:
-            mock_response = f"Error calling LLM API: {error_str}"
+            mock_response = _friendly_llm_error(error_str)
 
     # Write to messages_out safely
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
@@ -382,10 +475,12 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             show_tools_results=True,
         )
 
-        mock_response = execute_autonomous_loop(history, config_kwargs, content, models_to_try, cursor, session_id, message_in_id, is_ide=True)
+        mock_response = execute_autonomous_loop(history, config_kwargs, apply_plan_before_execution(content), models_to_try, cursor, session_id, message_in_id, is_ide=True, show_plan_in_chat=True)
 
+    except StopRequestedError:
+        mock_response = "🛑 Processamento interrompido pelo usuário (/stop)."
     except Exception as e:
-        mock_response = f"Error calling LLM API: {str(e)}"
+        mock_response = _friendly_llm_error(str(e))
 
     message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
     cursor.execute('''

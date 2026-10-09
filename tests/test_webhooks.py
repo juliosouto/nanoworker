@@ -144,6 +144,36 @@ def test_webhook_wa_permissions_disabled(mock_resolve, mock_check, mock_get, cli
 @patch('routes.webhooks.get_config', return_value="secret")
 @patch('routes.webhooks.check_wa_permissions')
 @patch('routes.webhooks.resolve_target_jid')
+@patch('routes.webhooks.route_inbound_message')
+@patch('routes.webhooks._send_composing_presence')
+def test_webhook_wa_refused_reasons_are_ignored(mock_presence, mock_route, mock_resolve, mock_check, mock_get, client):
+    # Regression: should_process_wa_message returns specific refusal reasons
+    # (e.g. audio whose transcription has no worker mention). Every refusal must
+    # short-circuit and NOT route the message for processing.
+    refusal_reasons = (
+        "no_worker_mentioned",
+        "no_worker_mentioned_in_transcription",
+        "audio_mentions_disabled",
+        "sender_not_allowed",
+        "bot_disabled",
+    )
+    for reason in refusal_reasons:
+        mock_check.return_value = (False, reason)
+        mock_route.reset_mock()
+        mock_presence.reset_mock()
+        response = client.post('/api/webhook', headers={'X-Webhook-Secret': 'secret'}, json={
+            "content": "test wa", "channel_id": "wa_web:123"
+        })
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['status'] == 'ignored'
+        assert data['reason'] == reason
+        assert not mock_route.called
+        assert not mock_presence.called
+
+@patch('routes.webhooks.get_config', return_value="secret")
+@patch('routes.webhooks.check_wa_permissions')
+@patch('routes.webhooks.resolve_target_jid')
 @patch('requests.post')
 def test_webhook_wa_rate_limit(mock_post, mock_resolve, mock_check, mock_get, client):
     mock_resolve.return_value = "wa_jid"

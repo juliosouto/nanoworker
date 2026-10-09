@@ -1,4 +1,4 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
@@ -98,9 +98,23 @@ function extractTextContent(msgContent) {
     return '';
 }
 
+function extractQuotedInfo(msgContent) {
+    if (!msgContent) return null;
+    const contextInfo = msgContent.extendedTextMessage?.contextInfo ||
+                        msgContent.imageMessage?.contextInfo ||
+                        msgContent.videoMessage?.contextInfo ||
+                        msgContent.audioMessage?.contextInfo ||
+                        msgContent.documentMessage?.contextInfo;
+    if (!contextInfo || !contextInfo.quotedMessage) return null;
+    return contextInfo;
+}
+
 function isGroupChat(remoteJid) {
     if (!remoteJid) return false;
-    return remoteJid.includes('-') || remoteJid.startsWith('120363');
+    // Canonical group JIDs always carry the '@g.us' suffix. Keep this check
+    // suffix-based (instead of guessing from the numeric format) so groups are
+    // recognized regardless of the exact numeric prefix WhatsApp assigns.
+    return remoteJid.endsWith('@g.us');
 }
 
 function isNoteToSelf(remoteJid, ownJid, ownLid) {
@@ -152,11 +166,25 @@ async function connectToWhatsApp() {
     const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+    let version;
+    try {
+        const waVersion = await fetchLatestWaWebVersion();
+        version = waVersion.version;
+        console.log(`[Baileys] Using WhatsApp Web version: ${version.join('.')}, isLatest: ${waVersion.isLatest}`);
+    } catch (err) {
+        console.warn('[Baileys] Failed to fetch latest WA Web version, falling back to default:', err.message);
+    }
+
     sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
         logger: logger,
-        browser: Browsers.macOS('Chrome')
+        browser: Browsers.macOS('Chrome'),
+        // Keeps the account "offline" so the phone keeps receiving notifications
+        // and messages remain unread. Reading/routing messages locally never
+        // sends a read receipt — only explicit readMessages() calls would.
+        markOnlineOnConnect: false
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -234,6 +262,11 @@ async function connectToWhatsApp() {
             };
 
             if (!shouldForwardMessage(context, agentConfig)) {
+                // Log dropped messages explicitly so silent filtering by the audio gate
+                // (allowAudioMentions=false) is observable instead of disappearing without a trace.
+                if (context.isAudio) {
+                    console.error(`[Baileys Inbound] 🔊 Dropped audio from ${remoteJid} (not self, no text mention). Set allow_audio_mentions=true in WhatsApp settings to process received audios.`);
+                }
                 continue;
             }
 
@@ -292,22 +325,124 @@ async function connectToWhatsApp() {
 
             if (!text) continue;
 
-            // Use remoteJid as the base channel ID, but extract actual participant if available (e.g. for groups)
-            const channelIdBase = remoteJid.split('@')[0].split(':')[0];
+            // Extract Quoted Message Information if present
+            const quotedInfo = extractQuotedInfo(msgContent);
+            let quotedText = null;
+            let quotedSender = null;
+            let quotedMsgId = null;
+            let quotedAudioBase64 = null;
+            let quotedImageBase64 = null;
+            let quotedMimeType = null;
+
+            if (quotedInfo && quotedInfo.quotedMessage) {
+                const qMsg = quotedInfo.quotedMessage;
+                quotedMsgId = quotedInfo.stanzaId || null;
+                quotedSender = quotedInfo.participant ? quotedInfo.participant.split('@')[0].split(':')[0] : null;
+                
+                quotedText = extractTextContent(qMsg);
+
+                // Check for media in quoted message
+                const qMsgWrapper = {
+                    key: {
+                        remoteJid: remoteJid,
+                        id: quotedMsgId,
+                        participant: quotedInfo.participant
+                    },
+                    message: qMsg
+                };
+
+                if (qMsg.audioMessage) {
+                    quotedMimeType = qMsg.audioMessage.mimetype || 'audio/ogg';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedAudioBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted audio downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted audio:', err.message);
+                    }
+                } else if (qMsg.imageMessage) {
+                    quotedMimeType = qMsg.imageMessage.mimetype || 'image/jpeg';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedImageBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted image downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted image:', err.message);
+                    }
+                } else if (qMsg.videoMessage) {
+                    quotedMimeType = qMsg.videoMessage.mimetype || 'video/mp4';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedImageBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted video downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted video:', err.message);
+                    }
+                } else if (qMsg.documentMessage) {
+                    quotedMimeType = qMsg.documentMessage.mimetype || 'application/octet-stream';
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            qMsgWrapper,
+                            'buffer',
+                            {},
+                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                        );
+                        quotedImageBase64 = buffer.toString('base64');
+                        console.log(`[Baileys Inbound] Quoted document downloaded, size: ${buffer.length} bytes`);
+                    } catch (err) {
+                        console.error('Failed to download quoted document:', err.message);
+                    }
+                }
+            }
+
+            // Use the FULL remoteJid (including the '@lid' / '@g.us' / '@s.whatsapp.net' suffix)
+            // as the channel ID. This preserves the correct addressing mode so the agent can
+            // later reply to the exact chat (group vs private LID chat vs note-to-self).
+            // Only the device suffix (e.g. ':3' in multi-device sessions) is stripped.
+            const channelIdBase = remoteJid.split(':')[0];
             let actualSenderJid = msg.key.participant || msg.key.remoteJid;
             if (msg.key.fromMe && ownJid) {
                 actualSenderJid = ownJid;
             }
             const senderId = actualSenderJid.split('@')[0].split(':')[0];
 
-            console.log(`[Baileys Inbound] ${senderId} (in ${channelIdBase}): ${text}`);
+            // Extract alt identifier (LID↔PN mapping) when available
+            let altSenderJid = null;
+            if (msg.key.fromMe && ownJid) {
+                // For own messages, use ownLid as the alt identifier
+                altSenderJid = ownLid || null;
+            } else if (msg.key.participant) {
+                altSenderJid = msg.key.participantAlt || null;
+            } else {
+                altSenderJid = msg.key.remoteJidAlt || null;
+            }
+            const senderIdAlt = altSenderJid ? altSenderJid.split('@')[0].split(':')[0] : null;
+
+            console.log(`[Baileys Inbound] ${senderId} (alt: ${senderIdAlt || 'none'}) (in ${channelIdBase}): ${text}`);
 
             try {
                 const payload = {
                     channel_id: `wa_web:${channelIdBase}`,
                     sender_id: senderId,
+                    sender_id_alt: senderIdAlt,
                     sender_name: msg.pushName || '',
                     sender_jid: actualSenderJid,
+                    sender_jid_alt: altSenderJid,
                     remote_jid: remoteJid,
                     content: text,
                     message_id: msg.key.id
@@ -319,6 +454,23 @@ async function connectToWhatsApp() {
                 if (imageBase64) {
                     payload.image_base64 = imageBase64;
                     payload.mimetype = mimeType;
+                }
+                if (quotedText) {
+                    payload.quoted_text = quotedText;
+                }
+                if (quotedSender) {
+                    payload.quoted_sender = quotedSender;
+                }
+                if (quotedMsgId) {
+                    payload.quoted_msg_id = quotedMsgId;
+                }
+                if (quotedAudioBase64) {
+                    payload.quoted_audio_base64 = quotedAudioBase64;
+                    payload.quoted_mimetype = quotedMimeType;
+                }
+                if (quotedImageBase64) {
+                    payload.quoted_image_base64 = quotedImageBase64;
+                    payload.quoted_mimetype = quotedMimeType;
                 }
                 await axios.post(FLASK_WEBHOOK_URL, payload, {
                     headers: {
@@ -350,7 +502,7 @@ app.post('/send', async (req, res) => {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
     }
 
-    const { text, jid } = req.body;
+    const { text, jid, quoted_msg_id, edit_msg_id } = req.body;
     if (!text) {
         return res.status(400).json({ error: 'Missing text parameter' });
     }
@@ -361,14 +513,54 @@ app.post('/send', async (req, res) => {
     clearTyping(targetJid);
 
     try {
-        console.log(`[Baileys Outbound] to ${targetJid}: ${text}`);
-        const sentMsg = await sock.sendMessage(targetJid, { text: text });
-        if (sentMsg && sentMsg.key && sentMsg.key.id) {
-            botSentMsgIds.add(sentMsg.key.id);
+        console.log(`[Baileys Outbound] to ${targetJid} (edit: ${edit_msg_id || 'none'}): ${text}`);
+        let sentMsg;
+
+        if (edit_msg_id) {
+            try {
+                sentMsg = await sock.sendMessage(targetJid, {
+                    text: text,
+                    edit: {
+                        remoteJid: targetJid,
+                        id: edit_msg_id,
+                        fromMe: true
+                    }
+                });
+            } catch (editErr) {
+                console.warn(`[Baileys Outbound] Failed to edit message ${edit_msg_id} (${editErr.message}), sending new message instead...`);
+            }
+        }
+
+        if (!sentMsg) {
+            const sendOptions = {};
+            if (quoted_msg_id) {
+                sendOptions.quoted = {
+                    key: {
+                        remoteJid: targetJid,
+                        id: quoted_msg_id
+                    },
+                    message: {}
+                };
+            }
+            try {
+                sentMsg = await sock.sendMessage(targetJid, { text: text }, sendOptions);
+            } catch (quotedErr) {
+                if (quoted_msg_id) {
+                    console.warn(`[Baileys Outbound] Failed to send with quoted message (${quotedErr.message}), retrying without quoted...`);
+                    sentMsg = await sock.sendMessage(targetJid, { text: text });
+                } else {
+                    throw quotedErr;
+                }
+            }
+        }
+
+        const msgId = sentMsg?.key?.id || edit_msg_id || null;
+        if (msgId) {
+            botSentMsgIds.add(msgId);
             // Optional: prevent the Set from growing indefinitely
             if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
         }
-        res.json({ status: 'sent', target: targetJid });
+        res.json({ status: 'sent', target: targetJid, message_id: msgId });
     } catch (err) {
         console.error('Failed to send message via Baileys:', err);
         res.status(500).json({ error: 'Failed to send message' });
@@ -420,11 +612,21 @@ app.post('/send_file', async (req, res) => {
         }
 
         const sentMsg = await sock.sendMessage(targetJid, messagePayload);
-        if (sentMsg && sentMsg.key && sentMsg.key.id) {
-            botSentMsgIds.add(sentMsg.key.id);
+        const msgKey = sentMsg && sentMsg.key ? sentMsg.key.id : null;
+        if (msgKey) {
+            botSentMsgIds.add(msgKey);
             if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
         }
-        res.json({ status: 'sent', target: targetJid });
+        if (!msgKey) {
+            // No message id returned -> the message was NOT actually accepted/delivered
+            // by the WhatsApp servers (e.g. the bot is no longer a member of the group,
+            // or the group session keys are not loaded). Surface it as a failure so the
+            // agent never reports a false "sent successfully".
+            console.error(`[Baileys Outbound File] No message id returned for ${targetJid} -> delivery NOT confirmed`);
+            return res.status(502).json({ error: 'Message not accepted by WhatsApp (no message id returned)', target: targetJid });
+        }
+        console.log(`[Baileys Outbound File] Delivered to ${targetJid} (${targetJid.endsWith('@g.us') ? 'group' : 'chat'}) msgId=${msgKey}`);
+        res.json({ status: 'sent', target: targetJid, message_id: msgKey });
     } catch (err) {
         console.error('Failed to send file via Baileys:', err);
         res.status(500).json({ error: 'Failed to send file', details: err.message || err.toString() });

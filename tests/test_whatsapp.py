@@ -119,7 +119,7 @@ def test_send_whatsapp_file_success(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "5511999999999"}
+    mock_resp.json.return_value = {"target": "5511999999999", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     res = wa_module.send_whatsapp_file("5511999999999", "/fake/file.pdf", "Here is your file")
@@ -288,7 +288,7 @@ def test_send_whatsapp_file_no_mimetype(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "1234"}
+    mock_resp.json.return_value = {"target": "1234", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     res = wa_module.send_whatsapp_file("1234", "/fake/unknown.bin")
@@ -306,7 +306,7 @@ def test_send_whatsapp_file_group_jid(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "12036312345-123@g.us"}
+    mock_resp.json.return_value = {"target": "12036312345-123@g.us", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     res = wa_module.send_whatsapp_file("12036312345-123", "/fake/file.pdf")
@@ -362,7 +362,7 @@ def test_send_whatsapp_file_remove_exception(wa_setup, mocker):
     
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"target": "1234"}
+    mock_resp.json.return_value = {"target": "1234", "message_id": "MSG123"}
     mocker.patch('requests.post', return_value=mock_resp)
     
     # Simulate os.remove throwing an exception
@@ -371,3 +371,272 @@ def test_send_whatsapp_file_remove_exception(wa_setup, mocker):
     res = wa_module.send_whatsapp_file("1234", "/fake/file.pdf")
     # Even if remove fails, the response is still success
     assert "successfully" in res
+def test_format_jid_preserves_lid(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("5511999998888@lid") == "5511999998888@lid"
+
+def test_format_jid_preserves_group_suffix(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("120363123456789@lid".replace("@lid", "@g.us")) == "120363123456789@g.us"
+
+def test_format_jid_wa_web_prefix_lid(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("wa_web:5511999998888@lid") == "5511999998888@lid"
+
+def test_format_jid_bare_group(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("12036312345-123") == "12036312345-123@g.us"
+
+def test_format_jid_bare_number(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("5511999998888") == "5511999998888@s.whatsapp.net"
+
+def test_format_jid_self_returns_none(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("self") is None
+    assert wa_module._format_jid("") is None
+
+def test_jid_number_strips_suffix(wa_setup):
+    os_name, wa_module = wa_setup
+    assert wa_module._jid_number("5511999998888@lid") == "5511999998888"
+    assert wa_module._jid_number("120363123456789@g.us") == "120363123456789"
+    assert wa_module._jid_number("5511999998888:3@lid") == "5511999998888"
+
+def test_send_whatsapp_message_self_no_unbound_error(wa_setup, mocker):
+    """Regression: 'self' used to raise UnboundLocalError due to a mis-indented jid block."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, '_is_allowed_to', return_value=True)
+    mocker.patch('requests.get')
+    mocker.patch('utils.audio_utils.extract_and_generate_audio', return_value=("Hello", None))
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mocker.patch('requests.post', return_value=mock_resp)
+
+    res = wa_module.send_whatsapp_message("self", "Hello")
+    assert "successfully" in res
+
+def test_send_whatsapp_file_lid_jid(wa_setup, mocker):
+    """File sent to a private LID chat must preserve the @lid suffix."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, '_is_allowed_to', return_value=True)
+    mocker.patch('requests.get')
+    mocker.patch('os.path.isfile', return_value=True)
+    mocker.patch('os.path.exists', return_value=True)
+    mocker.patch('os.remove')
+    mocker.patch('utils.file_utils.create_temp_copy', return_value="/tmp/copy.jpg")
+    mocker.patch('mimetypes.guess_type', return_value=(None, None))
+
+    captured = {}
+    def fake_post(url, json=None, timeout=None, **kwargs):
+        captured['payload'] = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"target": json.get("jid", "?"), "message_id": "MSG123"}
+        return mock_resp
+    mocker.patch('requests.post', side_effect=fake_post)
+
+    res = wa_module.send_whatsapp_file("5511999998888@lid", "/fake/photo.jpg")
+    assert "successfully" in res
+    assert captured['payload']['jid'] == "5511999998888@lid"
+    # unknown mimetype should fall back to image/jpeg because of the .jpg extension
+    assert captured['payload']['mimetype'] == "image/jpeg"
+def test_jid_number_strips_wa_web_prefix(wa_setup):
+    """Regression: 'wa_web:' prefixed channel ids must NOT be reduced to 'wa_web'."""
+    os_name, wa_module = wa_setup
+    assert wa_module._jid_number("wa_web:120363123456789-123@g.us") == "120363123456789123"
+    assert wa_module._jid_number("wa_web:5511999998888@lid") == "5511999998888"
+    assert wa_module._jid_number("whatsapp:5511999998888@lid") == "5511999998888"
+
+
+def test_is_allowed_to_outgoing_mentions_override(wa_setup, mocker):
+    """Sending is allowed when the dedicated allow_outgoing_mentions flag is on
+    (even if the legacy allow_mentions flag is off)."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {
+        "allowed_to": "5511999999999",
+        "allow_mentions": 0,
+        "allow_outgoing_mentions": 1,
+    }
+    mocker.patch('database.get_db', return_value=mock_conn)
+    assert wa_module._is_allowed_to(
+        "120363123456789-123@g.us", allow_mentions_override=True
+    ) is True
+
+
+def test_is_allowed_to_mentions_only_override(wa_setup, mocker):
+    """Regression: with allow_mentions=1 but allow_outgoing_mentions=0 (the real DB
+    state, since nothing writes the outgoing column) sending must STILL be allowed."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {
+        "allowed_to": "5511999999999",
+        "allow_mentions": 1,
+        "allow_outgoing_mentions": 0,
+    }
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to(
+        "120363123456789-123@g.us", allow_mentions_override=True
+    ) is True
+
+
+def test_is_allowed_to_no_override_denied_when_empty_allowed(wa_setup, mocker):
+    """Without the override flag, an empty allowed_to still blocks file sends."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {
+        "allowed_to": "",
+        "allow_mentions": 1,
+        "allow_outgoing_mentions": 0,
+    }
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    # sender resolution returns None -> blocked
+    assert wa_module._is_allowed_to("120363123456789-123@g.us") is False
+
+
+def test_is_allowed_to_group_resolves_requesting_member(wa_setup, mocker):
+    """A group JID not in Allowed To is authorized when its last requesting member is."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    # First fetchone -> whatsapp_config; second -> sender resolved from messages_in.
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5511999999999"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is True
+
+
+def test_is_allowed_to_group_denied_for_unknown_member(wa_setup, mocker):
+    """A group whose requesting member is not in Allowed To is blocked."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5511888888888"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is False
+
+
+def test_send_whatsapp_file_wa_web_group_portability(wa_setup, mocker):
+    """Composite tool passes the raw wa_web channel; file must still reach the group."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, '_is_allowed_to', return_value=True)
+    mocker.patch('requests.get')
+    mocker.patch('os.path.isfile', return_value=True)
+    mocker.patch('os.path.exists', return_value=True)
+    mocker.patch('os.remove')
+    mocker.patch('utils.file_utils.create_temp_copy', return_value="/tmp/copy.jpg")
+    mocker.patch('mimetypes.guess_type', return_value=("image/jpeg", None))
+
+    captured = {}
+    def fake_post(url, json=None, timeout=None, **kwargs):
+        captured['payload'] = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"target": json.get("jid", "?"), "message_id": "MSG123"}
+        return mock_resp
+    mocker.patch('requests.post', side_effect=fake_post)
+
+    res = wa_module.send_whatsapp_file("wa_web:120363123456789-123@g.us", "/fake/photo.jpg")
+    assert "successfully" in res
+    # The send target must be the group JID (wa_web: prefix stripped), not a private chat.
+    assert captured['payload']['jid'] == "120363123456789-123@g.us"
+def test_send_whatsapp_file_200_without_message_id_reports_failure(wa_setup, mocker):
+    """Regression: an HTTP 200 from Baileys WITHOUT a message_id means the file was
+    not actually delivered (e.g. bot is no longer in the group). The tool must report
+    a failure instead of a false 'sent successfully'."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, '_is_allowed_to', return_value=True)
+    mocker.patch('requests.get')
+    mocker.patch('os.path.isfile', return_value=True)
+    mocker.patch('os.path.exists', return_value=True)
+    mocker.patch('os.remove')
+    mocker.patch('utils.file_utils.create_temp_copy', return_value="/tmp/copy.jpg")
+    mocker.patch('mimetypes.guess_type', return_value=("image/jpeg", None))
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"target": "12036312345-123@g.us"}  # NO message_id
+    mocker.patch('requests.post', return_value=mock_resp)
+
+    res = wa_module.send_whatsapp_file("12036312345-123", "/fake/photo.jpg")
+    assert "NOT delivered" in res
+    assert "successfully" not in res
+
+
+def test_format_jid_uses_session_lid(wa_setup, mocker):
+    """Bare private numbers resolve to the canonical session JID (e.g. '@lid')
+    instead of blindly guessing '@s.whatsapp.net'."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = {"channel_id": "wa_web:5522345678901@lid"}
+    mocker.patch('database.get_db', return_value=mock_conn)
+    assert wa_module._format_jid("5522345678901") == "5522345678901@lid"
+
+
+def test_format_jid_bare_fallback_pn(wa_setup, mocker):
+    """Without a matching session, a bare private number falls back to @s.whatsapp.net."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = None
+    mocker.patch('database.get_db', return_value=mock_conn)
+    assert wa_module._format_jid("5522345678901") == "5522345678901@s.whatsapp.net"
+
+
+def test_format_jid_preserves_explicit_lid(wa_setup):
+    """An explicit '@lid' suffix is preserved as-is (never rewritten to PN)."""
+    os_name, wa_module = wa_setup
+    assert wa_module._format_jid("5522345678901@lid") == "5522345678901@lid"
+
+
+def test_is_allowed_to_group_matches_member_by_alt_lid(wa_setup, mocker):
+    """A group member whose sender is a LID (phone number only in sender_id_alt,
+    the LID<->PN mapping) is matched against Allowed To by their phone number."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "120363012345678@lid", "sender_id_alt": "5511999999999"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is True
+
+
+def test_is_allowed_to_private_lid_resolves_member(wa_setup, mocker):
+    """A private chat addressed by LID resolves its requesting member through the
+    sender_id_alt (phone number) when the PN is on the Allowed To list."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5511999999999", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5522999999999@lid", "sender_id_alt": "5511999999999"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("wa_web:5522999999999@lid") is True

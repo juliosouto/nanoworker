@@ -26,6 +26,23 @@ Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverab
 Do not include any markdown formatting like ```json, just the raw JSON object.
 """
 
+# JSON schema variant used when PLAN_BEFORE_EXECUTION is enabled. It adds an
+# "execution_plan" field so the plan can be kept separate from the final
+# response and stripped cleanly before reaching the end user.
+JSON_SCHEMA_PROMPT_WITH_PLAN = """
+You MUST output your final response as a valid JSON object matching exactly this schema:
+{
+  "user_prompt": "<the user's original request>",
+  "execution_plan": "<your step-by-step plan: which tools you will use, in what order, and why each step is needed>",
+  "llm_response": "<your complete response addressing the request>",
+  "is_the_user_request_completely_satisfied": <boolean>,
+  "critical_system_failure": <boolean>
+}
+Note: Put your plan ONLY in the "execution_plan" field. The "llm_response" field must contain ONLY the final result requested by the user, never the plan or any planning meta-commentary.
+Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverable system exception or fatal tool error that prevents you from satisfying the request.
+Do not include any markdown formatting like ```json, just the raw JSON object.
+"""
+
 
 def _fetch_user_memory(cursor) -> str:
     """
@@ -76,7 +93,11 @@ def _inject_channel_rules(system_prompt: str, channel_id: str, include_tool_rule
                 f"simply output your text directly. Do NOT use the send_whatsapp_message tool "
                 f"for standard replies. The system will automatically forward your text to the chat. "
                 f"However, if you need to send an image or file (like a screenshot) to the current conversation, you MUST use "
-                f"the send_whatsapp_file tool (with phone_number='{clean_channel}'). If you need to send it to another chat or group, use their respective phone_number.\n\n{system_prompt}"
+                f"the send_whatsapp_file tool (with phone_number='{clean_channel}'). "
+                f"The phone_number '{clean_channel}' is the FULL destination address and already contains the correct suffix: '@g.us' "
+                f"means this chat is a GROUP (send the file to that group), while '@lid' or '@s.whatsapp.net' means a private chat "
+                f"(send the file back to that specific user). DO NOT remove or re-derive the suffix — pass it exactly as given. "
+                f"If you need to send to another chat or group, use their respective phone_number.\n\n{system_prompt}"
             )
         else:
             return (
@@ -138,10 +159,12 @@ def build_system_prompt(
         system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
 
     # 6. JSON schema prompt
+    schema_enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
+    schema_prompt = JSON_SCHEMA_PROMPT_WITH_PLAN if schema_enabled else JSON_SCHEMA_PROMPT
     if system_prompt:
-        system_prompt = f"{system_prompt}\n\n{JSON_SCHEMA_PROMPT}"
+        system_prompt = f"{system_prompt}\n\n{schema_prompt}"
     else:
-        system_prompt = JSON_SCHEMA_PROMPT
+        system_prompt = schema_prompt
 
     # 7. User memory
     memory_block = _fetch_user_memory(cursor)
@@ -159,6 +182,7 @@ def build_config_kwargs(
     tools=None,
     thinking_enabled: bool = False,
     show_tools_results: bool = True,
+    temperature: float = None,
 ) -> dict:
     """
     Builds the config_kwargs dict for LLM calls.
@@ -168,14 +192,18 @@ def build_config_kwargs(
         tools (list, optional): List of tool functions to provide.
         thinking_enabled (bool): Whether to enable thinking mode.
         show_tools_results (bool): Whether to stream tool execution results to the client.
+        temperature (float, optional): Sampling temperature (0..2). When None, the
+            provider-specific default is kept (Gemini uses 2.0, OpenAI-compatible 1.0).
 
     Returns:
         dict: Configuration kwargs for the LLM call.
     """
     config_kwargs = {
-        "temperature": 0.0,
         "show_tools_results": show_tools_results,
     }
+
+    if temperature is not None:
+        config_kwargs["temperature"] = temperature
 
     if tools:
         config_kwargs["tools"] = process_tools_for_llm(tools)

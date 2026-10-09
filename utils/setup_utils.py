@@ -34,7 +34,7 @@ def setup_app_config():
     cursor = conn.cursor()
     try:
         keys_to_clear = [
-            'agent_name', 'USE_RECIPES_AS_TOOLS', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
+            'agent_name', 'USE_RECIPES_AS_TOOLS', 'PLAN_BEFORE_EXECUTION', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
             'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL',
             'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR',
             'MESSAGE_SLICE_SIZE_TOKENS'
@@ -49,6 +49,7 @@ def setup_app_config():
             ('agent_name', 'Nano'),
             ('REQUIRE_AT_PREFIX', 'false'),
             ('USE_RECIPES_AS_TOOLS', 'false'),
+            ('PLAN_BEFORE_EXECUTION', 'false'),
             ('AUTONOMOUS_MODE', '1'),
             ('DEFAULT_LLM_PROVIDER', 'Google'),
             ('DEFAULT_LLM_MODEL', 'gemini-3.1-flash-lite'),
@@ -168,7 +169,9 @@ def setup_llm_config():
             ('ollama/llama3.1', 'Ollama', None, 1, 1, 1, 1, 128000, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
             ('openrouter/openai/gpt-4o', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
             ('openrouter/anthropic/claude-3.5-sonnet', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
-            ('openrouter/meta-llama/llama-3.1-70b-instruct', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0)
+            ('openrouter/meta-llama/llama-3.1-70b-instruct', 'OpenRouter', None, 1, 1, 1, 1, None, None, 1, 1, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('nvidia/poolside/laguna-xs-2.1', 'NVIDIA', None, 1, 1, 0, 1, None, 8192, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
+            ('nvidia/meta/llama-3.3-70b-instruct', 'NVIDIA', None, 1, 1, 0, 1, 131072, None, 1, 0, 0, 0, 0, None, None, None, 1, 0, 0, 0, 0),
         ]
         for model in default_models:
             cursor.execute('''

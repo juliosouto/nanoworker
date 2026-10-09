@@ -4,10 +4,81 @@ for OpenAI-compatible LLM providers (OpenAI, Groq, Qwen).
 """
 import inspect
 import json
+import re
 import uuid
 
 from agent.db_feedback import insert_feedback
+from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
+
+# Number of times a transient error (429 rate-limit / quota, or a false 402 from
+# an upstream provider) is retried before propagating to the model fallback chain
+# (mirrors the Gemini loop's max_retries).
+_API_CALL_MAX_RETRIES = 5
+# Fallback wait when the provider does not return a "retry in Xs" hint.
+_RATE_LIMIT_DEFAULT_WAIT = 30.0
+# Wait before retrying a false 402 "insufficient balance" from an upstream
+# provider. OpenRouter re-routes the request to another provider of the same
+# model, so this is much shorter than the 429 per-minute-quota wait.
+_PROVIDER_BALANCE_WAIT = 10.0
+
+
+def _is_provider_balance_error(error: Exception) -> bool:
+    """True for a "false" 402 Payment Required coming from an upstream provider
+    instead of the user's own account balance.
+
+    Example (OpenRouter, a free `:free` model)::
+
+        {'error': {'message': 'Provider returned error', 'code': 402,
+         'metadata': {'raw': '{"error":"Insufficient balance", ...}',
+                      'provider_name': 'GMICloud', 'is_byok': False}}, ...}
+
+    Free OpenRouter models are hosted by third-party providers that occasionally
+    run out of capacity/balance, which produces this transient 402. A retry often
+    succeeds because OpenRouter re-routes to another healthy provider of the same
+    model. A genuine 402 ``"Insufficient credits"`` (the caller's own OpenRouter
+    balance) is NOT retried, since immediate retries cannot fix it.
+    """
+    error_str = str(error)
+    lowered = error_str.lower()
+    code = getattr(error, "code", None)
+    is_payment_required = "402" in error_str or code == 402
+    is_provider_side = (
+        "provider returned error" in lowered
+        or "insufficient balance" in lowered
+        or "provider_name" in lowered
+    )
+    is_own_balance = "insufficient credits" in lowered
+    return is_payment_required and is_provider_side and not is_own_balance
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """True for HTTP 429 / RESOURCE_EXHAUSTED / generic rate-limit errors that
+    are transient and worth retrying after a short wait."""
+    error_str = str(error)
+    lowered = error_str.lower()
+    code = getattr(error, "code", None)
+    return (
+        ("429" in error_str or code == 429 or "resource_exhausted" in lowered)
+        and (
+            "quota" in lowered
+            or "rate limit" in lowered
+            or "rate-limit" in lowered
+            or "retry in" in lowered
+        )
+    )
+
+
+def _wait_seconds_for_rate_limit(error: Exception) -> float:
+    """Respects the provider's own '"retry in Xs'" hint (e.g. Gemini), otherwise
+    falls back to a fixed 30s wait."""
+    match = re.search(r"retry in\s+([\d.]+)\s*s", str(error), re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return _RATE_LIMIT_DEFAULT_WAIT
 
 
 def convert_to_openai_tool(func) -> dict:
@@ -55,6 +126,14 @@ def convert_to_openai_tool(func) -> dict:
             "description": param_desc
         }
 
+        # Detect fixed-choice values ("Must be one of: 'a', 'b', 'c'.") and expose
+        # them as an enum so small models don't send invalid values.
+        one_of = re.search(r"Must be one of[:\s]*([^.]+)", param_desc)
+        if one_of:
+            choices = [v.strip().strip("'\"") for v in re.split(r"[,]|\bor\b", one_of.group(1)) if v.strip()]
+            if len(choices) >= 2:
+                properties[param_name]["enum"] = choices
+
         if param.default == inspect.Parameter.empty:
             required.append(param_name)
 
@@ -70,6 +149,21 @@ def convert_to_openai_tool(func) -> dict:
             }
         }
     }
+
+
+def _describe_tool_args(func) -> str:
+    """Returns a human-readable list of a function's parameters for error feedback."""
+    try:
+        sig = inspect.signature(func)
+    except Exception:
+        return "(signature unavailable)"
+    parts = []
+    for pname, param in sig.parameters.items():
+        if pname in ("self", "args", "kwargs"):
+            continue
+        default = "" if param.default is inspect.Parameter.empty else f" (default: {param.default!r})"
+        parts.append(f"{pname}{default}")
+    return ", ".join(parts) if parts else "(no arguments)"
 
 
 def execute_openai_compatible_llm(client, model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, limit_tokens: int = None, on_complete=None) -> str:
@@ -109,8 +203,19 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
     model_base = model_lower.split("/")[-1] if "/" in model_lower else model_lower
     is_reasoning = model_base.startswith("o1") or model_base.startswith("o3") or "nano" in model_base
 
-    # 3. Tool execution loop (max 10 iterations)
-    for iteration in range(10):
+    try:
+        max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
+    except Exception:
+        max_iterations = 10
+    
+    try:
+        agent_name = get_config("agent_name", "Agent")
+    except Exception:
+        agent_name = "Agent"
+
+    # 3. Tool execution loop
+    iteration = 0
+    while iteration < max_iterations:
         call_args = {
             "model": model_name,
             "messages": messages,
@@ -119,29 +224,80 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             call_args["tools"] = openai_tools
 
         if not is_reasoning:
-            call_args["temperature"] = 1.0
+            call_args["temperature"] = config_kwargs.get("temperature", 1.0)
             if limit_tokens:
                 call_args["max_tokens"] = limit_tokens
         else:
             if limit_tokens:
                 call_args["max_completion_tokens"] = limit_tokens
 
-        try:
-            response = client.chat.completions.create(**call_args)
-        except Exception as e:
-            err_msg = str(e).lower()
-            if "max_tokens" in err_msg or "unsupported" in err_msg or "parameter" in err_msg:
-                fallback_args = {
-                    "model": model_name,
-                    "messages": messages,
-                }
-                if openai_tools:
-                    fallback_args["tools"] = openai_tools
-                if limit_tokens:
-                    fallback_args["max_completion_tokens"] = limit_tokens
-                response = client.chat.completions.create(**fallback_args)
-            else:
-                raise e
+        # Call the API, retrying transient errors with real-time feedback before
+        # giving up and letting the model fallback chain take over. Covers:
+        #   - 429 rate-limit / quota errors (wait for the provider's hint).
+        #   - "false" 402 Provider returned error / Insufficient balance from an
+        #     upstream provider (common with OpenRouter `:free` models whose hosting
+        #     provider runs out of capacity). Retrying works because OpenRouter
+        #     re-routes the request to another healthy provider of the same model.
+        #     A genuine 402 "insufficient credits" (the user's own balance) is NOT
+        #     retried here.
+        for retry_attempt in range(_API_CALL_MAX_RETRIES):
+            try:
+                response = client.chat.completions.create(**call_args)
+                break
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "max_tokens" in err_msg or "unsupported" in err_msg or "parameter" in err_msg:
+                    # Older / compatible APIs reject `max_tokens`; retry with the
+                    # `max_completion_tokens` alias used by reasoning models.
+                    fallback_args = {
+                        "model": model_name,
+                        "messages": messages,
+                    }
+                    if openai_tools:
+                        fallback_args["tools"] = openai_tools
+                    if limit_tokens:
+                        fallback_args["max_completion_tokens"] = limit_tokens
+                    response = client.chat.completions.create(**fallback_args)
+                    break
+
+                if _is_provider_balance_error(e):
+                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                        raise e  # retries exhausted: propagate for model fallback
+                    wait_seconds = _PROVIDER_BALANCE_WAIT
+                    retry_feedback = (
+                        f"💳 Model provider temporarily unavailable (402, insufficient balance) on "
+                        f"attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                        f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
+                elif _is_rate_limit_error(e):
+                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                        raise e  # retries exhausted: propagate for model fallback
+                    wait_seconds = _wait_seconds_for_rate_limit(e)
+                    retry_feedback = (
+                        f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                        f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
+                else:
+                    raise e
+
+                insert_feedback(cursor, table, session_id, message_in_id, retry_feedback)
+                if on_complete:
+                    try:
+                        on_complete(retry_feedback)
+                    except Exception:
+                        pass
+                if sleep_interruptible(wait_seconds):
+                    raise StopRequestedError()
+
+        if not response.choices:
+            iteration += 1
+            if iteration >= max_iterations:
+                return "Error: Model returned empty responses after maximum retries."
+            insert_feedback(cursor, table, session_id, message_in_id,
+                f"⚠️ Empty response from model (attempt {iteration}/{max_iterations}). Retrying...")
+            if sleep_interruptible(2):
+                raise StopRequestedError()
+            continue
 
         message = response.choices[0].message
         tool_calls = getattr(message, 'tool_calls', None)
@@ -175,24 +331,46 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
             tool_name = tc.function.name
             arguments_str = tc.function.arguments
 
-            try:
-                args = json.loads(arguments_str) if arguments_str else {}
-            except Exception:
-                args = {}
+            # Parse the model's JSON arguments defensively, giving small models
+            # actionable feedback instead of swallowing errors silently.
+            args = {}
+            args_error = None
+            if arguments_str:
+                try:
+                    args = json.loads(arguments_str)
+                    if not isinstance(args, dict):
+                        args_error = f"expected a JSON object but got a {type(args).__name__}"
+                except Exception as je:
+                    args_error = f"invalid JSON ({str(je)})"
 
             # Log execution starting
             msg_start = f"⚙️ Executing local tool: {tool_name}..."
             insert_feedback(cursor, table, session_id, message_in_id, msg_start)
 
-            # Execute Python function
+            tool_func = next(
+                (f for f in permitted_tools if getattr(f, '__name__', '') == tool_name),
+                None,
+            )
             result = "Tool not found"
-            for f in permitted_tools:
-                if f.__name__ == tool_name:
-                    try:
-                        result = f(**args)
-                    except Exception as ex:
-                        result = f"Error executing {tool_name}: {str(ex)}"
-                    break
+            if tool_func is None:
+                available = ", ".join(
+                    sorted(getattr(f, '__name__', '') for f in permitted_tools)) or "none"
+                result = (f"Error: tool '{tool_name}' does not exist. "
+                          f"Available tools: {available}. Call one of these instead.")
+            elif args_error:
+                expected = _describe_tool_args(tool_func)
+                result = (f"Error: arguments for {tool_name} could not be parsed ({args_error}). "
+                          f"Expected arguments: {expected}. "
+                          f"Provide a valid JSON object with ONLY those keys.")
+            else:
+                try:
+                    result = tool_func(**args)
+                except TypeError as te:
+                    expected = _describe_tool_args(tool_func)
+                    result = (f"Error executing {tool_name}: {str(te)}. "
+                              f"Expected arguments: {expected}.")
+                except Exception as ex:
+                    result = f"Error executing {tool_name}: {str(ex)}"
 
             if tool_name not in tools_used:
                 tools_used.append(tool_name)
@@ -217,5 +395,13 @@ def execute_openai_compatible_llm(client, model_name: str, history: list, config
                     on_complete(msg_end)
                 except Exception:
                     pass
+
+        iteration += 1
+        if iteration == max_iterations:
+            messages.append({"role": "user", "content": f"{agent_name} continue"})
+            max_iterations += int(get_config("AUTONOMOUS_MODE", "10"))
+            
+            if iteration > 100:  # Hard safety limit
+                return "Error: Tool execution loop exceeded absolute maximum limit."
 
     return "Error: Tool execution loop exceeded maximum iterations."

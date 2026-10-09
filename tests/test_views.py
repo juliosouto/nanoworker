@@ -234,3 +234,9 @@ def test_dashboard_page(mock_get_db, mock_get_permitted_tools, mock_get_default_
                 with patch('inspect.getsource', side_effect=mock_source):
                     response = client.get('/dashboard')
                     assert response.status_code == 200
+
+
+def test_agent_behavior_page_has_plan_toggle(client):
+    response = client.get('/settings/agent_behavior')
+    assert response.status_code == 200
+    assert 'Plan Before Execution' in response.get_data(as_text=True)

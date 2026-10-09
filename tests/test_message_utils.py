@@ -1,18 +1,22 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+from google.genai import types
+
 from utils.message_utils import (
     get_default_worker,
     resolve_worker_from_content,
     should_process_wa_message,
     clean_mention,
     truncate_message,
+    slice_conversation_to_budget,
     check_rate_limit,
     format_dict_to_lines,
     format_document_search_results,
     process_tools_for_llm,
     resolve_target_jid,
-    check_wa_permissions
+    check_wa_permissions,
+    apply_plan_before_execution
 )
 
 @pytest.fixture
@@ -98,6 +102,57 @@ def test_truncate_message(mocker):
     assert len(truncate_message(long_msg)) == 20
     assert len(truncate_message("Short")) == 5
 
+# ---------------------------------------------------------------------------
+# slice_conversation_to_budget: combined (history + current message) budget
+# ---------------------------------------------------------------------------
+
+def _msg(text, role="user"):
+    return types.Content(role=role, parts=[types.Part.from_text(text=text)])
+
+def test_slice_noop_when_under_budget(mocker):
+    mocker.patch('database.get_config', return_value="2000")
+    history = [_msg("hello"), _msg("world", "model")]
+    h2, cur = slice_conversation_to_budget(history, "current message")
+    assert len(h2) == 2
+    assert cur == "current message"
+
+def test_slice_drops_oldest_history_first(mocker):
+    mocker.patch('database.get_config', return_value="5")  # 5 tokens = 20 chars
+    history = [_msg("A" * 15), _msg("B" * 15, "model"), _msg("C" * 15)]
+    h2, cur = slice_conversation_to_budget(history, "tail")
+    # 20 chars budget - 4 ("tail") -> only the last message fits
+    assert len(h2) == 1
+    assert h2[0].parts[0].text == "C" * 15
+    assert cur == "tail"
+
+def test_slice_truncates_current_when_alone_exceeds_budget(mocker):
+    mocker.patch('database.get_config', return_value="5")  # 20 chars
+    current = "HEAD" + "x" * 30 + "TAIL"
+    h2, cur = slice_conversation_to_budget([], current)
+    assert h2 == []
+    assert len(cur) == 20
+    assert cur.endswith("TAIL")
+
+def test_slice_keeps_at_least_current_even_with_huge_history(mocker):
+    mocker.patch('database.get_config', return_value="2000")
+    history = [_msg("Z" * 100000)]
+    h2, cur = slice_conversation_to_budget(history, "hello")
+    assert h2 == []
+    assert cur == "hello"
+
+def test_slice_empty_inputs(mocker):
+    mocker.patch('database.get_config', return_value="2000")
+    h2, cur = slice_conversation_to_budget([], "")
+    assert h2 == []
+    assert cur == ""
+
+def test_slice_does_not_mutate_original_history(mocker):
+    mocker.patch('database.get_config', return_value="5")
+    history = [_msg("A" * 15), _msg("B" * 15, "model"), _msg("C" * 15)]
+    slice_conversation_to_budget(history, "tail")
+    assert len(history) == 3  # original untouched
+
+
 def test_check_rate_limit(mock_db, mocker):
 
     # Check rate limit returns no config
@@ -141,12 +196,18 @@ def test_resolve_target_jid():
     assert resolve_target_jid({'sender_id': '456'}) == '456@s.whatsapp.net'
 
 def test_check_wa_permissions(mocker):
-    mocker.patch('utils.message_utils.should_process_wa_message', return_value=False)
+    mocker.patch('utils.message_utils.should_process_wa_message', return_value=(False, "audio_mentions_disabled"))
+    allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
+    assert not allowed
+    assert reason == "audio_mentions_disabled"
+
+    # Reason falls back to the generic code when the checker returns an empty reason
+    mocker.patch('utils.message_utils.should_process_wa_message', return_value=(False, None))
     allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
     assert not allowed
     assert reason == "permissions_or_disabled"
     
-    mocker.patch('utils.message_utils.should_process_wa_message', return_value=True)
+    mocker.patch('utils.message_utils.should_process_wa_message', return_value=(True, None))
     mocker.patch('utils.message_utils.check_rate_limit', return_value=False)
     allowed, reason = check_wa_permissions({'channel_id': 'wa_web:me', 'remote_jid': ''}, 'test')
     assert not allowed
@@ -192,6 +253,56 @@ def test_should_process_wa_message_exceptions_in_config(mock_db, mocker):
     
     # Should still process if mentioned because allow_mentions defaults to True
     assert should_process_wa_message('channel', 'user@s.whatsapp.net', "@nano hello")
+
+def test_should_process_wa_message_audio_disabled_reason(mock_db, mocker):
+    # allow_audio_mentions = False + audio transcript -> reason "audio_mentions_disabled",
+    # but default (bool) return must still be False.
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*', 'allow_mentions': True, 'allow_audio_mentions': False}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+
+    audio_content = "Audio\n[Transcription]: nano hello"
+    assert should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content) is False
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content, return_reason=True)
+    assert allowed is False
+    assert reason == "audio_mentions_disabled"
+
+def test_should_process_wa_message_audio_no_mention_reason(mock_db, mocker):
+    # allow_audio_mentions = True but transcription has no worker name
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*', 'allow_mentions': True, 'allow_audio_mentions': True}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+
+    audio_content = "Audio\n[Transcription]: hey do this please"
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content, return_reason=True)
+    assert allowed is False
+    assert reason == "no_worker_mentioned_in_transcription"
+
+def test_should_process_wa_message_bot_disabled_reason(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': False}
+    allowed, reason = should_process_wa_message('wa_web:me', 'user@s.whatsapp.net', return_reason=True)
+    assert allowed is False
+    assert reason == "bot_disabled"
+
+def test_should_process_wa_message_sender_not_allowed_reason(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '999', 'allow_mentions': True}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+    allowed, reason = should_process_wa_message('channel', '888@s.whatsapp.net', 'nano hello', return_reason=True)
+    assert allowed is False
+    assert reason == "sender_not_allowed"
+
+def test_should_process_wa_message_allowed_reason_none(mock_db, mocker):
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*'}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='false')
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', '@nano hello', return_reason=True)
+    assert allowed is True
+    assert reason is None
 
 def test_should_process_wa_message_chat_with_self_lid(mock_db, mocker):
     mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '', 'allow_mentions': True}
@@ -248,3 +359,75 @@ def test_process_tools_for_llm_empty_or_false(mocker):
     def my_tool(): pass
     tools = [my_tool]
     assert process_tools_for_llm(tools) == tools
+
+
+def test_apply_plan_before_execution_empty_or_disabled(mocker):
+    # Empty / None content is returned unmodified regardless of the flag.
+    mocker.patch('database.get_config', return_value="true")
+    assert apply_plan_before_execution("") == ""
+    assert apply_plan_before_execution(None) is None
+
+    # Disabled -> content returned unmodified.
+    mocker.patch('database.get_config', return_value="false")
+    content = "hello world"
+    assert apply_plan_before_execution(content) == content
+
+
+def test_apply_plan_before_execution_enabled(mocker):
+    mocker.patch('database.get_config', return_value="true")
+    result = apply_plan_before_execution("please do this")
+
+    assert result.startswith("[Plan Before Execution]")
+    assert "Review the list of tools" in result
+    assert "step-by-step plan" in result
+    assert "execution_plan" in result
+    assert "llm_response" in result
+    assert result.endswith("please do this")
+
+
+def test_build_system_prompt_schema_plan_enabled(mocker):
+    mocker.patch('agent.prompt_builder.get_config', return_value="true")
+    mocker.patch('agent.prompt_builder.get_ide_config', return_value=None)
+    mocker.patch('agent.prompt_builder._fetch_user_memory', return_value="")
+
+    from agent.prompt_builder import JSON_SCHEMA_PROMPT, JSON_SCHEMA_PROMPT_WITH_PLAN, build_system_prompt
+
+    cursor = mocker.MagicMock()
+    out = build_system_prompt(cursor=cursor)
+    assert JSON_SCHEMA_PROMPT not in out
+    assert "execution_plan" in out
+    assert "llm_response" in out
+
+
+def test_build_system_prompt_schema_plan_disabled(mocker):
+    mocker.patch('agent.prompt_builder.get_config', return_value="false")
+    mocker.patch('agent.prompt_builder.get_ide_config', return_value=None)
+    mocker.patch('agent.prompt_builder._fetch_user_memory', return_value="")
+
+    from agent.prompt_builder import JSON_SCHEMA_PROMPT, JSON_SCHEMA_PROMPT_WITH_PLAN, build_system_prompt
+
+    cursor = mocker.MagicMock()
+    out = build_system_prompt(cursor=cursor)
+    assert JSON_SCHEMA_PROMPT in out
+    assert JSON_SCHEMA_PROMPT_WITH_PLAN not in out
+    assert "execution_plan" not in out
+
+
+def test_resolve_worker_and_clean_mention_with_quoted_context(mock_db, mocker):
+    mock_db.fetchall.return_value = [{'is_default': False, 'worker_name': 'Investigator'}]
+    mocker.patch('database.get_config', return_value='true')
+
+    quoted_content = (
+        "[Quoted message from: 551199999999]\n"
+        "Segue a planilha com os dados de vendas de março.\n\n"
+        "@Investigator analise esta planilha e me dê os totais"
+    )
+
+    worker = resolve_worker_from_content(quoted_content)
+    assert worker is not None
+    assert worker['worker_name'] == 'Investigator'
+
+    cleaned = clean_mention(quoted_content)
+    assert "@Investigator" not in cleaned
+    assert "[Quoted message from: 551199999999]" in cleaned
+    assert "analise esta planilha e me dê os totais" in cleaned

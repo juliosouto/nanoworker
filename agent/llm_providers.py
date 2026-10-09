@@ -10,7 +10,36 @@ from google.genai import types
 
 from agent.db_feedback import insert_feedback
 from agent.openai_tools import execute_openai_compatible_llm
+from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
+
+
+def _is_minute_quota_exceeded(error_str: str, exception: Exception) -> bool:
+    """
+    Returns True for 429 RESOURCE_EXHAUSTED errors caused by per-minute quotas
+    (e.g. GenerateContentInputTokensPerModelPerMinute-FreeTier).
+    Only these reset when the minute turns, so waiting ~60s can resolve them.
+    Daily quotas ("PerDay") are excluded: waiting for the minute is useless there.
+    """
+    code = getattr(exception, "code", None)
+    is_quota_429 = ("429" in error_str or code == 429) and "RESOURCE_EXHAUSTED" in error_str
+    return is_quota_429 and "PerDay" not in error_str
+
+
+def _wait_seconds_for_quota(error_str: str) -> float:
+    """
+    Computes how long to wait before retrying a per-minute quota exceeded error:
+    the largest of the provider's own retryDelay (if present) and the seconds
+    remaining until the next minute plus a small margin.
+    """
+    retry_delay = 0.0
+    if "Please retry in " in error_str:
+        try:
+            retry_delay = float(error_str.split("Please retry in ")[1].split("s")[0].strip())
+        except (IndexError, ValueError):
+            retry_delay = 0.0
+    next_minute_wait = 60 - (time.time() % 60) + 3  # seconds until the minute turns, plus margin
+    return max(retry_delay, next_minute_wait)
 
 
 def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, on_complete=None) -> str:
@@ -45,6 +74,10 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     if "tools" in config_kwargs and config_kwargs["tools"]:
         config_kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
 
+    # Apply the worker-configured temperature if present; otherwise keep Gemini's
+    # default (2.0 as before).
+    config_kwargs.setdefault('temperature', 2.0)
+
     chat = client.chats.create(
         model=model_name,
         history=history,
@@ -55,8 +88,19 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
     response_text = None
     current_content = content
 
-    # Tool execution loop (max 10 iterations)
-    for iteration in range(10):
+    try:
+        max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
+    except Exception:
+        max_iterations = 10
+        
+    try:
+        agent_name = get_config("agent_name", "Agent")
+    except Exception:
+        agent_name = "Agent"
+
+    # Tool execution loop
+    iteration = 0
+    while iteration < max_iterations:
         response = None
         for attempt in range(max_retries):
             try:
@@ -67,7 +111,29 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                 if "503" in error_str:
                     feedback = f"⚠️ 503 Error on attempt {attempt + 1}/{max_retries}. Retrying..."
                     insert_feedback(cursor, table, session_id, message_in_id, feedback)
-                    time.sleep(2)
+                    if on_complete:
+                        try:
+                            on_complete(feedback)
+                        except Exception:
+                            pass
+                    if sleep_interruptible(2):
+                        raise StopRequestedError()
+                    continue
+                elif _is_minute_quota_exceeded(error_str, e):
+                    if attempt >= max_retries - 1:
+                        raise e  # retries exhausted: fall back to the model fallback chain
+                    # Wait until the per-minute quota resets (next minute) plus a small margin.
+                    # Retrying on the same chat object resumes exactly from where it failed.
+                    wait_seconds = _wait_seconds_for_quota(error_str)
+                    feedback = f"⏳ Quota exceeded (429) on attempt {attempt + 1}/{max_retries}. Waiting {wait_seconds:.0f}s until the next minute to continue..."
+                    insert_feedback(cursor, table, session_id, message_in_id, feedback)
+                    if on_complete:
+                        try:
+                            on_complete(feedback)
+                        except Exception:
+                            pass
+                    if sleep_interruptible(wait_seconds):
+                        raise StopRequestedError()
                     continue
                 elif any(err in error_str for err in ["400", "401", "403", "429"]) or getattr(e, 'code', 0) in [400, 401, 403, 429]:
                     raise e
@@ -132,6 +198,14 @@ def call_gemini_llm(model_name: str, history: list, config_kwargs: dict, content
                     on_complete(msg_end)
                 except Exception:
                     pass
+
+        iteration += 1
+        if iteration == max_iterations:
+            function_responses.append(types.Part.from_text(text=f"{agent_name} continue"))
+            max_iterations += int(get_config("AUTONOMOUS_MODE", "10"))
+            
+            if iteration > 100:  # Hard safety limit
+                return "Error: Tool execution loop exceeded absolute maximum limit."
 
         current_content = function_responses
 
@@ -289,6 +363,40 @@ def call_openrouter_llm(model_name: str, history: list, config_kwargs: dict, con
             "HTTP-Referer": "https://github.com/nanoworker", 
             "X-OpenRouter-Title": "NanoWorker"
         }
+    )
+    limit_tokens = max_output_tokens if max_output_tokens else None
+    return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)
+def call_nvidia_llm(model_name: str, history: list, config_kwargs: dict, content, cursor, session_id: str, message_in_id: str, table: str, api_key: str = None, max_output_tokens: int = None, on_complete=None) -> str:
+    """
+    Makes a call to the NVIDIA NIM API (OpenAI compatible).
+
+    Arguments:
+        model_name (str): The NVIDIA NIM model name, prefixed with "nvidia/"
+            (e.g. "nvidia/poolside/laguna-xs-2.1"). The prefix is stripped
+            before calling the API.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): NVIDIA NIM API Key. Raises exception if missing.
+        max_output_tokens (int, optional): Maximum limit for output tokens.
+
+    Returns:
+        str: The generated response text.
+    """
+    import openai
+    if not api_key:
+        raise ValueError("API Key for NVIDIA model is not set.")
+
+    # Strip the "nvidia/" prefix if it exists to pass the correct model name
+    actual_model_name = model_name[7:] if model_name.lower().startswith("nvidia/") else model_name
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url="https://integrate.api.nvidia.com/v1",
     )
     limit_tokens = max_output_tokens if max_output_tokens else None
     return execute_openai_compatible_llm(client, actual_model_name, history, config_kwargs, content, cursor, session_id, message_in_id, table, limit_tokens, on_complete=on_complete)

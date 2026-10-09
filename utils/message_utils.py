@@ -5,7 +5,7 @@ def get_default_worker(workers=None):
     if workers is None:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results FROM workers_config')
+        cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature FROM workers_config')
         workers = [dict(w) for w in cursor.fetchall()]
         conn.close()
 
@@ -28,7 +28,7 @@ def resolve_worker_from_content(content):
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature FROM workers_config')
     workers = [dict(w) for w in cursor.fetchall()]
     conn.close()
 
@@ -36,16 +36,24 @@ def resolve_worker_from_content(content):
     from database import get_config
     require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
     
+    # If content has a [Quoted message from...] block, strip it for mention inspection
+    lookup_content = content_lower
+    if lookup_content.startswith("[quoted message from:"):
+        # The actual message comment starts after the double newline following the quote block
+        split_parts = lookup_content.split("\n\n", 1)
+        if len(split_parts) > 1:
+            lookup_content = split_parts[1].strip()
+
     # 1. Check for text mention at the start (handling both with/without spaces)
     for worker in workers:
         worker_name_clean = worker['worker_name'].strip().lower()
         worker_name_no_spaces = worker_name_clean.replace(" ", "")
         
-        if content_lower.startswith(f"@{worker_name_clean}") or content_lower.startswith(f"@{worker_name_no_spaces}"):
+        if lookup_content.startswith(f"@{worker_name_clean}") or lookup_content.startswith(f"@{worker_name_no_spaces}"):
             return worker
             
         if not require_at:
-            if content_lower.startswith(worker_name_clean) or content_lower.startswith(worker_name_no_spaces):
+            if lookup_content.startswith(worker_name_clean) or lookup_content.startswith(worker_name_no_spaces):
                 return worker
 
     # 2. Check for audio mention in transcription
@@ -61,10 +69,19 @@ def resolve_worker_from_content(content):
 
     return get_default_worker(workers)
 
-def should_process_wa_message(channel_base, sender_id, content="", is_group=False):
+def should_process_wa_message(channel_base, sender_id, content="", is_group=False, sender_id_alt=None, return_reason=False):
     """
     Determines if a WhatsApp message should be processed based on config.
     It expects the channel_base and sender_id to accurately determine note-to-self.
+
+    Args:
+        return_reason (bool): When True, returns a 2-tuple (allowed: bool, reason: str|None)
+            where reason is a specific code for why a message was refused. When False
+            (default), returns a plain bool to keep backward compatibility.
+
+    Reason codes:
+        "bot_disabled", "audio_mentions_disabled", "no_worker_mentioned",
+        "no_worker_mentioned_in_transcription", "sender_not_allowed".
     """
     from database import get_db, get_config
     conn = get_db()
@@ -72,93 +89,108 @@ def should_process_wa_message(channel_base, sender_id, content="", is_group=Fals
     cursor.execute('SELECT allowed_from, bot_enabled, allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
     config = cursor.fetchone()
     conn.close()
-    
+
+    reason = None
+
     if not config:
-        return True
-        
-    if not config['bot_enabled']:
-        return False
+        allowed = True
+    elif not config['bot_enabled']:
+        allowed = False
+        reason = "bot_disabled"
+    else:
+        try:
+            allow_mentions = bool(config['allow_mentions'])
+        except (IndexError, KeyError):
+            allow_mentions = True
 
-    try:
-        allow_mentions = bool(config['allow_mentions'])
-    except (IndexError, KeyError):
-        allow_mentions = True
+        try:
+            allow_audio_mentions = bool(config['allow_audio_mentions'])
+        except (IndexError, KeyError):
+            allow_audio_mentions = False
 
-    try:
-        allow_audio_mentions = bool(config['allow_audio_mentions'])
-    except (IndexError, KeyError):
-        allow_audio_mentions = False
+        # Check if ANY worker is mentioned in the content
+        worker_mentioned = False
+        is_audio_transcript = bool(content and '\n[Transcription]: ' in content)
+        if content:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('SELECT worker_name FROM workers_config')
+            worker_names = [row['worker_name'].strip().lower() for row in cursor.fetchall()]
+            conn.close()
 
-    # Check if ANY worker is mentioned in the content
-    worker_mentioned = False
-    if content:
-        from database import get_db
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT worker_name FROM workers_config')
-        worker_names = [row['worker_name'].strip().lower() for row in cursor.fetchall()]
-        conn.close()
-        
-        content_lower = content.lower().strip()
-        from database import get_config
-        require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
-        for name in worker_names:
-            name_no_spaces = name.replace(" ", "")
-            if not name: continue
-            
-            # Check text mention
-            if allow_mentions:
-                if content_lower.startswith(f"@{name}") or content_lower.startswith(f"@{name_no_spaces}"):
-                    worker_mentioned = True
-                    break
-                if not require_at:
-                    if content_lower.startswith(name) or content_lower.startswith(name_no_spaces):
+            content_lower = content.lower().strip()
+            require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+            for name in worker_names:
+                name_no_spaces = name.replace(" ", "")
+                if not name: continue
+
+                # Check text mention
+                if allow_mentions:
+                    if content_lower.startswith(f"@{name}") or content_lower.startswith(f"@{name_no_spaces}"):
                         worker_mentioned = True
                         break
-            
-            # Check audio mention
-            if allow_audio_mentions and '\n[Transcription]: ' in content:
-                transcription = content.split('\n[Transcription]: ', 1)[1].strip().lower()
-                if name in transcription[:30] or f"@{name}" in transcription[:30] or \
-                   name_no_spaces in transcription[:30] or f"@{name_no_spaces}" in transcription[:30]:
-                    worker_mentioned = True
-                    break
+                    if not require_at:
+                        if content_lower.startswith(name) or content_lower.startswith(name_no_spaces):
+                            worker_mentioned = True
+                            break
 
-    clean_sender = str(sender_id).split('@')[0] if sender_id else ''
-    clean_channel = str(channel_base).split('@')[0] if channel_base else ''
+                # Check audio mention
+                if allow_audio_mentions and is_audio_transcript:
+                    transcription = content.split('\n[Transcription]: ', 1)[1].strip().lower()
+                    if name in transcription[:30] or f"@{name}" in transcription[:30] or \
+                       name_no_spaces in transcription[:30] or f"@{name_no_spaces}" in transcription[:30]:
+                        worker_mentioned = True
+                        break
 
-    is_chat_with_oneself = False
-    try:
-        resp = requests.get('http://127.0.0.1:3000/me', timeout=2)
-        if resp.status_code == 200:
-            data = resp.json()
-            own_number = data.get('number')
-            lid_number = data.get('lid_number')
-            if own_number and clean_channel == str(own_number):
-                is_chat_with_oneself = True
-            if lid_number and clean_channel == str(lid_number):
-                is_chat_with_oneself = True
-    except Exception:
-        pass
+        clean_sender = str(sender_id).split('@')[0] if sender_id else ''
+        clean_channel = str(channel_base).split('@')[0] if channel_base else ''
 
-    if is_chat_with_oneself:
-        return True
-        
-    # As per user explicit requirement: The ONLY exception to process messages without mentions is chat with oneself.
-    # Therefore, if we are here and no worker was mentioned, we MUST discard the message.
-    if not worker_mentioned:
-        return False
-        
-    # If a worker WAS mentioned, we must check if the sender is allowed to interact with the bot.
-    allowed_from = config['allowed_from']
-    if not allowed_from or not allowed_from.strip() or allowed_from.strip() == '*':
-        return True
-        
-    allowed_list = [num.strip() for num in allowed_from.split(',') if num.strip()]
-    if clean_sender not in allowed_list:
-        return False
-            
-    return True
+        is_chat_with_oneself = False
+        try:
+            resp = requests.get('http://127.0.0.1:3000/me', timeout=2)
+            if resp.status_code == 200:
+                data = resp.json()
+                own_number = data.get('number')
+                lid_number = data.get('lid_number')
+                if own_number and clean_channel == str(own_number):
+                    is_chat_with_oneself = True
+                if lid_number and clean_channel == str(lid_number):
+                    is_chat_with_oneself = True
+        except Exception:
+            pass
+
+        if is_chat_with_oneself:
+            allowed = True
+        elif not worker_mentioned:
+            # As per user explicit requirement: The ONLY exception to process messages without
+            # mentions is chat with oneself. Therefore, if we are here and no worker was
+            # mentioned, we MUST discard the message.
+            allowed = False
+            if is_audio_transcript:
+                reason = "audio_mentions_disabled" if not allow_audio_mentions \
+                    else "no_worker_mentioned_in_transcription"
+            else:
+                reason = "no_worker_mentioned"
+        else:
+            # If a worker WAS mentioned, we must check if the sender is allowed to interact with the bot.
+            allowed_from = config['allowed_from']
+            if not allowed_from or not allowed_from.strip() or allowed_from.strip() == '*':
+                allowed = True
+            else:
+                allowed_list = [num.strip() for num in allowed_from.split(',') if num.strip()]
+                sender_ids_to_check = {clean_sender}
+                if sender_id_alt:
+                    clean_sender_alt = str(sender_id_alt).split('@')[0]
+                    sender_ids_to_check.add(clean_sender_alt)
+                if not sender_ids_to_check & set(allowed_list):
+                    allowed = False
+                    reason = "sender_not_allowed"
+                else:
+                    allowed = True
+
+    if return_reason:
+        return allowed, reason
+    return allowed
 
 def clean_mention(content, agent_name=None):
     """
@@ -186,6 +218,14 @@ def clean_mention(content, agent_name=None):
             if cleaned_content.lower().startswith(prefix):
                 cleaned_content = cleaned_content[len(prefix):].strip()
                 break
+            # Also clean if preceded by a [Quoted message from...] block
+            if cleaned_content.lower().startswith("[quoted message from:") and "\n\n" in cleaned_content:
+                header_quote, comment_body = cleaned_content.split("\n\n", 1)
+                comment_body_stripped = comment_body.strip()
+                if comment_body_stripped.lower().startswith(prefix):
+                    cleaned_comment = comment_body_stripped[len(prefix):].strip()
+                    cleaned_content = f"{header_quote}\n\n{cleaned_comment}"
+                    break
             
         if '\n[Transcription]: ' in cleaned_content:
             parts = cleaned_content.split('\n[Transcription]: ', 1)
@@ -218,6 +258,48 @@ def truncate_message(content, max_length=None):
     if content and len(content) > max_length:
         return content[-max_length:]
     return content
+
+# Placeholder used when a media part (image/file) must not be re-sent to the LLM.
+MEDIA_PLACEHOLDER = "[midia/anexo enviado anteriormente - ja visualizado]"
+
+
+def _history_text_len(history) -> int:
+    """Total characters of text across all parts of a Gemini-format history list."""
+    total = 0
+    for msg in history:
+        for p in getattr(msg, "parts", []) or []:
+            total += len(getattr(p, "text", "") or "")
+    return total
+
+
+def slice_conversation_to_budget(history, current_text):
+    """
+    Applies MESSAGE_SLICE_SIZE_TOKENS as a COMBINED budget over the conversation
+    (history + current message), instead of per-message truncation.
+
+    - Oldest history messages are dropped first until history + current fits.
+    - The current message is never dropped; it is truncated (keeping the tail)
+      only when it alone exceeds the budget.
+    - History items are Gemini-format types.Content objects.
+
+    Returns:
+        tuple: (history, current_text) possibly trimmed.
+    """
+    from database import get_config
+    try:
+        tokens = int(get_config("MESSAGE_SLICE_SIZE_TOKENS", "2000"))
+    except Exception:
+        tokens = 2000
+    max_chars = tokens * 4
+
+    if current_text and len(current_text) > max_chars:
+        current_text = current_text[-max_chars:]
+
+    history = list(history)
+    current_len = len(current_text or "")
+    while history and _history_text_len(history) + current_len > max_chars:
+        history.pop(0)
+    return history, current_text
 
 def check_rate_limit(sender_id):
     """
@@ -354,6 +436,36 @@ def process_tools_for_llm(tools):
     return processed
 
 
+# Instruction prefix prepended to the user's prompt when PLAN_BEFORE_EXECUTION is enabled.
+PLAN_BEFORE_EXECUTION_PROMPT = """[Plan Before Execution]
+Before fulfilling the request below, you MUST first:
+1. Review the list of tools available to you in this conversation.
+2. Present a concise step-by-step plan describing which tools you will use, in what order, and why each step is necessary to fully deliver the result requested by the user.
+3. Put that plan in the "execution_plan" field of your JSON output (it is internal and not shown to the user unless configured).
+4. Then execute the plan using the tools, step by step, and put ONLY the final result in the "llm_response" field of your JSON output.
+
+The user's request follows below:"""
+
+
+def apply_plan_before_execution(content):
+    """
+    When the PLAN_BEFORE_EXECUTION config is enabled, wraps the user's content
+    with instructions asking the LLM to review the available tools and outline
+    a step-by-step plan before executing. Otherwise (or for empty content),
+    returns the content unmodified.
+    """
+    if not content:
+        return content
+
+    from database import get_config
+    enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
+    if not enabled:
+        return content
+
+    return f"{PLAN_BEFORE_EXECUTION_PROMPT}\n\n{content}"
+
+
+
 def resolve_target_jid(data):
     """
     Extract the target JID for replies from the webhook payload.
@@ -373,12 +485,20 @@ def check_wa_permissions(data, content):
     """
     import logging
     channel_base = data['channel_id'].replace('wa_web:', '')
-    is_group = '@g.us' in data.get('remote_jid', '') or '@g.us' in data['channel_id']
+    is_group = (data.get('remote_jid') or '').endswith('@g.us') or data['channel_id'].endswith('@g.us')
     sender_id = data.get('sender_id')
+    sender_id_alt = data.get('sender_id_alt')
 
-    if not should_process_wa_message(channel_base, sender_id, content, is_group):
-        logging.info(f"Ignored message from {sender_id} in channel {channel_base} due to WhatsApp config permissions.")
-        return False, "permissions_or_disabled"
+    allowed, reason = should_process_wa_message(
+        channel_base, sender_id, content, is_group,
+        sender_id_alt=sender_id_alt, return_reason=True
+    )
+    if not allowed:
+        logging.info(
+            f"Ignored message from {sender_id} (alt: {sender_id_alt}) in channel {channel_base} "
+            f"due to WhatsApp config permissions (reason={reason})."
+        )
+        return False, reason or "permissions_or_disabled"
 
     if not check_rate_limit(sender_id):
         logging.warning(f"Rate limit exceeded for {sender_id}")

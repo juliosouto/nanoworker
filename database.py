@@ -95,7 +95,7 @@ def get_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_config(key: str, default=None) -> str:
+def get_config(key: str, default=None) -> str|None:
     """
     Recupera um valor de configuração geral da tabela app_config.
     Descriptografa automaticamente caso a chave seja identificada como sensível.
@@ -444,6 +444,12 @@ def init_db():
     if not row:
         cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('USE_RECIPES_AS_TOOLS', 'true')")
 
+    # Default Plan Before Execution Config
+    cursor.execute("SELECT value FROM app_config WHERE key = 'PLAN_BEFORE_EXECUTION'")
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('PLAN_BEFORE_EXECUTION', 'false')")
+
     # Default Autonomous Mode Config
     cursor.execute("SELECT value FROM app_config WHERE key = 'AUTONOMOUS_MODE'")
     row = cursor.fetchone()
@@ -603,6 +609,11 @@ def init_db():
     except sqlite3.OperationalError as e:
         if "duplicate column name" not in str(e).lower():
             pass
+    try:
+        cursor.execute("ALTER TABLE messages_in ADD COLUMN sender_id_alt TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
 
     # Messages Out Table (Outbound DB equivalent)
     cursor.execute('''
@@ -678,7 +689,10 @@ def init_db():
         pass
 
     try:
-        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_audio_mentions BOOLEAN DEFAULT 0")
+        # DEFAULT 1 preserves the legacy behavior (inbound audios were processed without an
+        # opt-in gate before this column existed). DEFAULT 0 silently disabled received audios
+        # on existing installs after a deploy that applied this migration.
+        cursor.execute("ALTER TABLE whatsapp_config ADD COLUMN allow_audio_mentions BOOLEAN DEFAULT 1")
     except sqlite3.OperationalError:
         pass
 
@@ -727,7 +741,8 @@ def init_db():
         is_default BOOLEAN DEFAULT 0,
         thinking_enabled BOOLEAN DEFAULT 0,
         tools_enabled BOOLEAN DEFAULT 1,
-        show_tools_results BOOLEAN DEFAULT 1
+        show_tools_results BOOLEAN DEFAULT 1,
+        temperature REAL
     )
     ''')
 
@@ -743,6 +758,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE workers_config ADD COLUMN show_tools_results BOOLEAN DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    try:
+        cursor.execute("ALTER TABLE workers_config ADD COLUMN temperature REAL")
     except sqlite3.OperationalError:
         pass  # Column already exists
 

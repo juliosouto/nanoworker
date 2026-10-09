@@ -172,3 +172,19 @@ def test_initial_setup_exception(mock_backup, client):
     assert response.status_code == 500
     data = response.get_json()
     assert data['status'] == 'error'
+
+
+def test_save_settings_plan_before_execution(client):
+    response = client.post('/api/settings', json={'plan_before_execution': True})
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'success'
+
+    import database
+    conn = database.get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_config WHERE key = 'PLAN_BEFORE_EXECUTION'")
+    row = cursor.fetchone()
+    conn.close()
+    assert row is not None
+    assert row['value'] == 'true'

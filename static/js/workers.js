@@ -12,6 +12,7 @@ function closeWorkerModal() {
     document.getElementById('thinking_enabled').checked = false;
     document.getElementById('tools_enabled').checked = true;
     document.getElementById('show_tools_results').checked = true;
+    document.getElementById('worker_temperature').value = '';
     document.getElementById('modalTitle').innerText = 'Add New Worker';
     currentEditWorkerId = null;
 }
@@ -24,6 +25,7 @@ function editWorkerById(id) {
         document.getElementById('worker_name').value = worker.worker_name;
         document.getElementById('worker_model').value = worker.worker_model;
         document.getElementById('worker_instructions').value = worker.worker_instructions || '';
+        document.getElementById('worker_temperature').value = worker.temperature == null ? '' : worker.temperature;
         document.getElementById('is_default').checked = !!worker.is_default;
         document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
         document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
@@ -40,6 +42,7 @@ function saveWorker() {
         worker_name: document.getElementById('worker_name').value,
         worker_model: document.getElementById('worker_model').value,
         worker_instructions: document.getElementById('worker_instructions').value,
+        temperature: document.getElementById('worker_temperature').value === '' ? null : parseFloat(document.getElementById('worker_temperature').value),
         is_default: document.getElementById('is_default').checked,
         thinking_enabled: document.getElementById('thinking_enabled').checked,
         tools_enabled: document.getElementById('tools_enabled').checked,
