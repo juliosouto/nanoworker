@@ -132,7 +132,7 @@ function renderCustomSettings(schema, values) {
 
     // Dynamic add/remove lists need more horizontal room for their rows.
     if (modalBox && schema.some(f => f.type === 'dynamic_list')) {
-        modalBox.style.maxWidth = '580px';
+        modalBox.style.maxWidth = 'min(820px, 94vw)';
         modalBox.style.maxHeight = '90vh';
         modalBox.style.overflowY = 'auto';
     }
