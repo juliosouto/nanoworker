@@ -123,7 +123,8 @@ def save_settings():
         'perm_tool_creator': 'PERM_TOOL_CREATOR',
         'tool_creator_double_check': 'TOOL_CREATOR_DOUBLE_CHECK',
         'tool_relevance_filter': 'TOOL_RELEVANCE_FILTER',
-        'plan_before_execution': 'PLAN_BEFORE_EXECUTION'
+        'plan_before_execution': 'PLAN_BEFORE_EXECUTION',
+        'block_ads': 'BLOCK_ADS'
     }
     
     saved_keys = []

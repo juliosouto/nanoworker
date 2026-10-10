@@ -27,9 +27,7 @@ def test_cmp_regex_does_not_block_normal_pages():
 def test_harden_context_installs_route_and_init_script():
     ctx = MagicMock()
     _harden_context(ctx)
-    ctx.route.assert_called_once()
-    route_args = ctx.route.call_args[0]
-    assert route_args[0] is _CMP_BLOCK_RE
+    assert ctx.route.call_count == 2
     ctx.add_init_script.assert_called_once()
     assert "__nwSweepConsent" in ctx.add_init_script.call_args[0][0]
 
@@ -40,6 +38,26 @@ def test_harden_context_respects_config_off(mocker):
     _harden_context(ctx)
     ctx.route.assert_not_called()
     ctx.add_init_script.assert_not_called()
+
+
+def test_ads_regex_blocks_known_ad_domains():
+    from browser.manager import _ADS_BLOCK_RE
+    assert _ADS_BLOCK_RE.search("https://securepubads.g.doubleclick.net/gampad/ads")
+    assert _ADS_BLOCK_RE.search("https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js")
+    assert _ADS_BLOCK_RE.search("https://ib.adnxs.com/seg?add=1")
+    assert _ADS_BLOCK_RE.search("https://static.criteo.net/js/ld/ld.js")
+    assert _ADS_BLOCK_RE.search("https://c.amazon-adsystem.com/aax2/apstag.js")
+    assert _ADS_BLOCK_RE.search("https://widgets.outbrain.com/outbrain.js")
+    assert _ADS_BLOCK_RE.search("https://cdn.taboola.com/libtrc/unip/trc.js")
+    assert _ADS_BLOCK_RE.search("https://static.hotjar.com/c/hotjar-123.js")
+    assert _ADS_BLOCK_RE.search("https://www.clarity.ms/tag/abc")
+
+
+def test_ads_regex_does_not_block_normal_pages():
+    from browser.manager import _ADS_BLOCK_RE
+    assert not _ADS_BLOCK_RE.search("https://news.ycombinator.com")
+    assert not _ADS_BLOCK_RE.search("https://github.com/features/actions")
+    assert not _ADS_BLOCK_RE.search("https://en.wikipedia.org/wiki/Main_Page")
 
 
 def test_navigate_runs_consent_sweep(mocker):

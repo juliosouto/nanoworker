@@ -25,6 +25,23 @@ _CMP_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Domains of known Ad networks, trackers, and telemetry services.
+# Blocking them at the network layer is 100% invisible to the page JS/DOM,
+# saves bandwidth/tokens, prevents anti-adblock detection, and keeps screenshots clean.
+_ADS_BLOCK_RE = re.compile(
+    r"https?://([^/?#]+\.)?(?:"
+    r"doubleclick\.net|googlesyndication\.com|googleadservices\.com|"
+    r"adservice\.google\.|pagead2\.googlesyndication\.com|"
+    r"adnxs\.com|criteo\.(?:com|net)|outbrain\.com|taboola\.com|"
+    r"amazon-adsystem\.com|scorecardresearch\.com|rubiconproject\.com|"
+    r"openx\.net|pubmatic\.com|casalemedia\.com|smartadserver\.com|"
+    r"bidswitch\.net|moatads\.com|adsafeprotected\.com|adroll\.com|"
+    r"chartbeat\.com|hotjar\.com|clarity\.ms|segment\.io|mixpanel\.com|"
+    r"popads\.net|popcash\.net|adcolony\.com|applovin\.com|unityads\.unity3d\.com"
+    r")(/|$|\?|#)",
+    re.IGNORECASE,
+)
+
 # Second line of defense: runs in every frame before page scripts. Removes any
 # consent/cookie overlay that still renders (vendor-specific ids/classes are
 # removed outright; generic cookie/consent words only when the node behaves
@@ -85,24 +102,33 @@ _CONSENT_SWEEP_JS = """
 
 def _harden_context(context):
     """
-    Installs cookie-banner/CMP blocking on a freshly created Playwright context
-    (gated by the BLOCK_COOKIE_BANNERS config, default: enabled).
+    Installs cookie-banner/CMP blocking and ad/tracker blocking on a freshly created Playwright context
+    (gated by BLOCK_COOKIE_BANNERS and BLOCK_ADS configs, default: enabled).
     """
     try:
         from database import get_config
         block_banners = get_config("BLOCK_COOKIE_BANNERS", "true").lower() == "true"
+        block_ads = get_config("BLOCK_ADS", "true").lower() == "true"
     except Exception:
         block_banners = True
-    if not block_banners:
-        return
-    try:
-        context.route(_CMP_BLOCK_RE, lambda route: route.abort())
-    except Exception as e:
-        logger.warning(f"Failed to install CMP network blocking: {e}")
-    try:
-        context.add_init_script(_CONSENT_SWEEP_JS)
-    except Exception as e:
-        logger.warning(f"Failed to install consent sweep script: {e}")
+        block_ads = True
+
+    if block_ads:
+        try:
+            # Network route interception is invisible to the website DOM/JS
+            context.route(_ADS_BLOCK_RE, lambda route: route.abort("blockedbyclient"))
+        except Exception as e:
+            logger.warning(f"Failed to install Ads network blocking: {e}")
+
+    if block_banners:
+        try:
+            context.route(_CMP_BLOCK_RE, lambda route: route.abort("blockedbyclient"))
+        except Exception as e:
+            logger.warning(f"Failed to install CMP network blocking: {e}")
+        try:
+            context.add_init_script(_CONSENT_SWEEP_JS)
+        except Exception as e:
+            logger.warning(f"Failed to install consent sweep script: {e}")
 
 class GlobalBrowser:
     """Singleton for the Playwright Chromium instance, running in a dedicated thread"""

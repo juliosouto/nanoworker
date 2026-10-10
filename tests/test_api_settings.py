@@ -87,6 +87,30 @@ def test_tool_relevance_filter_roundtrip(client):
     assert 'id="toolRelevanceToggle"' in html
     assert 'id="toolRelevanceToggle" checked' not in html
 
+def test_block_ads_roundtrip(client):
+    response = client.post('/api/settings', json={'block_ads': True})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['status'] == 'success'
+    assert 'BLOCK_ADS' in body['saved']
+
+    from database import get_config
+    assert get_config('BLOCK_ADS') == 'true'
+
+    page = client.get('/settings/advanced')
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert 'id="blockAdsToggle"' in html
+    assert 'id="blockAdsToggle" checked' in html
+
+    response = client.post('/api/settings', json={'block_ads': False})
+    assert response.status_code == 200
+    assert get_config('BLOCK_ADS') == 'false'
+    page = client.get('/settings/advanced')
+    html = page.get_data(as_text=True)
+    assert 'id="blockAdsToggle"' in html
+    assert 'id="blockAdsToggle" checked' not in html
+
 def test_save_settings_warns_on_unknown_keys(client):
     response = client.post('/api/settings', json={'key_from_the_future': True})
     assert response.status_code == 200
