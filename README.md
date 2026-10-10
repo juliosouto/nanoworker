@@ -218,6 +218,23 @@ When configuring the agent's **"IDE Behavior"** (System Prompt) in the settings,
 - I highly recommend enabling the **"Add current datetime"** option in the settings to provide the AI with real-time awareness.
 - I suggest disabling the **"Enable Thinking"** option for now, as it might interfere with the expected concise output format.
 
+## 🎨 Image Generation Models
+
+Some models registered in **LLM Models** are *text-to-image* models — they only generate images and cannot be called as chat models. OpenRouter's `inclusionai/ming-image-0.1-design` is an example: the provider rejects `chat/completions` with a `404` and points to its dedicated `/api/v1/images` endpoint instead.
+
+To use such a model as a worker's model:
+
+1. **Register the model** in **LLM Models** with **Provider = OpenRouter** and the exact model slug.
+2. Tick **"Image output" ✓** and leave **"Text output" ✗**. This is what tells NanoWorker to route the call to the dedicated image-generation endpoint instead of the chat endpoint.
+3. Point a worker at that model.
+
+When the worker receives a message, it sends the text to the images endpoint and replies with the generated image:
+
+- **Web chat / IDE:** the image renders inline (no extra setup).
+- **WhatsApp:** the image is delivered as a native media message via the Baileys worker.
+
+> **Note:** Image-only models have no conversation history, tools, or autonomous loop — the current message is used as the image prompt, and the textual reply is a short fixed caption. Dedicated image generation is currently implemented for **OpenRouter**; registering an image-only model on another provider will surface a clear error.
+
 ## ⚠️ Important Disclaimers
 
 By using NanoWorker, you acknowledge and agree to the following risks:

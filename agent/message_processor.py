@@ -66,6 +66,19 @@ def _friendly_llm_error(error_str: str) -> str:
             "and resend your message."
         )
 
+    # An image-only model was called via chat/completions (the provider returns
+    # a 404 telling us to use its images endpoint). This means the model was
+    # registered without the "Image output" flag, so it took the text path.
+    if (
+        "is an image generation model" in lowered
+        and "chat/completions endpoint" in lowered
+    ):
+        return (
+            "🎨 This model only generates images and can't be used as a chat "
+            "model. In the model settings, mark 'Image output' ✓ and leave "
+            "'Text output' ✗ so NanoWorker routes it to the image endpoint."
+        )
+
     return f"Error calling LLM API: {error_str}"
 
 

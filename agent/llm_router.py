@@ -184,7 +184,7 @@ def route_llm_call(
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT provider, api_key, thinking, context_window, max_output_tokens FROM llm_config WHERE model_name = ?",
+        "SELECT provider, api_key, thinking, context_window, max_output_tokens, image_output, text_output FROM llm_config WHERE model_name = ?",
         (model_name,),
     )
     row = c.fetchone()
@@ -195,6 +195,8 @@ def route_llm_call(
     model_thinking = False
     context_window = None
     max_output_tokens = None
+    image_output = False
+    text_output = False
     if row:
         try:
             provider = row["provider"].lower() if row["provider"] else None
@@ -217,6 +219,14 @@ def route_llm_call(
             max_output_tokens = row["max_output_tokens"]
         except (KeyError, IndexError, TypeError):
             max_output_tokens = None
+        try:
+            image_output = bool(row["image_output"])
+        except (KeyError, IndexError, TypeError):
+            image_output = False
+        try:
+            text_output = bool(row["text_output"])
+        except (KeyError, IndexError, TypeError):
+            text_output = False
 
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
@@ -239,6 +249,36 @@ def route_llm_call(
     history = _prune_history_to_fit(
         history, context_window, local_kwargs, content, max_output_tokens or None
     )
+
+    # Image-only models (image_output=1, text_output=0) cannot be called via
+    # chat/completions — their provider returns a 404 and points to the dedicated
+    # images endpoint. Divert them to the image-generation backend BEFORE the
+    # LangChain runner and the provider chat loops so both stacks are covered in
+    # a single place. The summarizer backend (summarize=True) stays on the text
+    # path: summarizing is always a text completion. Only OpenRouter is supported
+    # for now (its /api/v1/images endpoint); a mis-registered image-only model on
+    # another provider raises a clear error that the fallback chain can surface.
+    if image_output and not text_output and not summarize:
+        if provider == "openrouter" or model_name.lower().startswith("openrouter/"):
+            from agent.image_generation import generate_image_llm
+
+            return generate_image_llm(
+                model_name,
+                history,
+                local_kwargs,
+                content,
+                cursor,
+                session_id,
+                message_in_id,
+                table,
+                api_key,
+                max_output_tokens,
+                on_complete=on_complete,
+            )
+        raise ValueError(
+            f"Model '{model_name}' is image-only (image_output=1, text_output=0); "
+            f"dedicated image generation is only implemented for OpenRouter."
+        )
 
     # Fase 5: LangChain execution stack. When LLM_STACK=langchain, route through
     # the unified LangChainAgentRunner instead of the provider-specific loops.
