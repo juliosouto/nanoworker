@@ -444,13 +444,35 @@ def _collect_candidates(sources, topics, max_news):
             if len(selected) >= max_news:
                 break
 
-    backups = candidates[: 2 * max_news]
+    # Replacement pool for unreachable selected items. Capped at max_news
+    # (was 2x) so the mission payload stays small: every backup inflates the
+    # JSON serialized into the tool result, which is capped at
+    # LC_TOOL_RESULT_MAX_CHARS (default 6000).
+    backups = candidates[: max_news]
     return selected, backups, diagnostics
 
 
 def _build_mission(cfg, selected, backups, diagnostics):
-    """Render the candidate list + the mandatory agent execution protocol."""
-    payload = json.dumps({"selected": selected, "backups": backups}, ensure_ascii=False, indent=2)
+    """Render the mandatory agent execution protocol + the candidate list.
+
+    Order matters: the protocol comes FIRST and the candidates JSON LAST.
+    Every tool result is capped at ``LC_TOOL_RESULT_MAX_CHARS`` (default 6000)
+    by ``@cap_tool_result`` and this payload can be far larger, so anything
+    placed after the JSON risks being truncated away — the old order cut the
+    protocol off in real-size missions, leaving the model without its rules.
+    """
+    selected_ids = {id(c) for c in selected}
+    # Backups not in `selected` drop their excerpt (the biggest field): once
+    # promoted they have no excerpt anyway, so protocol step 1 forces opening
+    # their URL — keeping it here only bloated the payload past the cap.
+    backup_view = [
+        c if id(c) in selected_ids
+        else {k: v for k, v in c.items() if k != "text_excerpt"}
+        for c in backups
+    ]
+    payload = json.dumps(
+        {"selected": selected, "backups": backup_view}, ensure_ascii=False, indent=2
+    )
     n = cfg["summary_chars"]
     m = cfg["max_news"]
     source_names = [s["name"] for s in cfg["sources"]]
@@ -459,10 +481,6 @@ def _build_mission(cfg, selected, backups, diagnostics):
         "=== NEWS BRIEFING MISSION ===",
         f"CONFIG: sources={source_names} | topics={topic_names} | "
         f"max_news={m} | summary_chars={n}",
-        "",
-        "STEP 1 — CANDIDATES (already discovered via RSS; do NOT run web searches "
-        "yourself, this JSON is your article list):",
-        payload,
         "",
         "MANDATORY EXECUTION PROTOCOL — execute every step, in order:",
         "1) For EACH item in 'selected': if 'full_text_available' is false OR "
@@ -500,6 +518,10 @@ def _build_mission(cfg, selected, backups, diagnostics):
         f"short; never over {n})",
         f"[ ] digest contains approximately {m} items (the configured quantity)",
         "[ ] digest delivered in the requesting channel, in the user's language",
+        "",
+        "CANDIDATES (already discovered via RSS; do NOT run web searches "
+        "yourself, this JSON is your article list):",
+        payload,
     ]
     if diagnostics:
         lines += ["", "DISCOVERY NOTES (issues found during RSS discovery):"]

@@ -288,10 +288,72 @@ def test_fetch_news_returns_mission_with_candidates(mocker):
     assert "Pesquisas eleitorais" not in out
 
 
+def test_fetch_news_protocol_precedes_candidates_and_fits_cap(mocker):
+    # Regression for the truncated-protocol bug: the protocol and self-check
+    # must sit ABOVE the candidates JSON so LC_TOOL_RESULT_MAX_CHARS (6000)
+    # can never cut the rules off; with short-description feeds the whole
+    # mission must also fit under the cap.
+    _patch_tool(mocker, {"https://feeds.bbci.co.uk/portuguese/rss.xml": BBC_RSS})
+    out = fetch_news()
+    protocol_idx = out.index("MANDATORY EXECUTION PROTOCOL")
+    check_idx = out.index("FINAL SELF-CHECK")
+    candidates_idx = out.index("your article list):")
+    assert protocol_idx < check_idx < candidates_idx
+    assert len(out) <= 6000
+
+
+def test_build_mission_strips_excerpt_from_backup_only_items():
+    # Backups outside `selected` drop their (huge) excerpt; selected keep it.
+    cfg = {
+        "sources": [{"name": "G1"}],
+        "topics": [{"name": "Tecnologia"}],
+        "max_news": 1,
+        "summary_chars": 300,
+    }
+
+    def item(title):
+        return {
+            "title": title, "source": "G1", "date": "2026-10-10 10:00 UTC",
+            "url": f"https://g1.globo.com/{title}", "full_text_available": True,
+            "text_excerpt": "x" * 1000, "topics": ["Tecnologia"],
+        }
+
+    picked = item("selecionada")
+    extra = item("apenas-backup")
+    out = news_tools._build_mission(cfg, [picked], [picked, extra], [])
+    payload = json.loads(out.split("your article list):\n", 1)[1])
+    assert payload["selected"][0]["text_excerpt"] == "x" * 1000
+    assert payload["backups"][0]["text_excerpt"] == "x" * 1000  # also selected
+    assert "text_excerpt" not in payload["backups"][1]          # backup-only
+
+
+def test_collect_candidates_backups_capped_at_max_news(mocker):
+    # Backups were 2x max_news; they are capped at max_news so the mission
+    # payload stays within the tool-result cap.
+    def fake_feed(url):
+        items = "".join(
+            f"<item><title>noticia tecnologia numero {i}</title>"
+            f"<link>https://g1.globo.com/tecnologia/{i}</link>"
+            f"<pubDate>Sat, 10 Oct 2026 1{i}:00:00 GMT</pubDate>"
+            f"<description>Reportagem de tecnologia numero {i}</description></item>"
+            for i in range(6)
+        )
+        return f"<rss><channel><title>G1</title>{items}</channel></rss>"
+
+    mocker.patch("tools.news_tools._http_get", side_effect=fake_feed)
+    selected, backups, _ = news_tools._collect_candidates(
+        sources=[{"name": "G1", "domain": "g1.globo.com", "feed": ""}],
+        topics=[{"name": "tecnologia", "keywords": ["tecnologia"]}],
+        max_news=2,
+    )
+    assert len(selected) <= 2
+    assert len(backups) <= 2
+
+
 def test_fetch_news_candidates_json_is_parseable(mocker):
     _patch_tool(mocker, {"https://feeds.bbci.co.uk/portuguese/rss.xml": BBC_RSS})
     out = fetch_news()
-    json_str = out.split("your article list):\n", 1)[1].split("\n\nMANDATORY", 1)[0]
+    json_str = out.split("your article list):\n", 1)[1].split("\n\nDISCOVERY NOTES", 1)[0]
     payload = json.loads(json_str)
     item = payload["selected"][0]
     assert item["title"] == "Nova startup de IA levanta US$ 100 milhões"
