@@ -135,6 +135,8 @@
             </label>
         </div>
 
+        <div id="modalCustomSettings"></div>
+
         <div style="display: flex; justify-content: flex-end; gap: 12px;">
             <button onclick="closeToolModal()" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: var(--text-main); padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cancel</button>
             <button onclick="saveToolModal()" style="background: var(--primary-color, #3b82f6); border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;">Save</button>
@@ -166,4 +168,7 @@
 {% block scripts %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/config.css') }}">
 <script src="{{ url_for('static', filename='js/tools_management.js') }}"></script>
+{% if tool_settings_data %}
+<script id="toolSettingsData" type="application/json">{{ tool_settings_data|tojson }}</script>
+{% endif %}
 {% endblock %}

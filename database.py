@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 
@@ -353,22 +354,33 @@ def get_tool_config(tool_name: str) -> dict:
     conn = get_db()
     cursor = conn.cursor()
     try:
-        cursor.execute('SELECT enabled, allow_others_from_direct_msgs, allow_others_from_group_msgs FROM tools_config WHERE tool_name = ?', (tool_name.lower(),))
+        cursor.execute('SELECT enabled, allow_others_from_direct_msgs, allow_others_from_group_msgs, config_data FROM tools_config WHERE tool_name = ?', (tool_name.lower(),))
         row = cursor.fetchone()
         conn.close()
         if row is not None:
+            settings = {}
+            try:
+                raw = row['config_data']
+                if raw:
+                    settings = json.loads(raw)
+                    if not isinstance(settings, dict):
+                        settings = {}
+            except (ValueError, TypeError, KeyError):
+                settings = {}
             return {
                 'enabled': bool(row['enabled']),
                 'allow_others_from_direct_msgs': bool(row['allow_others_from_direct_msgs']),
-                'allow_others_from_group_msgs': bool(row['allow_others_from_group_msgs'])
+                'allow_others_from_group_msgs': bool(row['allow_others_from_group_msgs']),
+                'settings': settings
             }
     except sqlite3.OperationalError:
         conn.close()
-        
+
     return {
         'enabled': True,
         'allow_others_from_direct_msgs': False,
-        'allow_others_from_group_msgs': False
+        'allow_others_from_group_msgs': False,
+        'settings': {}
     }
 
 def update_tool_config(tool_name: str, updates: dict):
@@ -377,29 +389,34 @@ def update_tool_config(tool_name: str, updates: dict):
     """
     if not updates:
         return
-        
+
     conn = get_db()
     cursor = conn.cursor()
     try:
         tool_name_lower = tool_name.lower()
         cursor.execute('SELECT COUNT(*) FROM tools_config WHERE tool_name = ?', (tool_name_lower,))
         exists = cursor.fetchone()[0] > 0
-        
+
         if not exists:
             cursor.execute('INSERT INTO tools_config (tool_name) VALUES (?)', (tool_name_lower,))
-            
+
         set_clauses = []
         values = []
         for key, value in updates.items():
-            if key in ['enabled', 'allow_others_from_direct_msgs', 'allow_others_from_group_msgs']:
+            if key == 'config_data':
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, ensure_ascii=False)
+                set_clauses.append("config_data = ?")
+                values.append(value)
+            elif key in ['enabled', 'allow_others_from_direct_msgs', 'allow_others_from_group_msgs']:
                 set_clauses.append(f"{key} = ?")
                 values.append(value)
-                
+
         if set_clauses:
             values.append(tool_name_lower)
             query = f"UPDATE tools_config SET {', '.join(set_clauses)} WHERE tool_name = ?"
             cursor.execute(query, tuple(values))
-            
+
         conn.commit()
     finally:
         conn.close()
@@ -845,6 +862,13 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE tools_config ADD COLUMN allow_others_from_group_msgs BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Per-tool custom settings (JSON). Present in CREATE TABLE above; the
+    # ALTER keeps databases created by older builds working.
+    try:
+        cursor.execute("ALTER TABLE tools_config ADD COLUMN config_data TEXT")
     except sqlite3.OperationalError:
         pass
 

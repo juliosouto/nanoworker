@@ -267,24 +267,35 @@ def setup_tools_config():
     """
     Populates the tools_config table with default configuration values for all available tools.
     By default, all tools are enabled, but access from groups and direct messages by other users is disabled.
+    Custom per-tool settings (config_data, e.g. the news tool's sources/topics/limits)
+    are preserved across re-seeds.
     """
     from database import get_db
     from tools import AVAILABLE_TOOLS
-    
+
     conn = get_db()
     cursor = conn.cursor()
     try:
+        # Preserve custom settings (config_data) so e.g. news tool preferences
+        # survive a fresh /api/setup run.
+        cursor.execute(
+            "SELECT tool_name, config_data FROM tools_config "
+            "WHERE config_data IS NOT NULL AND config_data != ''"
+        )
+        preserved = {row['tool_name']: row['config_data'] for row in cursor.fetchall()}
+
         # Clear all existing configs
         cursor.execute("DELETE FROM tools_config")
-        
+
         for tool in AVAILABLE_TOOLS:
             tool_name = getattr(tool, '__name__', str(tool))
+            config_data = preserved.get(tool_name) or preserved.get(tool_name.lower())
             cursor.execute('''
                 INSERT INTO tools_config (
-                    tool_name, enabled, allow_others_from_group_msgs, allow_others_from_direct_msgs
+                    tool_name, enabled, allow_others_from_group_msgs, allow_others_from_direct_msgs, config_data
                 )
-                VALUES (?, 1, 0, 0)
-            ''', (tool_name,))
+                VALUES (?, 1, 0, 0, ?)
+            ''', (tool_name, config_data))
         conn.commit()
     finally:
         conn.close()

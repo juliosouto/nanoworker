@@ -157,7 +157,7 @@ def save_settings():
 def save_tool_setting():
     data = request.json
     tool_name = data.get('tool_name')
-    
+
     if tool_name is not None:
         updates = {}
         if 'enabled' in data:
@@ -166,10 +166,14 @@ def save_tool_setting():
             updates['allow_others_from_direct_msgs'] = data['allow_others_from_direct_msgs']
         if 'allow_others_from_group_msgs' in data:
             updates['allow_others_from_group_msgs'] = data['allow_others_from_group_msgs']
-            
+        if 'settings' in data and data['settings'] is not None:
+            if not isinstance(data['settings'], dict):
+                return jsonify({"status": "error", "message": "'settings' must be a JSON object"}), 400
+            updates['config_data'] = data['settings']
+
         update_tool_config(tool_name, updates)
         return jsonify({"status": "success", "message": f"Tool {tool_name} saved"}), 200
-    
+
     return jsonify({"status": "error", "message": "Invalid payload"}), 400
 
 @api_settings_bp.route('/api/login/toggle', methods=['POST'])

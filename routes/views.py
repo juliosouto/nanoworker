@@ -277,6 +277,7 @@ def tools_management_page():
         if 'whatsapp' in name: return 'WhatsApp'
         if 'schedule' in name: return 'Scheduling'
         if 'search_web' in name: return 'Web Search'
+        if 'news' in name: return 'News'
         if 'screenshot' in name: return 'Screenshot'
         if name in ['read_file', 'write_file']: return 'File System'
         if 'command' in name: return 'Terminal'
@@ -285,7 +286,11 @@ def tools_management_page():
         return 'Other'
         
     sections = defaultdict(list)
-    
+    # Custom per-tool settings (e.g. the news tool's sources/topics/limits)
+    # rendered inside the gear-icon modal. Tools opt in by declaring a
+    # module-level TOOL_SETTINGS_SCHEMA.
+    tool_settings_map = {}
+
     for tool_func in list(AVAILABLE_TOOLS):
         # Verify self-developed tool file still exists
         mod_name = getattr(tool_func, '__module__', '')
@@ -301,7 +306,25 @@ def tools_management_page():
         tool_name = tool_func.__name__
         # Default is true if not set
         tool_config = get_tool_config(tool_name)
-        
+
+        # Export the tool's custom settings schema (if any) plus effective
+        # values so the gear-icon modal can render and prefill them.
+        try:
+            tool_mod = inspect.getmodule(tool_func)
+            settings_schema = getattr(tool_mod, "TOOL_SETTINGS_SCHEMA", None) if tool_mod else None
+        except Exception:
+            settings_schema = None
+        if settings_schema:
+            stored_settings = tool_config.get("settings") or {}
+            values = {}
+            for field in settings_schema:
+                values[field["key"]] = (
+                    stored_settings[field["key"]]
+                    if field["key"] in stored_settings
+                    else field.get("default")
+                )
+            tool_settings_map[tool_name] = {"schema": settings_schema, "values": values}
+
         doc = tool_func.__doc__ or "No description available."
         short_doc = doc.strip().split('\n')[0] # Get first line of docstring
         
@@ -338,7 +361,7 @@ def tools_management_page():
     if 'Self-Developed' in sections:
         sorted_sections['Self-Developed'] = sorted(sections['Self-Developed'], key=lambda x: x['name'])
     
-    return render_template('tools_management.html', sections=sorted_sections)
+    return render_template('tools_management.html', sections=sorted_sections, tool_settings_data=tool_settings_map)
 
 @views_bp.route('/settings/llm')
 def llm_config_page():
