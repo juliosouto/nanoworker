@@ -144,6 +144,34 @@ def test_advanced_settings_page(client):
     response = client.get('/settings/advanced')
     assert response.status_code == 200
 
+def test_advanced_settings_tool_relevance_filter_defaults_off(client, monkeypatch):
+    # No env var and no SQLite row: the switch renders disabled.
+    monkeypatch.delenv('TOOL_RELEVANCE_FILTER', raising=False)
+    response = client.get('/settings/advanced')
+    assert response.status_code == 200
+    assert b'id="toolRelevanceToggle" checked' not in response.data
+
+def test_advanced_settings_tool_relevance_filter_env_override(client, monkeypatch):
+    # The UI reads the same env > app_config source as the runtime
+    # (agent.lc.settings), so a TOOL_RELEVANCE_FILTER env var (e.g. pinned
+    # in a deployed .env that survives container recreations) also renders
+    # the switch as checked, even when the SQLite row was never written.
+    monkeypatch.setenv('TOOL_RELEVANCE_FILTER', 'true')
+    response = client.get('/settings/advanced')
+    assert response.status_code == 200
+    assert b'id="toolRelevanceToggle" checked' in response.data
+
+def test_advanced_settings_tool_relevance_filter_db_roundtrip(client, monkeypatch):
+    # Toggling the switch posts {"tool_relevance_filter": true} to
+    # /api/settings; the advanced settings page must then render the switch
+    # as checked (env unset, so app_config is the source of truth).
+    monkeypatch.delenv('TOOL_RELEVANCE_FILTER', raising=False)
+    response = client.post('/api/settings', json={'tool_relevance_filter': True})
+    assert response.status_code == 200
+    assert response.get_json()['saved'] == ['TOOL_RELEVANCE_FILTER']
+    page = client.get('/settings/advanced')
+    assert b'id="toolRelevanceToggle" checked' in page.data
+
 def test_tools_management_page(client):
     response = client.get('/settings/tools')
     assert response.status_code == 200

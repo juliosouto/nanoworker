@@ -1,4 +1,3 @@
-import os
 from unittest.mock import MagicMock, patch
 
 
@@ -8,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 @patch("routes.webhooks.req.post")
 def test_extract_and_send_images_sends_media(mock_post):
-    from routes.webhooks import extract_and_send_images, _resolve_temp_image_path
+    from routes.webhooks import extract_and_send_images
 
     mock_post.return_value = MagicMock(status_code=200, text="ok")
 
@@ -64,6 +63,31 @@ def test_extract_and_send_images_multiple(mock_post):
     captions = [c.kwargs["json"]["caption"] for c in mock_post.call_args_list]
     assert "text" in captions[0]
     assert captions[1] == ""
+
+
+@patch("routes.webhooks.req.post")
+def test_extract_and_send_images_image_only_no_caption(mock_post):
+    # The image-generation backend now returns ONLY the Markdown tag (the short
+    # "Gerando imagem..." text was already streamed as feedback). WhatsApp must
+    # deliver the image with an empty caption and no leftover text.
+    from routes.webhooks import extract_and_send_images
+
+    mock_post.return_value = MagicMock(status_code=200, text="ok")
+
+    with patch(
+        "routes.webhooks._resolve_temp_image_path",
+        side_effect=lambda f: f"/tmp/files/temp/{f}",
+    ):
+        remaining, sent = extract_and_send_images(
+            "![imagem gerada](/api/temp/gen_only.png)",
+            "wa_jid",
+        )
+
+    assert sent == 1
+    assert remaining == ""
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["file_path"] == "/tmp/files/temp/gen_only.png"
+    assert kwargs["json"]["caption"] == ""
 
 
 def test_resolve_temp_image_path_rejects_traversal(tmp_path):

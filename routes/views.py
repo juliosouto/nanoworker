@@ -239,9 +239,16 @@ def permissions_config_page():
 
 @views_bp.route('/settings/advanced')
 def advanced_settings_page():
+    # Single source of truth: the Tool Relevance Filter toggle reads the same
+    # env > app_config resolution the runtime uses (agent.lc.settings), so the
+    # UI can never disagree with the actual filter behaviour. Pinning the
+    # TOOL_RELEVANCE_FILTER env var (e.g. in a deployed .env, which survives
+    # container recreations) therefore also renders the switch as checked,
+    # even when the SQLite row was never written.
+    from agent.lc.settings import tool_relevance_filter as _tool_relevance_filter
     return render_template('advanced-settings.html',
         tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
-        tool_relevance_filter=get_config('TOOL_RELEVANCE_FILTER', 'false').lower() == 'true',
+        tool_relevance_filter=_tool_relevance_filter(),
         block_ads=get_config('BLOCK_ADS', 'true').lower() == 'true',
         whisper_model=get_config('WHISPER_MODEL', 'small'),
         max_download_size_mb=get_config('MAX_DOWNLOAD_SIZE_MB', '100')

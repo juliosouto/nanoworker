@@ -52,7 +52,7 @@ def test_image_only_model_routes_to_image_backend(
     conn.cursor.return_value = cur
     mock_get_db.return_value = conn
 
-    mock_img.return_value = "🎨 Imagem gerada:\n![imagem gerada](/api/temp/gen_x.png)"
+    mock_img.return_value = "![imagem gerada](/api/temp/gen_x.png)"
     result = _call("openrouter/ming-image-0.1-design")
 
     mock_img.assert_called_once()

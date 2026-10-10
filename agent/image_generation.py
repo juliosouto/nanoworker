@@ -203,7 +203,7 @@ def generate_image_llm(
         table,
         session_id,
         message_in_id,
-        f"🎨 Gerando imagem com {model_name}...",
+        "Gerando imagem...",
         on_complete,
     )
 
@@ -269,8 +269,9 @@ def generate_image_llm(
 
     _log_usage(session_id, message_in_id, model_name, body.get("usage"))
 
-    return (
-        f"🎨 Imagem gerada com {model_name}:\n\n"
-        f"![imagem gerada](/api/temp/{basename})"
-    )
+    # Return only the Markdown image tag: the short "Gerando imagem..."
+    # acknowledgment was already streamed as feedback above, and the web chat /
+    # IDE render this natively while the WhatsApp webhook delivers it as a
+    # native media message with no caption.
+    return f"![imagem gerada](/api/temp/{basename})"
 

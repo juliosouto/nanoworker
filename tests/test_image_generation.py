@@ -97,10 +97,11 @@ def test_generate_image_llm_b64_success(mock_open, mock_post, mock_temp, mock_lo
     resp.raise_for_status.return_value = None
     mock_post.return_value = resp
 
+    on_complete = MagicMock()
     result = generate_image_llm(
         "openrouter/ming-image-0.1-design", [], {},
         "a red panda astronaut", mock_cursor, "sess", "msg", "messages_out",
-        api_key="key",
+        api_key="key", on_complete=on_complete,
     )
 
     # The model slug is sent without the openrouter/ prefix.
@@ -108,9 +109,10 @@ def test_generate_image_llm_b64_success(mock_open, mock_post, mock_temp, mock_lo
     assert kwargs["json"]["model"] == "ming-image-0.1-design"
     assert kwargs["json"]["prompt"] == "a red panda astronaut"
     assert kwargs["headers"]["Authorization"] == "Bearer key"
-    # Result is a Markdown image tag served from /api/temp.
-    assert "![imagem gerada](/api/temp/gen_abcd1234.png)" in result
-    assert "🎨" in result
+    # A short "Gerando imagem..." acknowledgment is streamed before the image.
+    on_complete.assert_called_once_with("Gerando imagem...")
+    # The final reply is ONLY the Markdown image tag (no text prefix / caption).
+    assert result == "![imagem gerada](/api/temp/gen_abcd1234.png)"
     mock_log.assert_called_once()
 
 
