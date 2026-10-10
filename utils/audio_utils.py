@@ -217,6 +217,45 @@ def _get_speaker_wav_references() -> list[str]:
     return ref_wavs[:3]
 
 
+_cached_latents = None
+
+def _get_or_create_cached_latents(model, speaker_wavs):
+    """Caches speaker latents in memory/disk to accelerate inference."""
+    global _cached_latents
+    if _cached_latents is not None:
+        return _cached_latents
+
+    cache_path = os.path.join(MODELS_DIR, "speaker_latents.pth")
+    if os.path.exists(cache_path):
+        import torch
+        try:
+            cached = torch.load(cache_path, weights_only=False)
+            device = next(model.parameters()).device
+            _cached_latents = (cached["gpt_cond_latent"].to(device), cached["speaker_embedding"].to(device))
+            return _cached_latents
+        except Exception as e:
+            logger.warning(f"Could not load cached latents: {e}")
+
+    if speaker_wavs:
+        import torch
+        gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
+            audio_path=speaker_wavs,
+            gpt_cond_len=6,
+            max_ref_length=30
+        )
+        try:
+            torch.save({
+                "gpt_cond_latent": gpt_cond_latent.cpu(),
+                "speaker_embedding": speaker_embedding.cpu()
+            }, cache_path)
+        except Exception:
+            pass
+        _cached_latents = (gpt_cond_latent, speaker_embedding)
+        return _cached_latents
+
+    return None, None
+
+
 def _generate_audio_xtts(text: str) -> str:
     synth_obj = get_xtts_synthesizer()
     
@@ -235,12 +274,8 @@ def _generate_audio_xtts(text: str) -> str:
     
     if synth_obj.get("type") == "finetuned":
         model = synth_obj["model"]
-        if speaker_wavs:
-            gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
-                audio_path=speaker_wavs,
-                gpt_cond_len=6,
-                max_ref_length=30
-            )
+        gpt_cond_latent, speaker_embedding = _get_or_create_cached_latents(model, speaker_wavs)
+        if gpt_cond_latent is not None and speaker_embedding is not None:
             out = model.inference(
                 text=text,
                 language=xtts_lang,
@@ -254,9 +289,6 @@ def _generate_audio_xtts(text: str) -> str:
                 enable_text_splitting=True
             )
         else:
-            # Fallback to speaker file if present
-            base_dir = synth_obj.get("base_dir", "")
-            spk_file = os.path.join(base_dir, "speakers_xtts.pth") if base_dir else None
             out = model.inference(
                 text=text,
                 language=xtts_lang,
