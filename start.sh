@@ -19,6 +19,7 @@ PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me)
 touch .env
 touch nanoworker.db
 mkdir -p .store
+mkdir -p models
 
 if [ -z "$PUBLIC_IP" ]; then
     echo "⚠️ Warning: Could not detect public IP. Starting in local mode (HTTP only)."

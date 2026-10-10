@@ -89,6 +89,7 @@ def save_settings():
         'whatsapp_phone_number_id': 'WHATSAPP_PHONE_NUMBER_ID',
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'ide_prompt': 'IDE_PROMPT',
+        'tts_model': 'TTS_MODEL',
         'whisper_model': 'WHISPER_MODEL',
         'autonomous_mode': 'AUTONOMOUS_MODE',
         'message_slice_size_tokens': 'MESSAGE_SLICE_SIZE_TOKENS',

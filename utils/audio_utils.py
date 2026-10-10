@@ -23,6 +23,7 @@ except ImportError:
 
 _whisper_model = None
 _kokoro_model = None
+_xtts_synthesizer = None
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', '.store', 'models')
 KOKORO_MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
@@ -77,60 +78,222 @@ def get_kokoro_model():
     _kokoro_model = Kokoro(model_path, voices_path)
     return _kokoro_model
 
+
+def _find_xtts_finetuned_checkpoint():
+    """
+    Looks for fine-tuned checkpoints in .store/models/finetuned or models/finetuned.
+    """
+    candidate_dirs = [
+        os.path.join(MODELS_DIR, "finetuned"),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'finetuned'),
+    ]
+    for finetuned_root in candidate_dirs:
+        if not os.path.exists(finetuned_root):
+            continue
+        subdirs = [os.path.join(finetuned_root, d) for d in os.listdir(finetuned_root) if os.path.isdir(os.path.join(finetuned_root, d))]
+        subdirs.append(finetuned_root)
+        for sdir in sorted(subdirs, key=lambda p: os.path.getmtime(p), reverse=True):
+            files = os.listdir(sdir)
+            ckpts = [os.path.join(sdir, f) for f in files if f.startswith("checkpoint_") and f.endswith(".pth") or f == "model.pth"]
+            cfg = os.path.join(sdir, "config.json")
+            if ckpts and os.path.exists(cfg):
+                ckpts.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                return ckpts[0], cfg
+    return None, None
+
+
+def get_xtts_synthesizer():
+    """
+    Loads Coqui XTTS-v2 for inference (supporting base and fine-tuned checkpoints).
+    """
+    global _xtts_synthesizer
+    if _xtts_synthesizer is not None:
+        return _xtts_synthesizer
+
+    os.environ["COQUI_TOS_AGREED"] = "1"
+    import torch
+    from TTS.tts.models.xtts import Xtts
+    from TTS.tts.configs.xtts_config import XttsConfig
+    from TTS.utils.manage import ModelManager
+
+    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    logger.info(f"Initializing Coqui XTTS-v2 on {device}...")
+
+    manager = ModelManager()
+    base_model_path, _, _ = manager.download_model("tts_models/multilingual/multi-dataset/xtts_v2")
+
+    finetuned_checkpoint, finetuned_config = _find_xtts_finetuned_checkpoint()
+
+    if finetuned_checkpoint and finetuned_config:
+        logger.info(f"✨ Loading fine-tuned XTTS-v2 checkpoint: {finetuned_checkpoint}")
+        config_xtts = XttsConfig()
+        config_xtts.load_json(finetuned_config)
+        model = Xtts.init_from_config(config_xtts)
+        model.load_checkpoint(
+            config_xtts,
+            checkpoint_dir=base_model_path,
+            checkpoint_path=finetuned_checkpoint,
+            vocab_path=os.path.join(base_model_path, "vocab.json"),
+            speaker_file_path=os.path.join(base_model_path, "speakers_xtts.pth"),
+            eval=True,
+            use_deepspeed=False
+        )
+        model.to(device)
+        _xtts_synthesizer = {"type": "finetuned", "model": model, "device": device, "base_dir": base_model_path}
+    else:
+        logger.info("Loading base Coqui XTTS-v2 model...")
+        from TTS.api import TTS
+        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        _xtts_synthesizer = {"type": "base", "tts": tts, "device": device, "base_dir": base_model_path}
+
+    return _xtts_synthesizer
+
+
+def _generate_audio_kokoro(text: str, voice: str = "af_heart") -> str:
+    model = get_kokoro_model()
+    
+    # Detect language dynamically
+    try:
+        detected_lang = detect(text)
+    except LangDetectException:
+        detected_lang = "pt"
+        
+    # Map detected language to Kokoro format. en -> en-us, pt -> pt-br
+    lang_mapping = {
+        'pt': 'pt-br',
+        'en': 'en-us',
+        'es': 'es',
+        'fr': 'fr-fr',
+        'ja': 'ja',
+        'ko': 'ko',
+        'zh-cn': 'cmn',
+        'zh-tw': 'cmn',
+        'it': 'it',
+        'hi': 'hi'
+    }
+    
+    kokoro_lang = lang_mapping.get(detected_lang, 'en-us')
+    
+    # Map languages to best default voices
+    default_voices = {
+        'pt-br': 'pm_alex',
+        'en-us': 'am_echo',
+        'es': 'ef_dora',
+        'fr-fr': 'ff_siwis',
+        'ja': 'jf_alpha',
+        'ko': 'kf_alpha',
+        'cmn': 'zf_xiaoxiao',
+        'it': 'if_sara',
+        'hi': 'hf_alpha'
+    }
+    
+    # Only override the voice if it is the default "af_heart"
+    if voice == "af_heart" and kokoro_lang in default_voices:
+        voice = default_voices[kokoro_lang]
+    
+    logger.info(f"Synthesizing Kokoro audio: {text[:50]}... (Lang: {kokoro_lang}, Voice: {voice})")
+    samples, sample_rate = model.create(text, voice=voice, speed=1.0, lang=kokoro_lang)
+    
+    temp_wav = get_temp_file_path(".wav")
+    sf.write(temp_wav, samples, sample_rate)
+    return temp_wav
+
+
+def _get_speaker_wav_references() -> list[str]:
+    """Finds speaker reference wavs for voice cloning."""
+    candidate_paths = [
+        os.path.join(MODELS_DIR, 'voices'),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'voices'),
+        os.path.join(MODELS_DIR, 'finetuned'),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'finetuned'),
+    ]
+    ref_wavs = []
+    for cdir in candidate_paths:
+        if os.path.exists(cdir):
+            for root, _, files in os.walk(cdir):
+                for f in files:
+                    if f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac')) and not f.startswith('.'):
+                        ref_wavs.append(os.path.join(root, f))
+    return ref_wavs[:3]
+
+
+def _generate_audio_xtts(text: str) -> str:
+    synth_obj = get_xtts_synthesizer()
+    
+    try:
+        detected_lang = detect(text)
+    except LangDetectException:
+        detected_lang = "pt"
+        
+    supported_langs = {'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'ko', 'hu', 'hi'}
+    xtts_lang = detected_lang if detected_lang in supported_langs else 'pt'
+    
+    temp_wav = get_temp_file_path(".wav")
+    speaker_wavs = _get_speaker_wav_references()
+
+    logger.info(f"Synthesizing XTTS-v2 audio: {text[:50]}... (Lang: {xtts_lang}, Finetuned: {synth_obj.get('type') == 'finetuned'})")
+    
+    if synth_obj.get("type") == "finetuned":
+        model = synth_obj["model"]
+        if speaker_wavs:
+            gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
+                audio_path=speaker_wavs,
+                gpt_cond_len=6,
+                max_ref_length=30
+            )
+            out = model.inference(
+                text=text,
+                language=xtts_lang,
+                gpt_cond_latent=gpt_cond_latent,
+                speaker_embedding=speaker_embedding,
+                temperature=0.7,
+                length_penalty=1.0,
+                repetition_penalty=2.0,
+                top_k=50,
+                top_p=0.85,
+                enable_text_splitting=True
+            )
+        else:
+            # Fallback to speaker file if present
+            base_dir = synth_obj.get("base_dir", "")
+            spk_file = os.path.join(base_dir, "speakers_xtts.pth") if base_dir else None
+            out = model.inference(
+                text=text,
+                language=xtts_lang,
+                temperature=0.7,
+                enable_text_splitting=True
+            )
+        sf.write(temp_wav, out["wav"], 24000, subtype='PCM_16')
+    else:
+        tts = synth_obj["tts"]
+        if speaker_wavs:
+            tts.tts_to_file(text=text, speaker_wav=speaker_wavs[0], language=xtts_lang, file_path=temp_wav, split_sentences=True)
+        elif hasattr(tts, 'speakers') and tts.speakers:
+            speaker_name = tts.speakers[0]
+            tts.tts_to_file(text=text, speaker=speaker_name, language=xtts_lang, file_path=temp_wav, split_sentences=True)
+        else:
+            tts.tts_to_file(text=text, language=xtts_lang, file_path=temp_wav, split_sentences=True)
+        
+    return temp_wav
+
+
 def generate_audio(text: str, voice: str = "af_heart") -> str:
     """
-    Generates audio from text using Kokoro-ONNX and returns the path to the .ogg file.
+    Generates audio from text using the configured TTS model (Kokoro ONNX or Coqui XTTS-v2)
+    and returns the path to the .ogg file.
     """
     try:
-        model = get_kokoro_model()
-        
-        # Detect language dynamically
-        try:
-            detected_lang = detect(text)
-        except LangDetectException:
-            detected_lang = "pt"
+        from database import get_config
+        tts_engine = get_config("TTS_MODEL", "kokoro").lower()
+    except Exception:
+        tts_engine = "kokoro"
+
+    try:
+        if tts_engine in ("xtts", "xtts-v2", "coqui-xtts-v2", "coqui"):
+            temp_wav = _generate_audio_xtts(text)
+        else:
+            temp_wav = _generate_audio_kokoro(text, voice=voice)
             
-        # Map detected language to Kokoro format. en -> en-us, pt -> pt-br
-        lang_mapping = {
-            'pt': 'pt-br',
-            'en': 'en-us',
-            'es': 'es',
-            'fr': 'fr-fr',
-            'ja': 'ja',
-            'ko': 'ko',
-            'zh-cn': 'cmn',
-            'zh-tw': 'cmn',
-            'it': 'it',
-            'hi': 'hi'
-        }
-        
-        kokoro_lang = lang_mapping.get(detected_lang, 'en-us')
-        
-        # Map languages to best default voices
-        default_voices = {
-            'pt-br': 'pm_alex',  # Mantido a sua escolha (Português Masculino)
-            'en-us': 'am_echo',  # Corrigido para voz masculina em inglês
-            'es': 'ef_dora',
-            'fr-fr': 'ff_siwis',
-            'ja': 'jf_alpha',
-            'ko': 'kf_alpha',
-            'cmn': 'zf_xiaoxiao',
-            'it': 'if_sara',     # Italiano
-            'hi': 'hf_alpha'     # Hindi
-        }
-        
-        # Only override the voice if it is the default "af_heart"
-        if voice == "af_heart" and kokoro_lang in default_voices:
-            voice = default_voices[kokoro_lang]
-        
-        # generate audio
-        logger.info(f"Synthesizing audio for text: {text[:50]}... (Detected Lang: {detected_lang}, Using Lang: {kokoro_lang}, Voice: {voice})")
-        samples, sample_rate = model.create(text, voice=voice, speed=1.0, lang=kokoro_lang)
-        
-        # Save to temp wav
-        temp_wav = get_temp_file_path(".wav")
-        sf.write(temp_wav, samples, sample_rate)
-        
         # Convert to ogg for WhatsApp using ffmpeg
         temp_ogg = get_temp_file_path("audio.ogg")
         subprocess.run([
@@ -141,7 +304,7 @@ def generate_audio(text: str, voice: str = "af_heart") -> str:
         # Clean up wav
         try:
             os.remove(temp_wav)
-        except:
+        except Exception:
             pass
             
         return os.path.abspath(temp_ogg)

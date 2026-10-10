@@ -13,6 +13,7 @@ faster-whisper
 # with "TypeError: open() got an unexpected keyword argument 'metadata_errors'".
 av>=11.0.0
 kokoro-onnx
+TTS
 soundfile
 cryptography
 openai

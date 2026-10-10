@@ -271,3 +271,12 @@ tools/self-developed/linux/*
 !tools/self-developed/linux/__init__.py
 tools/self-developed/windows/*
 !tools/self-developed/windows/__init__.py
+
+# Models & Weights
+models/*
+!models/.gitkeep
+!models/*/
+models/*/*
+!models/*/.gitkeep
+*.pth
+*.onnx

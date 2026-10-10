@@ -48,6 +48,13 @@ document.addEventListener('DOMContentLoaded', () => {
     setupToggle('toolRelevanceToggle', 'toolRelevanceToggleKnob', 'tool_relevance_filter');
     setupToggle('blockAdsToggle', 'blockAdsToggleKnob', 'block_ads');
 
+    const ttsSelect = document.getElementById('ttsModelSelect');
+    if (ttsSelect) {
+        ttsSelect.addEventListener('change', (e) => {
+            saveSetting('tts_model', e.target.value);
+        });
+    }
+
     const whisperSelect = document.getElementById('whisperModelSelect');
     if (whisperSelect) {
         whisperSelect.addEventListener('change', (e) => {

@@ -250,6 +250,7 @@ def advanced_settings_page():
         tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
         tool_relevance_filter=_tool_relevance_filter(),
         block_ads=get_config('BLOCK_ADS', 'true').lower() == 'true',
+        tts_model=get_config('TTS_MODEL', 'kokoro'),
         whisper_model=get_config('WHISPER_MODEL', 'small'),
         max_download_size_mb=get_config('MAX_DOWNLOAD_SIZE_MB', '100')
     )

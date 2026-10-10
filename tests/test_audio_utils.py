@@ -18,10 +18,12 @@ from utils.audio_utils import (
 @pytest.fixture(autouse=True)
 def reset_globals():
     au._kokoro_model = None
+    au._xtts_synthesizer = None
     au._whisper_model = None
     au.WhisperModel = MagicMock()
     yield
     au._kokoro_model = None
+    au._xtts_synthesizer = None
     au._whisper_model = None
 
 @pytest.fixture
@@ -63,9 +65,10 @@ def test_get_kokoro_model(mocker):
     assert au._kokoro_model == "mock_kokoro"
 
 def test_generate_audio_success(mocker):
+    mocker.patch('database.get_config', return_value='kokoro')
     mocker.patch('utils.audio_utils.get_kokoro_model')
     mocker.patch('utils.audio_utils.detect', return_value="en")
-    mocker.patch('utils.file_utils.get_temp_file_path', return_value="/tmp/audio.ogg")
+    mocker.patch('utils.file_utils.get_temp_file_path', side_effect=["/tmp/test.wav", "/tmp/audio.ogg"])
     
     mock_model = MagicMock()
     mock_model.create.return_value = (b"samples", 24000)
@@ -78,11 +81,26 @@ def test_generate_audio_success(mocker):
     path = generate_audio("Hello")
     assert type(path) is str
 
+def test_generate_audio_xtts_success(mocker):
+    mocker.patch('database.get_config', return_value='xtts-v2')
+    mock_tts = MagicMock()
+    mock_tts.speakers = ['Claribel Dervla']
+    mocker.patch('utils.audio_utils.get_xtts_synthesizer', return_value={"type": "base", "tts": mock_tts})
+    mocker.patch('utils.audio_utils.detect', return_value="pt")
+    mocker.patch('utils.file_utils.get_temp_file_path', side_effect=["/tmp/test.wav", "/tmp/audio.ogg"])
+    mocker.patch('subprocess.run')
+    mocker.patch('os.remove')
+    
+    path = generate_audio("Olá mundo")
+    assert type(path) is str
+    assert mock_tts.tts_to_file.called
+
 def test_generate_audio_fallback_lang(mocker):
+    mocker.patch('database.get_config', return_value='kokoro')
     mocker.patch('utils.audio_utils.get_kokoro_model')
     from langdetect.lang_detect_exception import LangDetectException
     mocker.patch('utils.audio_utils.detect', side_effect=LangDetectException(0, "error"))
-    mocker.patch('utils.file_utils.get_temp_file_path', return_value="/tmp/audio.ogg")
+    mocker.patch('utils.file_utils.get_temp_file_path', side_effect=["/tmp/test.wav", "/tmp/audio.ogg"])
     
     mock_model = MagicMock()
     mock_model.create.return_value = (b"samples", 24000)
@@ -96,6 +114,7 @@ def test_generate_audio_fallback_lang(mocker):
     assert type(path) is str
     
 def test_generate_audio_error(mocker):
+    mocker.patch('database.get_config', return_value='kokoro')
     mocker.patch('utils.audio_utils.get_kokoro_model', side_effect=Exception("Failed"))
     path = generate_audio("Hello")
     assert path == ""
