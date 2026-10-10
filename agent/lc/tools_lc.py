@@ -271,6 +271,58 @@ def _message_text(content) -> str:
     return str(content or "")
 
 
+def _resolve_selector_credentials(model_name):
+    """Resolves ``(provider, api_key)`` for the relevance-selector model.
+
+    Mirrors ``route_llm_call``: the decrypted ``llm_config`` row for the model
+    is the source of truth; for Gemini models with no row (or no key there) it
+    falls back to the ``GEMINI_API_KEY`` app_config value (``set_config``
+    encrypts sensitive keys, so it is decrypted too — ``decrypt_value`` returns
+    plain text unchanged on any failure). ``make_chat_model`` does NOT resolve
+    keys itself, so without this the selector could never reach a provider.
+    Any failure returns ``(None, None)``: ``make_chat_model`` then raises and
+    the filter fails open with the full tool set.
+    """
+    try:
+        from database import decrypt_value, get_config, get_db
+
+        from agent.lc.models import resolve_provider
+
+        provider = None
+        api_key = None
+        conn = get_db()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT provider, api_key FROM llm_config WHERE model_name = ?",
+                (model_name,),
+            )
+            row = c.fetchone()
+        finally:
+            conn.close()
+        if row:
+            try:
+                provider = row["provider"].lower() if row["provider"] else None
+            except (KeyError, IndexError, TypeError):
+                provider = None
+            try:
+                if row["api_key"]:
+                    api_key = decrypt_value(row["api_key"])
+            except (KeyError, IndexError, TypeError):
+                api_key = None
+        if not api_key:
+            try:
+                if resolve_provider(provider, model_name) == "gemini":
+                    raw = get_config("GEMINI_API_KEY", None)
+                    if raw:
+                        api_key = decrypt_value(raw)
+            except Exception:
+                pass
+        return provider, api_key
+    except Exception:
+        return None, None
+
+
 def filter_tools_by_relevance(
     funcs: List[Callable], content, model_name: str = None
 ) -> List[Callable]:
@@ -305,7 +357,10 @@ def filter_tools_by_relevance(
             or lc_settings.summarizer_model()
             or "gemini-2.0-flash"
         )
-        model = make_chat_model(selector_name, temperature=0)
+        provider, api_key = _resolve_selector_credentials(selector_name)
+        model = make_chat_model(
+            selector_name, provider=provider, api_key=api_key, temperature=0
+        )
         response = model.invoke(
             [
                 ("system", _RELEVANCE_SYSTEM_PROMPT),

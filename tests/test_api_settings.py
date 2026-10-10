@@ -55,6 +55,27 @@ def test_save_settings(client):
     data = response.get_json()
     assert data['status'] == 'success'
 
+def test_tool_relevance_filter_roundtrip(client):
+    # The toggle JS posts {"tool_relevance_filter": <bool>} to /api/settings;
+    # the advanced settings page must then render the switch as checked.
+    response = client.post('/api/settings', json={'tool_relevance_filter': True})
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'success'
+
+    page = client.get('/settings/advanced')
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert 'id="toolRelevanceToggle"' in html
+    assert 'id="toolRelevanceToggle" checked' in html
+
+    # Turning it off removes the checked state from the page.
+    response = client.post('/api/settings', json={'tool_relevance_filter': False})
+    assert response.status_code == 200
+    page = client.get('/settings/advanced')
+    html = page.get_data(as_text=True)
+    assert 'id="toolRelevanceToggle"' in html
+    assert 'id="toolRelevanceToggle" checked' not in html
+
 def test_save_tool_setting_valid(client):
     payload = {
         'tool_name': 'test_tool',
