@@ -126,8 +126,7 @@ def save_settings():
         'plan_before_execution': 'PLAN_BEFORE_EXECUTION',
         'block_ads': 'BLOCK_ADS'
     }
-    
-    saved_keys = []
+
     known_keys = set(mapping) | set(bool_mapping)
 
     for json_key, db_key in bool_mapping.items():
