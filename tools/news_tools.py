@@ -474,16 +474,21 @@ def _build_mission(cfg, selected, backups, diagnostics):
         "excerpt is clearly truncated).",
         "2) From the article (or text_excerpt), extract EXACTLY these fields: "
         "title, source, date. If the page shows no date, keep the candidate's date.",
-        f"3) Write a summary of AT MOST {n} characters for each item — count the "
-        "characters and never exceed the limit.",
-        "4) Curate: drop duplicates and cap the digest at the items you completed; "
-        "if an item is unreachable, replace it from 'backups' or simply deliver "
-        "fewer items with an honest note. Prefer the most recent items.",
+        f"3) Write a summary of APPROXIMATELY {n} characters for each item — "
+        f"treat {n} as the TARGET length, not a ceiling: a couple of words or "
+        "one short line is NOT acceptable; expand with the article's key facts "
+        f"(what happened, who, where, why it matters). Never exceed {n} "
+        "characters.",
+        f"4) Curate: deduplicate and deliver APPROXIMATELY {m} items (the "
+        "configured quantity — aim for that exact number). If an item is "
+        "unreachable, replace it from 'backups' to keep the count up; only "
+        "deliver fewer if backups are also exhausted, and say so briefly. "
+        "Prefer the most recent items.",
         "5) DELIVER the complete digest in the SAME channel where the user made the "
         "request (reply here — do NOT send it elsewhere), in the user's language, "
         "using this exact format per item:",
         "   📰 <title> — <source> — <date>",
-        f"   <summary (≤ {n} chars)>",
+        f"   <summary (approximately {n} chars; hard max {n})>",
         "   🔗 <url>",
         "6) If an entire source failed (paywall, offline, or was not configured "
         "with a domain/RSS), mention it briefly at the end — never abort the "
@@ -491,7 +496,9 @@ def _build_mission(cfg, selected, backups, diagnostics):
         "",
         "FINAL SELF-CHECK before delivering (every box must be true):",
         "[ ] every item has title, source, date and a summary",
-        f"[ ] every summary is ≤ {n} characters",
+        f"[ ] every summary is approximately {n} characters (a few words is too "
+        f"short; never over {n})",
+        f"[ ] digest contains approximately {m} items (the configured quantity)",
         "[ ] digest delivered in the requesting channel, in the user's language",
     ]
     if diagnostics:

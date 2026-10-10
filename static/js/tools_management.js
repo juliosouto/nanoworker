@@ -296,6 +296,19 @@ function saveToolModal() {
     }).then(res => res.json()).then(data => {
         if (data.status === 'success') {
             showToast(`Settings for ${toolName} saved`);
+            // Update in-memory settings data so reopening the modal shows updated values without reload
+            const el = document.getElementById('toolSettingsData');
+            if (el && customSettings) {
+                try {
+                    const allData = JSON.parse(el.textContent || '{}');
+                    if (allData[toolName]) {
+                        allData[toolName].values = customSettings;
+                        el.textContent = JSON.stringify(allData);
+                    }
+                } catch (e) {
+                    console.error('Failed to update toolSettingsData:', e);
+                }
+            }
             // Update button data attributes
             const btn = document.querySelector(`.tool-settings-btn[data-tool="${toolName}"]`);
             if(btn) {

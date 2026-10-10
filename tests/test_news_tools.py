@@ -277,6 +277,13 @@ def test_fetch_news_returns_mission_with_candidates(mocker):
     # Config echo from stored settings.
     assert "max_news=3" in out
     assert "summary_chars=200" in out
+    # The configured quantity is explicit in the protocol and the checklist.
+    assert "APPROXIMATELY 3 items" in out
+    assert "digest contains approximately 3 items" in out
+    # Summary length is a target, not a ceiling.
+    assert "APPROXIMATELY 200 characters" in out
+    assert "TARGET length, not a ceiling" in out
+    assert "every summary is approximately 200 characters" in out
     # Non-matching item filtered out.
     assert "Pesquisas eleitorais" not in out
 
