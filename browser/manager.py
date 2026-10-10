@@ -351,6 +351,27 @@ class BrowserManager:
                 return f"Error taking screenshot: {e}"
         return GlobalBrowser.get_instance().submit_task(_task).result()
 
+    def scroll(self, magnitude):
+        self.update_activity()
+        def _task():
+            try:
+                self.page.evaluate(f"window.scrollBy(0, {float(magnitude)})")
+                self.page.wait_for_timeout(600)
+                return f"Scrolled by {magnitude} pixels"
+            except Exception as e:
+                return f"Error scrolling: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
+
+    def save_as_pdf(self, path):
+        self.update_activity()
+        def _task():
+            try:
+                self.page.pdf(path=path, format="A4", print_background=True)
+                return f"PDF saved to {path}"
+            except Exception as e:
+                return f"Error saving PDF: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
+
     def get_cookies(self):
         self.update_activity()
         def _task():

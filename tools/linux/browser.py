@@ -111,3 +111,32 @@ def browser_screenshot(full_page: bool = False) -> str:
     bm = get_browser_manager()
     screenshot_path = get_temp_file_path("screenshot.png")
     return bm.take_screenshot(screenshot_path)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_scroll(magnitude: float = 800) -> str:
+    """
+    Scrolls the current page by a number of pixels (positive down, negative up) and waits briefly for lazy-loaded content.
+    Use this tool before browser_screenshot or browser_snapshot when the page only loads content as you scroll.
+    
+    Args:
+        magnitude: Pixels to scroll. Positive scrolls down, negative scrolls up. Default 800.
+    """
+    bm = get_browser_manager()
+    return bm.scroll(magnitude)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_pdf(output_path: str = None) -> str:
+    """
+    Saves the current page as a PDF file using the headless browser and returns the ABSOLUTE path of the saved file.
+    Use this tool when the user asks to save/export a web page as PDF. You must call browser_navigate first.
+    
+    Args:
+        output_path: Optional ABSOLUTE path for the PDF. If omitted, a new temp file is created.
+    
+    Returns:
+        str: A success message containing the ABSOLUTE path of the PDF, or an error message.
+             IMPORTANT: to share the file afterwards, pass the exact path returned here to send_whatsapp_file.
+    """
+    bm = get_browser_manager()
+    pdf_path = output_path or get_temp_file_path("page.pdf")
+    return bm.save_as_pdf(pdf_path)

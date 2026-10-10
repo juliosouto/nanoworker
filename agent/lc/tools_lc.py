@@ -23,6 +23,8 @@ decorator is not gated: it is controlled by ``LC_TOOL_RESULT_MAX_CHARS``
 
 import functools
 import inspect
+import json
+import logging
 import re
 from typing import Any, Callable, Dict, List
 
@@ -30,6 +32,8 @@ from google.genai import types
 from langchain_core.tools import StructuredTool
 
 from agent.lc import settings as lc_settings
+
+logger = logging.getLogger(__name__)
 
 # Marker appended to truncated tool results so the model knows to narrow the query.
 TRUNCATION_MARKER = "[truncated — narrow your query for full data]"
@@ -187,8 +191,24 @@ def lc_tool(func: Callable) -> StructuredTool:
 
 
 def build_lc_tools(funcs: List[Callable]) -> List[StructuredTool]:
-    """Convert a list of Python tool functions into ``StructuredTool`` objects."""
-    return [lc_tool(f) for f in funcs]
+    """Convert a list of Python tool functions into ``StructuredTool`` objects.
+
+    A single tool whose schema cannot be built (e.g. a user-authored tool from
+    ``tool_creator`` with a docstring that breaks the parser) is skipped with a
+    warning instead of crashing the whole LLM call — same resilience as the
+    legacy OpenAI converter in ``agent/openai_tools.py``.
+    """
+    tools: List[StructuredTool] = []
+    for f in funcs:
+        try:
+            tools.append(lc_tool(f))
+        except Exception as conv_err:
+            logger.warning(
+                "Skipping tool '%s': LangChain schema build failed (%s)",
+                getattr(f, "__name__", "?"),
+                conv_err,
+            )
+    return tools
 
 
 def gemini_tool_declarations(funcs: List[Callable]) -> List[types.Tool]:
@@ -196,14 +216,144 @@ def gemini_tool_declarations(funcs: List[Callable]) -> List[types.Tool]:
 
     Used by the Gemini loop so the SDK does not pull the full docstring as the
     description; instead only the short first-line description + the legacy-parity
-    parameter schema are used.
+    parameter schema are used. A tool that cannot be converted is skipped with a
+    warning instead of crashing the whole Gemini call.
     """
     result: List[types.Tool] = []
     for func in funcs:
-        func_decl = types.FunctionDeclaration(
-            name=func.__name__,
-            description=first_line_description(func),
-            parameters=types.Schema(**tool_param_schema(func)),
-        )
-        result.append(types.Tool(function_declarations=[func_decl]))
+        try:
+            func_decl = types.FunctionDeclaration(
+                name=func.__name__,
+                description=first_line_description(func),
+                parameters=types.Schema(**tool_param_schema(func)),
+            )
+            result.append(types.Tool(function_declarations=[func_decl]))
+        except Exception as conv_err:
+            logger.warning(
+                "Skipping tool '%s': Gemini declaration build failed (%s)",
+                getattr(func, "__name__", "?"),
+                conv_err,
+            )
     return result
+
+
+# System prompt for the opt-in tool relevance selector (TOOL_RELEVANCE_FILTER).
+# Biased toward over-inclusion ("when unsure, include it") so a borderline
+# message can never strand the model without a tool it needed.
+_RELEVANCE_SYSTEM_PROMPT = (
+    "You are a tool selector. You receive the user's message and a catalog of "
+    "available tools (name: short description). Decide which tools are actually "
+    "needed to fulfill the request. Respond with ONLY a JSON array of tool "
+    "names, e.g. [\"web_search\", \"send_whatsapp_file\"]. Rules: include a tool "
+    "only if the request plausibly needs it; when unsure, include it; never "
+    "invent tool names; if no tool is needed, return []."
+)
+
+
+def _message_text(content) -> str:
+    """Flattens multimodal message content into plain text for the selector."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                t = p.get("text") or p.get("content") or ""
+                if t:
+                    parts.append(str(t))
+            else:
+                t = getattr(p, "text", None)
+                if t:
+                    parts.append(str(t))
+        return " ".join(parts)
+    return str(content or "")
+
+
+def filter_tools_by_relevance(
+    funcs: List[Callable], content, model_name: str = None
+) -> List[Callable]:
+    """Narrow ``funcs`` to the tools relevant to the user's message (opt-in).
+
+    Gated behind ``TOOL_RELEVANCE_FILTER`` (advanced settings toggle, default
+    off). When on, ONE lightweight LangChain chat call receives the tool
+    catalog (name + first-line docstring) and the user message, and answers
+    with a JSON array of the tool names it needs.
+
+    Fail-open contract: ANY problem (flag off, empty message, selector error,
+    unparseable output, empty or unknown selection) returns the ORIGINAL list
+    unchanged, so enabling the feature can never break a conversation.
+    """
+    if not funcs:
+        return funcs
+    if not lc_settings.tool_relevance_filter():
+        return funcs
+
+    try:
+        message_text = _message_text(content).strip()
+        if not message_text:
+            return funcs
+
+        from agent.lc.models import make_chat_model
+
+        catalog = "\n".join(
+            f"- {f.__name__}: {first_line_description(f)}" for f in funcs
+        )
+        selector_name = (
+            model_name
+            or lc_settings.summarizer_model()
+            or "gemini-2.0-flash"
+        )
+        model = make_chat_model(selector_name, temperature=0)
+        response = model.invoke(
+            [
+                ("system", _RELEVANCE_SYSTEM_PROMPT),
+                (
+                    "human",
+                    f"Available tools:\n{catalog}\n\n"
+                    f"User message:\n{message_text[:4000]}",
+                ),
+            ]
+        )
+        raw = getattr(response, "content", response)
+        if not isinstance(raw, str):
+            raw = str(raw)
+
+        match = re.search(r"\[.*\]", raw, re.DOTALL)
+        if not match:
+            logger.warning(
+                "Tool relevance filter: no JSON array in selector output; "
+                "keeping all %d tools",
+                len(funcs),
+            )
+            return funcs
+        chosen = json.loads(match.group(0))
+        if not isinstance(chosen, list):
+            return funcs
+
+        valid = {f.__name__: f for f in funcs}
+        picked = [n for n in chosen if isinstance(n, str) and n in valid]
+        if not picked:
+            logger.warning(
+                "Tool relevance filter: empty/unknown selection; keeping all "
+                "%d tools",
+                len(funcs),
+            )
+            return funcs
+
+        filtered = [valid[n] for n in picked]
+        logger.info(
+            "Tool relevance filter: %d/%d tools selected (%s)",
+            len(filtered),
+            len(funcs),
+            ", ".join(picked[:8]),
+        )
+        return filtered
+    except Exception as e:
+        logger.warning(
+            "Tool relevance filter failed (%s); keeping all %d tools",
+            e,
+            len(funcs),
+        )
+        return funcs

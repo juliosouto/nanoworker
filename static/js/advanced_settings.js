@@ -45,6 +45,7 @@ function saveSetting(key, isEnabled) {
 
 document.addEventListener('DOMContentLoaded', () => {
     setupToggle('doubleCheckToggle', 'doubleCheckToggleKnob', 'tool_creator_double_check');
+    setupToggle('toolRelevanceToggle', 'toolRelevanceToggleKnob', 'tool_relevance_filter');
 
     const whisperSelect = document.getElementById('whisperModelSelect');
     if (whisperSelect) {

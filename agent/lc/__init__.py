@@ -31,7 +31,9 @@ from agent.lc.settings import (
     tool_result_max_chars,
 )
 from agent.lc.tools_lc import (
+    build_lc_tools,
     cap_tools,
+    filter_tools_by_relevance,
     first_line_description,
     gemini_tool_declarations,
     lc_tool,
@@ -61,6 +63,8 @@ __all__ = [
     "make_chat_model",
     "resolve_provider",
     "cap_tools",
+    "build_lc_tools",
+    "filter_tools_by_relevance",
     "first_line_description",
     "gemini_tool_declarations",
     "lc_tool",

@@ -5,6 +5,7 @@ for OpenAI-compatible LLM providers (OpenAI, Groq, Qwen).
 
 import inspect
 import json
+import logging
 import re
 
 from agent.db_feedback import insert_feedback
@@ -12,6 +13,8 @@ from agent.lc import settings as lc_settings
 from agent.lc.tools_lc import first_line_description
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
+
+logger = logging.getLogger(__name__)
 
 # Number of times a transient error (429 rate-limit / quota, or a false 402 from
 # an upstream provider) is retried before propagating to the model fallback chain
@@ -222,11 +225,24 @@ def execute_openai_compatible_llm(
 
     # 2. Convert raw python functions into OpenAI tool schemas
     permitted_tools = config_kwargs.get("tools", [])
-    openai_tools = (
-        [convert_to_openai_tool(f) for f in permitted_tools]
-        if permitted_tools
-        else None
-    )
+    openai_tools = None
+    if permitted_tools:
+        openai_tools = []
+        for f in permitted_tools:
+            try:
+                openai_tools.append(convert_to_openai_tool(f))
+            except Exception as conv_err:
+                # Docstrings with a 'Returns:' section break langchain's
+                # docstring parser for that single tool ("Arg Returns in
+                # docstring not found in function signature"). Skip only the
+                # broken tool instead of crashing the whole provider call.
+                logger.warning(
+                    "Skipping tool '%s': schema conversion failed (%s)",
+                    getattr(f, "__name__", "?"),
+                    conv_err,
+                )
+        if not openai_tools:
+            openai_tools = None
 
     # Normalize model name for reasoning detection
     model_lower = model_name.lower()

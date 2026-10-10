@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from agent.lc import (
+    build_lc_tools,
     cap_tools,
     first_line_description,
     gemini_tool_declarations,
@@ -389,3 +390,62 @@ class TestLCToolDefaults(unittest.TestCase):
         schema = tool.args
         self.assertIn("v", schema)
         self.assertEqual(schema["v"]["default"], "fallback")
+
+
+def _flaky_schema_builder(real_fn, broken_name):
+    """Wraps a schema-building fn so one named tool raises (simulating a
+    user-authored tool whose docstring breaks the schema builder)."""
+
+    def wrapper(func):
+        if func.__name__ == broken_name:
+            raise ValueError(
+                "Arg Returns in docstring not found in function signature"
+            )
+        return real_fn(func)
+
+    return wrapper
+
+
+def broken_tool(x: str) -> str:
+    """A tool whose schema build fails (simulated in tests)."""
+    return x
+
+
+class TestSchemaBuildResilience(unittest.TestCase):
+    """One tool whose schema cannot be built must be skipped with a warning
+    instead of crashing the whole LLM call — in BOTH the LangChain builder and
+    the Gemini declaration builder (parity with the legacy OpenAI converter)."""
+
+    def test_build_lc_tools_skips_broken_tool(self):
+        from agent.lc import tools_lc
+
+        wrapper = _flaky_schema_builder(tools_lc.lc_tool, "broken_tool")
+        with patch("agent.lc.tools_lc.lc_tool", side_effect=wrapper):
+            tools = build_lc_tools([broken_tool, multi_param_tool])
+
+        names = [t.name for t in tools]
+        self.assertNotIn("broken_tool", names)
+        self.assertIn("multi_param_tool", names)
+
+    def test_build_lc_tools_all_broken_returns_empty(self):
+        from agent.lc import tools_lc
+
+        def always_raises(func):
+            raise ValueError("boom")
+
+        with patch("agent.lc.tools_lc.lc_tool", side_effect=always_raises):
+            tools = build_lc_tools([broken_tool])
+
+        self.assertEqual(tools, [])
+
+    def test_gemini_declarations_skip_broken_tool(self):
+        from agent.lc import tools_lc
+
+        wrapper = _flaky_schema_builder(tools_lc.tool_param_schema, "broken_tool")
+        with patch("agent.lc.tools_lc.tool_param_schema", side_effect=wrapper):
+            decls = gemini_tool_declarations([broken_tool, multi_param_tool])
+
+        self.assertEqual(len(decls), 1)
+        self.assertEqual(
+            decls[0].function_declarations[0].name, "multi_param_tool"
+        )

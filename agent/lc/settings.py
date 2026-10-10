@@ -142,6 +142,21 @@ def tool_compact_schema() -> bool:
     return value == "on"
 
 
+def tool_relevance_filter() -> bool:
+    """True when the opt-in LangChain tool-relevance filter is active.
+
+    When enabled, a lightweight LLM call narrows the permitted tool set to the
+    tools likely needed by the user's message before the main provider call
+    (saves tokens and reduces tool confusion for small models). Default is OFF
+    ('false'): all permitted tools are sent, exactly as before. The filter is
+    fail-open — any error keeps the full tool set.
+    """
+    raw = os.environ.get("TOOL_RELEVANCE_FILTER") or _cfg(
+        "TOOL_RELEVANCE_FILTER", "false"
+    )
+    return str(raw).strip().lower() == "true"
+
+
 def memory_top_k() -> int:
     """How many user memories are injected via RAG (phase 2)."""
     return _cfg_int("LC_MEMORY_TOP_K", 5, 1)

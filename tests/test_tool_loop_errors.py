@@ -309,5 +309,64 @@ class TestProviderBalanceDetection(unittest.TestCase):
         self.assertFalse(_is_provider_balance_error(e))
 
 
+class TestSchemaConversionResilience(unittest.TestCase):
+    """One tool whose OpenAI schema conversion fails (e.g. a user-authored tool
+    from tool_creator whose docstring breaks the schema builder) must be skipped
+    with a warning instead of crashing the whole provider call: the remaining
+    tools are still offered to the model."""
+
+    def test_broken_tool_skipped_and_call_proceeds(self):
+        import agent.openai_tools as ot
+
+        def good_tool(query: str) -> str:
+            """A good dummy tool. Args: query: the search term."""
+            return "result"
+
+        def broken_tool(x: str) -> str:
+            """A tool whose conversion fails."""
+            return "x"
+
+        real_convert = ot.convert_to_openai_tool
+
+        def flaky_convert(func):
+            if func.__name__ == "broken_tool":
+                raise ValueError(
+                    "Arg Returns in docstring not found in function signature"
+                )
+            return real_convert(func)
+
+        mock_client = MagicMock()
+        msg = MagicMock()
+        msg.content = "final answer"
+        msg.tool_calls = None
+        c = MagicMock()
+        c.choices = [MagicMock(message=msg)]
+        mock_client.chat.completions.create.return_value = c
+
+        with patch("agent.openai_tools.get_config", side_effect=_mock_config), \
+             patch(
+                 "agent.openai_tools.convert_to_openai_tool",
+                 side_effect=flaky_convert,
+             ):
+            result = agent_runner.execute_openai_compatible_llm(
+                mock_client,
+                "gpt-4o",
+                [],
+                {"tools": [broken_tool, good_tool]},
+                "hello",
+                MagicMock(),
+                "session-1",
+                "msg-1",
+                "messages_out",
+            )
+
+        # The provider call completed instead of crashing on the broken tool.
+        self.assertEqual(result, "final answer")
+        sent = mock_client.chat.completions.create.call_args[1].get("tools") or []
+        sent_names = [t["function"]["name"] for t in sent]
+        self.assertNotIn("broken_tool", sent_names)
+        self.assertIn("good_tool", sent_names)
+
+
 if __name__ == "__main__":
     unittest.main()

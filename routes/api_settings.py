@@ -116,6 +116,7 @@ def save_settings():
         'perm_web_search': 'PERM_WEB_SEARCH',
         'perm_tool_creator': 'PERM_TOOL_CREATOR',
         'tool_creator_double_check': 'TOOL_CREATOR_DOUBLE_CHECK',
+        'tool_relevance_filter': 'TOOL_RELEVANCE_FILTER',
         'plan_before_execution': 'PLAN_BEFORE_EXECUTION'
     }
     

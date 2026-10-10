@@ -18,6 +18,7 @@ cryptography
 openai
 trafilatura
 curl_cffi
+pypdf
 ddgs
 langdetect
 groq

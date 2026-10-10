@@ -349,6 +349,14 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
         # Build config kwargs
         tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
+        if tools:
+            # Opt-in (TOOL_RELEVANCE_FILTER): one lightweight LLM call narrows
+            # the tool set to the user's message; fail-open to the full set.
+            from agent.lc.tools_lc import filter_tools_by_relevance
+
+            tools = filter_tools_by_relevance(
+                tools, content, model_name=(models_to_try[0] if models_to_try else None)
+            )
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
 
@@ -488,9 +496,18 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         )
 
         # Build config kwargs
+        ide_tools = get_permitted_tools()
+        if ide_tools:
+            # Opt-in (TOOL_RELEVANCE_FILTER): one lightweight LLM call narrows
+            # the tool set to the user's message; fail-open to the full set.
+            from agent.lc.tools_lc import filter_tools_by_relevance
+
+            ide_tools = filter_tools_by_relevance(
+                ide_tools, content, model_name=(models_to_try[0] if models_to_try else None)
+            )
         config_kwargs = build_config_kwargs(
             system_prompt=system_prompt,
-            tools=get_permitted_tools(),
+            tools=ide_tools,
             thinking_enabled=thinking_enabled,
             show_tools_results=True,
         )
