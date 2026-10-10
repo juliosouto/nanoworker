@@ -139,3 +139,25 @@ def browser_pdf(output_path: str = None) -> str:
     bm = get_browser_manager()
     pdf_path = output_path or get_temp_file_path("page.pdf")
     return bm.save_as_pdf(pdf_path)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_record_video(url: str, duration_seconds: int = 5, output_path: str = None) -> str:
+    """
+    Navigates to a URL and records a video of the browser interaction for the specified duration.
+    Saves the output as a video (.webm) file and returns its ABSOLUTE path.
+    Use this tool whenever the user asks for a video or screen recording of a website/page navigation.
+    
+    Args:
+        url: The full URL to navigate to and record (e.g. 'https://example.com').
+        duration_seconds: How many seconds to keep recording the page (1 to 60, default 5).
+        output_path: Optional ABSOLUTE path for the saved video file (.webm). If omitted, a temp file is created.
+        
+    Returns:
+        str: A success message containing the ABSOLUTE path of the saved video, or an error message.
+             IMPORTANT: to share the video afterwards, you MUST pass the exact absolute path returned
+             here to the send_whatsapp_file tool — do not reconstruct it.
+    """
+    bm = get_browser_manager()
+    video_path = output_path or get_temp_file_path("browser_recording.webm")
+    return bm.record_navigation(url=url, duration_seconds=duration_seconds, output_path=video_path)
+

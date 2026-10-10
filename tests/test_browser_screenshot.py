@@ -87,3 +87,37 @@ def test_windows_parity_browser_screenshot_and_memory():
         inspect.signature(win_memory.manage_persistent_memory).parameters.keys()
         == inspect.signature(lin_mem).parameters.keys()
     )
+
+
+def test_browser_record_video_cross_platform(mocker, perm_enabled):
+    import tools.windows.browser as win_browser
+
+    mocker.patch("tools.linux.browser.get_temp_file_path", return_value="/tmp/test_rec.webm")
+    mocker.patch("tools.macos.browser.get_temp_file_path", return_value="/tmp/test_rec.webm")
+    mocker.patch("tools.windows.browser.get_temp_file_path", return_value="/tmp/test_rec.webm")
+
+    mock_bm = MagicMock()
+    mock_bm.record_navigation.return_value = "Browser video recorded and saved to /tmp/test_rec.webm"
+
+    mocker.patch("tools.linux.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.macos.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.windows.browser.get_browser_manager", return_value=mock_bm)
+
+    # Test Linux
+    res_linux = linux_browser.browser_record_video(url="https://example.com", duration_seconds=3)
+    assert "Browser video recorded and saved" in res_linux
+    mock_bm.record_navigation.assert_called_with(url="https://example.com", duration_seconds=3, output_path="/tmp/test_rec.webm")
+
+    # Test macOS
+    res_macos = macos_browser.browser_record_video(url="https://example.com", duration_seconds=3)
+    assert "Browser video recorded and saved" in res_macos
+
+    # Test Windows
+    res_windows = win_browser.browser_record_video(url="https://example.com", duration_seconds=3)
+    assert "Browser video recorded and saved" in res_windows
+
+
+def test_browser_record_video_is_registered_as_tool():
+    from tools import AVAILABLE_TOOLS
+    tool_names = [getattr(t, "__name__", "") for t in AVAILABLE_TOOLS]
+    assert "browser_record_video" in tool_names

@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 
@@ -5,6 +6,8 @@ from flask import Blueprint, jsonify, request
 
 from database import get_config, get_db, set_config, update_tool_config
 from security import limiter
+
+logger = logging.getLogger(__name__)
 
 api_settings_bp = Blueprint('api_settings', __name__)
 
@@ -92,9 +95,12 @@ def save_settings():
         'max_download_size_mb': 'MAX_DOWNLOAD_SIZE_MB'
     }
     
+    saved_keys = []
+
     for json_key, db_key in mapping.items():
         if json_key in data and data[json_key] is not None:
             set_config(db_key, data[json_key])
+            saved_keys.append(db_key)
             
     bool_mapping = {
         'require_at_prefix': 'REQUIRE_AT_PREFIX',
@@ -120,12 +126,31 @@ def save_settings():
         'plan_before_execution': 'PLAN_BEFORE_EXECUTION'
     }
     
+    saved_keys = []
+    known_keys = set(mapping) | set(bool_mapping)
+
     for json_key, db_key in bool_mapping.items():
         if json_key in data and data[json_key] is not None:
             val = 'true' if data[json_key] else 'false'
             set_config(db_key, val)
-            
-    return jsonify({"status": "success", "message": "Settings saved"}), 200
+            saved_keys.append(db_key)
+
+    # A key the running build does not know (e.g. the JS of a newer frontend
+    # posting to an older image) is silently ignored otherwise — surfacing it
+    # makes "toggle keeps resetting after deploy" diagnosable from the client.
+    unknown_keys = [k for k in data.keys() if k not in known_keys]
+    if unknown_keys:
+        logger.warning(
+            "POST /api/settings ignored unknown keys %s (stale backend image?)",
+            unknown_keys,
+        )
+
+    return jsonify({
+        "status": "success",
+        "message": "Settings saved",
+        "saved": saved_keys,
+        "ignored_unknown_keys": unknown_keys,
+    }), 200
 
 @api_settings_bp.route('/api/settings/tools', methods=['POST'])
 def save_tool_setting():

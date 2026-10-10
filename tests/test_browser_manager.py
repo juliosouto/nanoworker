@@ -186,3 +186,31 @@ def test_cleanup_idle_sessions(mock_playwright):
                     assert str(e) == "Stop loop"
     
     assert "idle_sess" not in browser.manager._sessions
+
+@patch('browser.manager.sync_playwright')
+def test_record_navigation(mock_playwright):
+    bm = BrowserManager()
+    gb = GlobalBrowser.get_instance()
+    mock_context = MagicMock()
+    mock_page = MagicMock()
+    mock_video = MagicMock()
+    mock_video.path.return_value = "/tmp/fake_video.webm"
+    mock_page.video = mock_video
+    gb.browser.new_context.return_value = mock_context
+    mock_context.new_page.return_value = mock_page
+
+    with patch('os.path.exists', return_value=True), patch('shutil.copy2'):
+        res = bm.record_navigation("https://example.com", duration_seconds=2, output_path="/tmp/test.webm")
+        assert "Browser video recorded and saved to /tmp/test.webm" in res
+        mock_page.goto.assert_called_with("https://example.com", wait_until="domcontentloaded", timeout=15000)
+
+@patch('browser.manager.sync_playwright')
+def test_record_navigation_error(mock_playwright):
+    bm = BrowserManager()
+    gb = GlobalBrowser.get_instance()
+    gb.browser.new_context.side_effect = Exception("Context error")
+
+    res = bm.record_navigation("https://example.com", duration_seconds=2, output_path="/tmp/test.webm")
+    assert "Error recording browser video" in res
+
+

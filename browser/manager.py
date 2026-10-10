@@ -372,6 +372,88 @@ class BrowserManager:
                 return f"Error saving PDF: {e}"
         return GlobalBrowser.get_instance().submit_task(_task).result()
 
+    def record_navigation(self, url: str, duration_seconds: int = 5, output_path: str = None) -> str:
+        """
+        Navigates to a URL, records the browser session to a video file for a specified duration,
+        and saves it to output_path.
+        """
+        import os
+        import shutil
+        import tempfile
+        from utils.file_utils import get_temp_file_path
+
+        self.update_activity()
+        global_browser = GlobalBrowser.get_instance()
+        final_video_path = output_path or get_temp_file_path("browser_recording.webm")
+
+        def _task():
+            rec_dir = tempfile.mkdtemp(prefix="pw_video_")
+            rec_context = None
+            rec_page = None
+            try:
+                rec_context = global_browser.browser.new_context(
+                    record_video_dir=rec_dir,
+                    record_video_size={"width": 1280, "height": 720},
+                    viewport={"width": 1280, "height": 720}
+                )
+                _harden_context(rec_context)
+                rec_page = rec_context.new_page()
+
+                rec_page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                try:
+                    rec_page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+
+                try:
+                    rec_page.evaluate("window.__nwSweepConsent && window.__nwSweepConsent()")
+                except Exception:
+                    pass
+
+                # Keep recording for the given duration
+                wait_time = max(1, min(int(duration_seconds), 60))
+                rec_page.wait_for_timeout(wait_time * 1000)
+
+                # Get the video object reference before closing
+                video = rec_page.video
+
+                # Closing page & context ensures video is flushed to disk
+                rec_page.close()
+                rec_page = None
+                rec_context.close()
+                rec_context = None
+
+                if video:
+                    try:
+                        video.save_as(final_video_path)
+                    except Exception:
+                        saved_path = video.path()
+                        if saved_path and os.path.exists(saved_path):
+                            shutil.copy2(saved_path, final_video_path)
+                        else:
+                            raise RuntimeError("Video file was not generated.")
+                else:
+                    raise RuntimeError("No video object found on page.")
+
+                return f"Browser video recorded and saved to {final_video_path}"
+            except Exception as e:
+                return f"Error recording browser video: {e}"
+            finally:
+                if rec_page:
+                    try:
+                        rec_page.close()
+                    except Exception:
+                        pass
+                if rec_context:
+                    try:
+                        rec_context.close()
+                    except Exception:
+                        pass
+                if os.path.exists(rec_dir):
+                    shutil.rmtree(rec_dir, ignore_errors=True)
+
+        return global_browser.submit_task(_task).result()
+
     def get_cookies(self):
         self.update_activity()
         def _task():

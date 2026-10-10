@@ -60,7 +60,17 @@ def test_tool_relevance_filter_roundtrip(client):
     # the advanced settings page must then render the switch as checked.
     response = client.post('/api/settings', json={'tool_relevance_filter': True})
     assert response.status_code == 200
-    assert response.get_json()['status'] == 'success'
+    body = response.get_json()
+    assert body['status'] == 'success'
+    # The response is self-documenting: proves the running build KNOWS the key
+    # (a stale image would silently ignore it and list it in
+    # ignored_unknown_keys instead).
+    assert 'TOOL_RELEVANCE_FILTER' in body['saved']
+    assert body['ignored_unknown_keys'] == []
+
+    # The value actually persisted to app_config (survives restarts).
+    from database import get_config
+    assert get_config('TOOL_RELEVANCE_FILTER') == 'true'
 
     page = client.get('/settings/advanced')
     assert page.status_code == 200
@@ -71,10 +81,18 @@ def test_tool_relevance_filter_roundtrip(client):
     # Turning it off removes the checked state from the page.
     response = client.post('/api/settings', json={'tool_relevance_filter': False})
     assert response.status_code == 200
+    assert get_config('TOOL_RELEVANCE_FILTER') == 'false'
     page = client.get('/settings/advanced')
     html = page.get_data(as_text=True)
     assert 'id="toolRelevanceToggle"' in html
     assert 'id="toolRelevanceToggle" checked' not in html
+
+def test_save_settings_warns_on_unknown_keys(client):
+    response = client.post('/api/settings', json={'key_from_the_future': True})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['status'] == 'success'
+    assert 'key_from_the_future' in body['ignored_unknown_keys']
 
 def test_save_tool_setting_valid(client):
     payload = {
