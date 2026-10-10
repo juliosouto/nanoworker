@@ -1,54 +1,51 @@
 """
 News briefing tool.
 
-Discovers fresh articles for every configured source/topic via native RSS
-feeds (falling back to Google News RSS) and returns a mandatory multi-step
-protocol that instructs the agent to visit each article, extract
-title/source/date and write a configurable-length summary before delivering
-the digest in the channel where the user asked.
+Performs a reliable, deterministic multi-step news briefing pipeline:
+1. Search: Queries live web/news search for configured sources and topics (no RSS dependency).
+2. Scrape: Extracts real full-text content from each discovered article.
+3. Sub-LLM Summarize: Invokes the model internally to summarize each article to the target length.
+4. Curate & Format: Assembles the final briefing package with standard metadata and links.
 
 Sources and topics are FULLY USER-MANAGED from the Tools Management card:
-each source is {name, domain, feed} and each topic is {name, keywords}.
-They are stored in the `config_data` column of `tools_config`; the schema
-below seeds the card and provides the initial defaults.
+each source is {name, domain} and each topic is {name, keywords}.
 """
 
 import json
 import logging
 import re
-import xml.etree.ElementTree as ET
 from collections import defaultdict
 from email.utils import parsedate_to_datetime
 from html import unescape
-from urllib.parse import urlencode
+from typing import List, Dict, Any
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
+from ddgs import DDGS
+import trafilatura
 
-from database import get_tool_config
+from database import get_tool_config, get_db
 from utils.security_utils import require_permission
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Built-in presets — seed defaults and resolution for runtime overrides.
-# Anything stored in config_data fully replaces the defaults, and the user
-# can add/remove sources and topics freely from the card.
 # ---------------------------------------------------------------------------
 _PRESET_SOURCES = {
-    "CNN Brasil": {"domain": "cnnbrasil.com.br", "feed": "https://www.cnnbrasil.com.br/feed/"},
-    "CNN EUA": {"domain": "cnn.com", "feed": "https://rss.cnn.com/rss/edition.rss"},
+    "CNN Brasil": {"domain": "cnnbrasil.com.br"},
+    "CNN EUA": {"domain": "cnn.com"},
     "Reuters": {"domain": "reuters.com"},
-    "BBC Brasil": {"domain": "bbc.com", "feed": "https://feeds.bbci.co.uk/portuguese/rss.xml"},
-    "BBC News": {"domain": "bbc.com", "feed": "https://feeds.bbci.co.uk/news/rss.xml"},
-    "Gazeta do Povo": {"domain": "gazetadopovo.com.br", "feed": "https://www.gazetadopovo.com.br/rss/"},
-    "Revista Oeste": {"domain": "revistaoeste.com", "feed": "https://revistaoeste.com/feed/"},
-    "Folha de S.Paulo": {"domain": "folha.uol.com.br", "feed": "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml"},
-    "Estadão": {"domain": "estadao.com.br", "feed": "https://www.estadao.com.br/rss/ultimas.xml"},
-    "G1": {"domain": "g1.globo.com", "feed": "https://g1.globo.com/rss/g1/"},
+    "BBC Brasil": {"domain": "bbc.com/portuguese"},
+    "BBC News": {"domain": "bbc.com/news"},
+    "Gazeta do Povo": {"domain": "gazetadopovo.com.br"},
+    "Revista Oeste": {"domain": "revistaoeste.com"},
+    "Folha de S.Paulo": {"domain": "folha.uol.com.br"},
+    "Estadão": {"domain": "estadao.com.br"},
+    "G1": {"domain": "g1.globo.com"},
     "UOL": {"domain": "uol.com.br"},
-    "The Verge": {"domain": "theverge.com", "feed": "https://www.theverge.com/rss/index.xml"},
-    "TechCrunch": {"domain": "techcrunch.com", "feed": "https://techcrunch.com/feed/"},
+    "The Verge": {"domain": "theverge.com"},
+    "TechCrunch": {"domain": "techcrunch.com"},
 }
 
 _PRESET_TOPICS = {
@@ -67,24 +64,19 @@ _PRESET_TOPICS = {
     "Esportes": ["esporte", "esportes", "sports", "futebol", "jogo", "campeonato", "copa"],
 }
 
-# Default sources/topics seeded into the card on first use.
 _DEFAULT_SOURCES = [
-    {"name": "CNN Brasil", "domain": "cnnbrasil.com.br", "feed": "https://www.cnnbrasil.com.br/feed/"},
-    {"name": "CNN EUA", "domain": "cnn.com", "feed": "https://rss.cnn.com/rss/edition.rss"},
-    {"name": "Reuters", "domain": "reuters.com", "feed": ""},
-    {"name": "BBC Brasil", "domain": "bbc.com", "feed": "https://feeds.bbci.co.uk/portuguese/rss.xml"},
-    {"name": "Gazeta do Povo", "domain": "gazetadopovo.com.br", "feed": "https://www.gazetadopovo.com.br/rss/"},
-    {"name": "Revista Oeste", "domain": "revistaoeste.com", "feed": "https://revistaoeste.com/feed/"},
+    {"name": "G1", "domain": "g1.globo.com"},
+    {"name": "CNN Brasil", "domain": "cnnbrasil.com.br"},
+    {"name": "BBC Brasil", "domain": "bbc.com/portuguese"},
+    {"name": "Reuters", "domain": "reuters.com"},
+    {"name": "Gazeta do Povo", "domain": "gazetadopovo.com.br"},
+    {"name": "Revista Oeste", "domain": "revistaoeste.com"},
 ]
 _DEFAULT_TOPICS = [
     {"name": name, "keywords": list(_PRESET_TOPICS[name])}
     for name in ("Tecnologia", "Programação", "Startups")
 ]
 
-# ---------------------------------------------------------------------------
-# Settings schema (rendered by the Tools Management gear-icon modal).
-# `dynamic_list` fields let the user add/remove rows entirely from the card.
-# ---------------------------------------------------------------------------
 TOOL_SETTINGS_SCHEMA = [
     {
         "key": "sources",
@@ -92,9 +84,8 @@ TOOL_SETTINGS_SCHEMA = [
         "type": "dynamic_list",
         "add_label": "+ Adicionar fonte",
         "item_fields": [
-            {"key": "name", "label": "Nome", "placeholder": "Ex.: CNN Brasil", "width": "34%"},
-            {"key": "domain", "label": "Domínio", "placeholder": "Ex.: cnnbrasil.com.br", "width": "33%"},
-            {"key": "feed", "label": "RSS (opcional)", "placeholder": "Ex.: https://site.com/feed/", "width": "33%"},
+            {"key": "name", "label": "Nome", "placeholder": "Ex.: CNN Brasil", "width": "50%"},
+            {"key": "domain", "label": "Domínio", "placeholder": "Ex.: cnnbrasil.com.br", "width": "50%"},
         ],
         "default": _DEFAULT_SOURCES,
     },
@@ -128,85 +119,8 @@ TOOL_SETTINGS_SCHEMA = [
     },
 ]
 
-# Network/runtime guards
-_FEED_TIMEOUT = 10
-_MAX_FETCHES = 30
-_MIN_PER_COMBO = 2
-_EXCERPT_MAX_CHARS = 2500
-_FULL_TEXT_MIN_CHARS = 500
-
-
-def _http_get(url: str) -> str:
-    """Fetch a URL as text with browser impersonation (curl_cffi)."""
-    response = curl_requests.get(url, impersonate="chrome", timeout=_FEED_TIMEOUT)
-    return response.text or ""
-
-
-def _html_to_text(raw: str) -> str:
-    """Strip HTML tags/entities from a feed payload into plain text."""
-    if not raw:
-        return ""
-    soup = BeautifulSoup(unescape(raw), "html.parser")
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-    return re.sub(r"\s+", " ", soup.get_text(" ")).strip()
-
-
-def _normalize_date(raw: str) -> str:
-    """Normalize an RFC-2822 pubDate into 'YYYY-MM-DD HH:MM UTC'."""
-    if not raw:
-        return ""
-    try:
-        return parsedate_to_datetime(raw).strftime("%Y-%m-%d %H:%M UTC")
-    except (TypeError, ValueError):
-        return raw.strip()
-
-
-def _tag_text(item, tag: str) -> str:
-    """Text of a direct child tag of an RSS <item> (no namespaces)."""
-    el = item.find(tag)
-    return (el.text or "").strip() if el is not None and el.text else ""
-
-
-def _encoded_content(item) -> str:
-    """HTML of <content:encoded> when the feed provides full article text."""
-    for el in item:
-        if el.tag.endswith("}encoded") or el.tag == "content:encoded":
-            return el.text or ""
-    return ""
-
-
-def _parse_rss(xml_text: str, source_name: str):
-    """Parse an RSS 2.0 feed into candidate dicts (never raises)."""
-    items = []
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as e:
-        logger.debug("RSS parse failed for %s: %s", source_name, e)
-        return items
-
-    for item in root.iter("item"):
-        title = _tag_text(item, "title")
-        if not title:
-            continue
-        url = _tag_text(item, "link")
-        clean = _html_to_text(_encoded_content(item) or _tag_text(item, "description"))
-        items.append({
-            "title": title,
-            "source": source_name,
-            "date": _normalize_date(_tag_text(item, "pubDate")),
-            "url": url,
-            "full_text_available": len(clean) >= _FULL_TEXT_MIN_CHARS,
-            "text_excerpt": clean[:_EXCERPT_MAX_CHARS] if len(clean) >= 300 else "",
-        })
-    return items
-
-
-def _google_news_rss_url(topic: str, domain: str = "") -> str:
-    """Google News RSS search URL; `site:domain` only when a domain is set."""
-    query = f"{topic} site:{domain}" if domain else topic
-    params = urlencode({"q": query, "hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"})
-    return f"https://news.google.com/rss/search?{params}"
+_ARTICLE_SCRAPE_TIMEOUT = 12
+_MAX_SEARCH_CANDIDATES = 20
 
 
 def _clean_str(value) -> str:
@@ -214,14 +128,12 @@ def _clean_str(value) -> str:
 
 
 def _split_keywords(raw) -> list:
-    """Split a comma/semicolon/newline separated keyword string."""
     if isinstance(raw, (list, tuple)):
         return [_clean_str(k) for k in raw if _clean_str(k)]
     return [p.strip() for p in re.split(r"[,;\n]", raw or "") if p.strip()]
 
 
 def _preset_source_lookup(name: str) -> str:
-    """Return the canonical preset name (case-insensitive) or ''."""
     for known in _PRESET_SOURCES:
         if known.lower() == name.strip().lower():
             return known
@@ -229,7 +141,6 @@ def _preset_source_lookup(name: str) -> str:
 
 
 def _preset_topic_lookup(name: str):
-    """Return (canonical_name, keywords) for a preset topic or None."""
     for known, keywords in _PRESET_TOPICS.items():
         if known.lower() == name.strip().lower():
             return known, list(keywords)
@@ -237,12 +148,6 @@ def _preset_topic_lookup(name: str):
 
 
 def _coerce_source(value):
-    """
-    Normalize a source entry into {name, domain, feed}.
-
-    Accepts a full dict (from the card), or a legacy plain-string name which
-    is resolved against the built-in presets. Returns None when unusable.
-    """
     if isinstance(value, dict):
         raw_name = _clean_str(value.get("name"))
         if not raw_name:
@@ -251,7 +156,6 @@ def _coerce_source(value):
         return {
             "name": _preset_source_lookup(raw_name) or raw_name,
             "domain": _clean_str(value.get("domain")) or preset.get("domain", ""),
-            "feed": _clean_str(value.get("feed")) or preset.get("feed", ""),
         }
     raw_name = _clean_str(value)
     if not raw_name:
@@ -261,17 +165,10 @@ def _coerce_source(value):
     return {
         "name": canonical or raw_name,
         "domain": preset.get("domain", ""),
-        "feed": preset.get("feed", ""),
     }
 
 
 def _coerce_topic(value):
-    """
-    Normalize a topic entry into {name, keywords}.
-
-    Accepts a dict (from the card), or a legacy plain-string name resolved
-    against the built-in presets. Returns None when unusable.
-    """
     if isinstance(value, dict):
         raw_name = _clean_str(value.get("name"))
         if not raw_name:
@@ -291,27 +188,7 @@ def _coerce_topic(value):
     return {"name": raw_name, "keywords": [raw_name.lower()]}
 
 
-def _matches_topic(item: dict, topic) -> bool:
-    """
-    True when the item matches a topic. `topic` is normally a dict
-    {name, keywords}; legacy plain strings are coerced on the fly.
-    """
-    if isinstance(topic, dict):
-        keywords = topic.get("keywords") or [topic.get("name", "").lower()]
-    else:
-        coerced = _coerce_topic(topic)
-        keywords = coerced["keywords"] if coerced else []
-    haystack = f"{item.get('title', '')} {item.get('text_excerpt', '')}".lower()
-    return any(kw and kw in haystack for kw in keywords)
-
-
-def _effective_config():
-    """
-    Merge the tool's stored settings with the schema defaults.
-
-    An explicitly stored empty list is respected (the user removed every
-    source/topic on purpose); the defaults only apply when the key is absent.
-    """
+def _effective_config() -> dict:
     try:
         stored = (get_tool_config("fetch_news").get("settings") or {})
     except Exception as e:
@@ -345,7 +222,6 @@ def _effective_config():
 
 
 def _resolve_entries(names, configured, coerce):
-    """Resolve runtime-override names against configured entries + presets."""
     resolved = []
     for name in names:
         match = next(
@@ -358,201 +234,179 @@ def _resolve_entries(names, configured, coerce):
     return resolved
 
 
-def _collect_candidates(sources, topics, max_news):
+# ===========================================================================
+# STEP 1: Web Search for News Candidates (Live, No RSS dependency)
+# ===========================================================================
+def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str, Any]], target_count: int) -> List[Dict[str, Any]]:
     """
-    Discover candidate articles for every source × topic combination.
-
-    Each source may declare a native `feed` and/or a `domain` (used for the
-    Google News RSS fallback). Sources with neither are skipped with a note.
-    Returns (selected, backups, diagnostics).
+    Searches DuckDuckGo News/Text for recent articles across the requested sources and topics.
+    Returns a list of candidate dicts with url, title, source, and rough date/snippet.
     """
-    diagnostics = []
     candidates = []
-    seen_urls, seen_titles = set(), set()
-    fetches = 0
-
-    def add(items):
-        for it in items:
-            url_key = it.get("url") or ""
-            title_key = re.sub(r"\W+", "", it.get("title", "").lower())
-            if (url_key and url_key in seen_urls) or (title_key and title_key in seen_titles):
-                continue
-            if url_key:
-                seen_urls.add(url_key)
-            if title_key:
-                seen_titles.add(title_key)
-            candidates.append(it)
+    seen_urls = set()
+    seen_titles = set()
 
     for source in sources:
-        name = source.get("name") or source.get("domain") or "(fonte sem nome)"
+        source_name = source.get("name") or "News"
         domain = source.get("domain") or ""
-        feed = source.get("feed") or ""
-
-        if not domain and not feed:
-            diagnostics.append(f"{name}: nenhum domínio ou RSS configurado — fonte ignorada")
-            continue
-
-        native_items = []
-        if feed:
-            if fetches >= _MAX_FETCHES:
-                diagnostics.append(f"{name}: limite de consultas RSS atingido nesta execução")
-            else:
-                fetches += 1
-                try:
-                    native_items.extend(_parse_rss(_http_get(feed), name))
-                except Exception as e:
-                    diagnostics.append(f"{name}: feed nativo indisponível ({e})")
 
         for topic in topics:
-            matching = [it for it in native_items if _matches_topic(it, topic)]
-            if len(matching) < _MIN_PER_COMBO and domain and fetches < _MAX_FETCHES:
-                fetches += 1
-                try:
-                    gn_url = _google_news_rss_url(topic["name"], domain)
-                    gn_items = _parse_rss(_http_get(gn_url), name)
-                    matching.extend(
-                        it for it in gn_items
-                        if _matches_topic(it, topic) or domain in it["url"]
-                    )
-                except Exception as e:
-                    diagnostics.append(f"{name} × {topic['name']}: Google News RSS indisponível ({e})")
-            add(matching)
+            topic_name = topic.get("name") if isinstance(topic, dict) else str(topic)
+            query = f"{topic_name} site:{domain}" if domain else f"{topic_name} {source_name}"
+            
+            # 1. Try DuckDuckGo News search first
+            try:
+                with DDGS() as ddgs:
+                    news_results = list(ddgs.news(query, max_results=5))
+                    if not news_results:
+                        # Fallback to general text search if news tab returns empty
+                        news_results = list(ddgs.text(query, max_results=5))
+            except Exception as e:
+                logger.debug("DDG search failed for query %r: %s", query, e)
+                news_results = []
 
-    if not candidates and not diagnostics:
-        diagnostics.append("Nenhuma notícia encontrada para as fontes/assuntos configurados.")
+            for item in news_results:
+                url = item.get("url") or item.get("href") or ""
+                title = item.get("title") or ""
+                snippet = item.get("body") or ""
+                date = item.get("date") or ""
 
-    # Tag matched topics, drop items that match nothing (native general feeds).
-    for c in candidates:
-        c["topics"] = [t["name"] for t in topics if _matches_topic(c, t)]
-    candidates = [c for c in candidates if c["topics"]]
+                if not url or not title:
+                    continue
 
-    # Most recent first, then round-robin across sources for diversity.
-    candidates.sort(key=lambda c: c.get("date", ""), reverse=True)
-    by_source = defaultdict(list)
-    for c in candidates:
-        by_source[c["source"]].append(c)
+                norm_title = re.sub(r"\W+", "", title.lower())
+                if url in seen_urls or norm_title in seen_titles:
+                    continue
 
-    selected = []
-    source_names = [s.get("name") or s.get("domain") or "" for s in sources]
-    remaining_sources = [s for s in source_names if by_source.get(s)]
-    while len(selected) < max_news and remaining_sources:
-        for s in list(remaining_sources):
-            if not by_source[s]:
-                remaining_sources.remove(s)
-                continue
-            selected.append(by_source[s].pop(0))
-            if len(selected) >= max_news:
-                break
+                seen_urls.add(url)
+                seen_titles.add(norm_title)
 
-    # Replacement pool for unreachable selected items. Capped at max_news
-    # (was 2x) so the mission payload stays small: every backup inflates the
-    # JSON serialized into the tool result, which is capped at
-    # LC_TOOL_RESULT_MAX_CHARS (default 6000).
-    backups = candidates[: max_news]
-    return selected, backups, diagnostics
+                candidates.append({
+                    "title": title,
+                    "url": url,
+                    "source": source_name,
+                    "topic": topic_name,
+                    "date": date,
+                    "snippet": snippet,
+                })
+
+    return candidates
 
 
-def _build_mission(cfg, selected, backups, diagnostics):
-    """Render the mandatory agent execution protocol + the candidate list.
-
-    Order matters: the protocol comes FIRST and the candidates JSON LAST.
-    Every tool result is capped at ``LC_TOOL_RESULT_MAX_CHARS`` (default 6000)
-    by ``@cap_tool_result`` and this payload can be far larger, so anything
-    placed after the JSON risks being truncated away — the old order cut the
-    protocol off in real-size missions, leaving the model without its rules.
+# ===========================================================================
+# STEP 2: Extract Full Webpage Text (Scraping)
+# ===========================================================================
+def _extract_article_text(url: str) -> str:
     """
-    selected_ids = {id(c) for c in selected}
-    # Backups not in `selected` drop their excerpt (the biggest field): once
-    # promoted they have no excerpt anyway, so protocol step 1 forces opening
-    # their URL — keeping it here only bloated the payload past the cap.
-    backup_view = [
-        c if id(c) in selected_ids
-        else {k: v for k, v in c.items() if k != "text_excerpt"}
-        for c in backups
-    ]
-    payload = json.dumps(
-        {"selected": selected, "backups": backup_view}, ensure_ascii=False, indent=2
+    Extracts main article text using curl_cffi + trafilatura, falling back to BeautifulSoup.
+    """
+    if not url:
+        return ""
+    try:
+        resp = curl_requests.get(url, impersonate="chrome146", timeout=_ARTICLE_SCRAPE_TIMEOUT)
+        html = resp.text or ""
+        text = trafilatura.extract(html)
+        if text and len(text.strip()) >= 80:
+            return text.strip()
+    except Exception as e:
+        logger.debug("Trafilatura extract failed for %s: %s", url, e)
+
+    # Secondary lightweight fallback with BeautifulSoup
+    try:
+        resp = curl_requests.get(url, impersonate="chrome146", timeout=_ARTICLE_SCRAPE_TIMEOUT)
+        soup = BeautifulSoup(resp.text or "", "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        # Find paragraphs
+        paragraphs = [p.get_text(" ").strip() for p in soup.find_all("p") if len(p.get_text(" ").strip()) > 30]
+        full_text = "\n\n".join(paragraphs)
+        if len(full_text) >= 80:
+            return full_text
+    except Exception as e:
+        logger.debug("BS4 fallback failed for %s: %s", url, e)
+
+    return ""
+
+
+# ===========================================================================
+# STEP 3: Internal Sub-LLM Summarization (Deterministic Execution)
+# ===========================================================================
+def _summarize_article_with_llm(title: str, text: str, source: str, target_chars: int) -> str:
+    """
+    Invokes the LLM router to generate a strict, accurate summary of the scraped article text.
+    Falls back to a truncated lead extract if the LLM call fails.
+    """
+    prompt = (
+        f"Você é um redator de notícias. Escreva um resumo informativo e direto da matéria abaixo.\n\n"
+        f"Título: {title}\n"
+        f"Fonte: {source}\n"
+        f"Texto da matéria:\n{text[:4000]}\n\n"
+        f"Diretrizes obrigatórias:\n"
+        f"- Resumo de aproximadamente {target_chars} caracteres (meta: {target_chars} caracteres).\n"
+        f"- Destaque os fatos principais: o que aconteceu, quem, quando, onde e impacto.\n"
+        f"- Responda APENAS com o texto do resumo, sem títulos, sem cabeçalhos e sem introduções."
     )
-    n = cfg["summary_chars"]
-    m = cfg["max_news"]
-    source_names = [s["name"] for s in cfg["sources"]]
-    topic_names = [t["name"] for t in cfg["topics"]]
-    lines = [
-        "=== NEWS BRIEFING MISSION ===",
-        f"CONFIG: sources={source_names} | topics={topic_names} | "
-        f"max_news={m} | summary_chars={n}",
-        "",
-        "MANDATORY EXECUTION PROTOCOL — execute every step, in order:",
-        "1) For EACH item in 'selected': if 'full_text_available' is false OR "
-        "'text_excerpt' is missing/too short, you MUST open the article with "
-        "extract_webpage_text(url) (fallback: http_request GET). If the url is a "
-        "news.google.com redirect link, extract_webpage_text resolves it via its "
-        "browser fallback — that is expected. When 'full_text_available' is true, "
-        "you may summarize directly from 'text_excerpt' (only open the page if the "
-        "excerpt is clearly truncated).",
-        "2) From the article (or text_excerpt), extract EXACTLY these fields: "
-        "title, source, date. If the page shows no date, keep the candidate's date.",
-        f"3) Write a summary of APPROXIMATELY {n} characters for each item — "
-        f"treat {n} as the TARGET length, not a ceiling: a couple of words or "
-        "one short line is NOT acceptable; expand with the article's key facts "
-        f"(what happened, who, where, why it matters). Never exceed {n} "
-        "characters.",
-        f"4) Curate: deduplicate and deliver APPROXIMATELY {m} items (the "
-        "configured quantity — aim for that exact number). If an item is "
-        "unreachable, replace it from 'backups' to keep the count up; only "
-        "deliver fewer if backups are also exhausted, and say so briefly. "
-        "Prefer the most recent items.",
-        "5) DELIVER the complete digest in the SAME channel where the user made the "
-        "request (reply here — do NOT send it elsewhere), in the user's language, "
-        "using this exact format per item:",
-        "   📰 <title> — <source> — <date>",
-        f"   <summary (approximately {n} chars; hard max {n})>",
-        "   🔗 <url>",
-        "6) If an entire source failed (paywall, offline, or was not configured "
-        "with a domain/RSS), mention it briefly at the end — never abort the "
-        "digest for the remaining sources.",
-        "",
-        "FINAL SELF-CHECK before delivering (every box must be true):",
-        "[ ] every item has title, source, date and a summary",
-        f"[ ] every summary is approximately {n} characters (a few words is too "
-        f"short; never over {n})",
-        f"[ ] digest contains approximately {m} items (the configured quantity)",
-        "[ ] digest delivered in the requesting channel, in the user's language",
-        "",
-        "CANDIDATES (already discovered via RSS; do NOT run web searches "
-        "yourself, this JSON is your article list):",
-        payload,
-    ]
-    if diagnostics:
-        lines += ["", "DISCOVERY NOTES (issues found during RSS discovery):"]
-        lines += [f"- {d}" for d in diagnostics]
-    return "\n".join(lines)
+
+    try:
+        from agent.lc import settings as lc_settings
+        from agent.llm_router import route_llm_call
+
+        model = lc_settings.summarizer_model()
+        if not model:
+            # Check default model in database
+            conn = get_db()
+            c = conn.cursor()
+            c.execute("SELECT model_name FROM llm_config WHERE text_output = 1 ORDER BY priority ASC LIMIT 1")
+            row = c.fetchone()
+            model = row["model_name"] if row else None
+            conn.close()
+
+        if model:
+            conn = get_db()
+            cursor = conn.cursor()
+            summary = route_llm_call(
+                model_name=model,
+                history=[],
+                config_kwargs={"temperature": 0.2},
+                content=prompt,
+                cursor=cursor,
+                session_id="news_internal",
+                message_in_id="news_step3",
+                is_ide=True,
+                on_complete=None,
+                summarize=True,
+            )
+            conn.close()
+            if summary and len(summary.strip()) > 30:
+                return summary.strip()
+    except Exception as e:
+        logger.warning("Internal LLM summarization failed: %s", e)
+
+    # Fallback to pure extractive summary if LLM is unavailable
+    clean = re.sub(r"\s+", " ", text).strip()
+    return clean[:target_chars] + "..." if len(clean) > target_chars else clean
 
 
+# ===========================================================================
+# STEP 4: End-to-End Orchestrator
+# ===========================================================================
 @require_permission('PERM_WEB_SEARCH')
 def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_chars: int = 0) -> str:
     """
-    Builds an up-to-date multi-source news briefing. Discovers articles via RSS
-    (title, source and date guaranteed) and returns the mandatory multi-step
-    protocol the agent must follow to visit each article, summarize it and
-    deliver the digest in the requesting channel. Sources/topics/quantity/
-    summary length default to the settings configured in Tools Management
-    (where sources and topics can be freely added/removed) and can be
-    overridden per call.
+    Executes a complete multi-step news briefing pipeline:
+    1. Searches live news for configured topics & sources without RSS reliance.
+    2. Scrapes the full webpage text for each article.
+    3. Summarizes each article using an internal LLM call to match target length.
+    4. Compiles and returns the finalized, structured news digest ready for presentation.
 
     Args:
-        topics: Optional comma-separated topic names to fetch instead of the
-            configured ones (e.g. "Tecnologia,Startups"). Names are resolved
-            against the configured topics and the built-in presets; unknown
-            names become custom topics matched by their own name.
-        sources: Optional comma-separated source names to fetch instead of the
-            configured ones (e.g. "CNN Brasil,Reuters").
-        max_news: Optional override for how many news items the digest may contain.
-        summary_chars: Optional override for the per-item summary character limit.
+        topics: Optional comma-separated topic names to override (e.g. "Tecnologia,Startups").
+        sources: Optional comma-separated source names to override (e.g. "G1,CNN Brasil").
+        max_news: Optional override for total news count in the final digest.
+        summary_chars: Optional override for character length per summary.
 
     Returns:
-        str: A "NEWS BRIEFING MISSION" containing the discovered candidates and
-        the mandatory execution protocol, or an error message.
+        str: The final structured news briefing with titles, dates, sources, summaries, and links.
     """
     try:
         cfg = _effective_config()
@@ -572,11 +426,62 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
         if summary_chars:
             cfg["summary_chars"] = max(100, min(int(summary_chars), 1000))
 
-        selected, backups, diagnostics = _collect_candidates(
-            cfg["sources"], cfg["topics"], cfg["max_news"]
-        )
-        return _build_mission(cfg, selected, backups, diagnostics)
+        target_count = cfg["max_news"]
+        target_chars = cfg["summary_chars"]
+
+        # STEP 1: Search live web candidates
+        candidates = _search_news_candidates(cfg["sources"], cfg["topics"], target_count)
+        if not candidates:
+            return "Nenhuma notícia recente foi encontrada para os tópicos e fontes configurados."
+
+        # STEP 2 & 3: Scrape full text & Summarize each article
+        completed_articles = []
+        for cand in candidates:
+            if len(completed_articles) >= target_count:
+                break
+
+            url = cand["url"]
+            title = cand["title"]
+            source = cand["source"]
+            date = cand.get("date") or "Recente"
+
+            # Scrape real content
+            content = _extract_article_text(url)
+            if not content or len(content.strip()) < 100:
+                # If scraping was blocked or empty, use snippet if available
+                content = cand.get("snippet", "")
+                if not content or len(content.strip()) < 50:
+                    continue
+
+            # Summarize content
+            summary = _summarize_article_with_llm(title, content, source, target_chars)
+            if not summary:
+                continue
+
+            completed_articles.append({
+                "title": title,
+                "source": source,
+                "date": date,
+                "summary": summary,
+                "url": url,
+            })
+
+        if not completed_articles:
+            return "Não foi possível extrair o conteúdo das notícias encontradas no momento."
+
+        # STEP 4: Assemble Final Formatted Digest
+        lines = ["=== RESUMO DE NOTÍCIAS ===", ""]
+        for item in completed_articles:
+            date_str = f" — {item['date']}" if item['date'] else ""
+            lines.append(f"📰 {item['title']} — {item['source']}{date_str}")
+            lines.append(f"{item['summary']}")
+            lines.append(f"🔗 {item['url']}")
+            lines.append("")
+
+        return "\n".join(lines).strip()
+
     except Exception as e:
-        logger.exception("fetch_news failed")
-        return f"Error building news briefing: {e}"
+        logger.exception("fetch_news pipeline failed")
+        return f"Erro ao gerar resumo de notícias: {e}"
+
 
