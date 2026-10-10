@@ -1,15 +1,16 @@
 """
 News briefing tool.
 
-Discovers fresh articles per configured source/topic via native RSS feeds
-(falling back to Google News RSS) and returns a mandatory multi-step protocol
-that instructs the agent to visit each article, extract title/source/date and
-write a configurable-length summary before delivering the digest in the
-channel where the user asked.
+Discovers fresh articles for every configured source/topic via native RSS
+feeds (falling back to Google News RSS) and returns a mandatory multi-step
+protocol that instructs the agent to visit each article, extract
+title/source/date and write a configurable-length summary before delivering
+the digest in the channel where the user asked.
 
-Per-tool settings (sources, topics, quantity, summary length) are stored in
-the `config_data` column of `tools_config` and edited from the Tools
-Management gear-icon modal. The schema below drives that modal.
+Sources and topics are FULLY USER-MANAGED from the Tools Management card:
+each source is {name, domain, feed} and each topic is {name, keywords}.
+They are stored in the `config_data` column of `tools_config`; the schema
+below seeds the card and provides the initial defaults.
 """
 
 import json
@@ -30,57 +31,84 @@ from utils.security_utils import require_permission
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Settings schema (rendered by the Tools Management gear-icon modal)
+# Built-in presets — seed defaults and resolution for runtime overrides.
+# Anything stored in config_data fully replaces the defaults, and the user
+# can add/remove sources and topics freely from the card.
+# ---------------------------------------------------------------------------
+_PRESET_SOURCES = {
+    "CNN Brasil": {"domain": "cnnbrasil.com.br", "feed": "https://www.cnnbrasil.com.br/feed/"},
+    "CNN EUA": {"domain": "cnn.com", "feed": "https://rss.cnn.com/rss/edition.rss"},
+    "Reuters": {"domain": "reuters.com"},
+    "BBC Brasil": {"domain": "bbc.com", "feed": "https://feeds.bbci.co.uk/portuguese/rss.xml"},
+    "BBC News": {"domain": "bbc.com", "feed": "https://feeds.bbci.co.uk/news/rss.xml"},
+    "Gazeta do Povo": {"domain": "gazetadopovo.com.br", "feed": "https://www.gazetadopovo.com.br/rss/"},
+    "Revista Oeste": {"domain": "revistaoeste.com", "feed": "https://revistaoeste.com/feed/"},
+    "Folha de S.Paulo": {"domain": "folha.uol.com.br", "feed": "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml"},
+    "Estadão": {"domain": "estadao.com.br", "feed": "https://www.estadao.com.br/rss/ultimas.xml"},
+    "G1": {"domain": "g1.globo.com", "feed": "https://g1.globo.com/rss/g1/"},
+    "UOL": {"domain": "uol.com.br"},
+    "The Verge": {"domain": "theverge.com", "feed": "https://www.theverge.com/rss/index.xml"},
+    "TechCrunch": {"domain": "techcrunch.com", "feed": "https://techcrunch.com/feed/"},
+}
+
+_PRESET_TOPICS = {
+    "Tecnologia": ["tecnologia", "technology", "tech", "digital"],
+    "Programação": ["programação", "programacao", "código", "codigo", "code", "coding",
+                    "developer", "desenvolvedor", "dev", "software", "python", "javascript",
+                    "programador"],
+    "Startups": ["startup", "startups", "empreendedor", "empreendedorismo", "unicórnio"],
+    "Inteligência Artificial": ["inteligência artificial", "inteligencia artificial", " ia ",
+                                " ai ", "machine learning", "gpt", "llm", "modelo de linguagem"],
+    "Negócios": ["negócio", "negocios", "negócios", "business", "mercado", "empresa", "companhia"],
+    "Economia": ["economia", "economy", "inflação", "inflacao", "juros", "selic", "pib", "dólar", "dolar"],
+    "Ciência": ["ciência", "ciencia", "science", "pesquisa", "cientista", "research", "estudo"],
+    "Política": ["política", "politica", "politics", "governo", "eleição", "eleicao", "senado",
+                 "congresso", "presidente"],
+    "Esportes": ["esporte", "esportes", "sports", "futebol", "jogo", "campeonato", "copa"],
+}
+
+# Default sources/topics seeded into the card on first use.
+_DEFAULT_SOURCES = [
+    {"name": "CNN Brasil", "domain": "cnnbrasil.com.br", "feed": "https://www.cnnbrasil.com.br/feed/"},
+    {"name": "CNN EUA", "domain": "cnn.com", "feed": "https://rss.cnn.com/rss/edition.rss"},
+    {"name": "Reuters", "domain": "reuters.com", "feed": ""},
+    {"name": "BBC Brasil", "domain": "bbc.com", "feed": "https://feeds.bbci.co.uk/portuguese/rss.xml"},
+    {"name": "Gazeta do Povo", "domain": "gazetadopovo.com.br", "feed": "https://www.gazetadopovo.com.br/rss/"},
+    {"name": "Revista Oeste", "domain": "revistaoeste.com", "feed": "https://revistaoeste.com/feed/"},
+]
+_DEFAULT_TOPICS = [
+    {"name": name, "keywords": list(_PRESET_TOPICS[name])}
+    for name in ("Tecnologia", "Programação", "Startups")
+]
+
+# ---------------------------------------------------------------------------
+# Settings schema (rendered by the Tools Management gear-icon modal).
+# `dynamic_list` fields let the user add/remove rows entirely from the card.
 # ---------------------------------------------------------------------------
 TOOL_SETTINGS_SCHEMA = [
     {
         "key": "sources",
         "label": "Fontes de notícias",
-        "type": "multi_select",
-        "options": [
-            "CNN Brasil",
-            "CNN EUA",
-            "Reuters",
-            "BBC Brasil",
-            "BBC News",
-            "Gazeta do Povo",
-            "Revista Oeste",
-            "Folha de S.Paulo",
-            "Estadão",
-            "G1",
-            "UOL",
-            "The Verge",
-            "TechCrunch",
+        "type": "dynamic_list",
+        "add_label": "+ Adicionar fonte",
+        "item_fields": [
+            {"key": "name", "label": "Nome", "placeholder": "Ex.: CNN Brasil", "width": "34%"},
+            {"key": "domain", "label": "Domínio", "placeholder": "Ex.: cnnbrasil.com.br", "width": "33%"},
+            {"key": "feed", "label": "RSS (opcional)", "placeholder": "Ex.: https://site.com/feed/", "width": "33%"},
         ],
-        "default": [
-            "CNN Brasil",
-            "CNN EUA",
-            "Reuters",
-            "BBC Brasil",
-            "Gazeta do Povo",
-            "Revista Oeste",
-        ],
+        "default": _DEFAULT_SOURCES,
     },
     {
         "key": "topics",
         "label": "Assuntos",
-        "type": "multi_select",
-        "options": [
-            "Tecnologia",
-            "Programação",
-            "Startups",
-            "Inteligência Artificial",
-            "Negócios",
-            "Economia",
-            "Ciência",
-            "Política",
-            "Esportes",
+        "type": "dynamic_list",
+        "add_label": "+ Adicionar assunto",
+        "item_fields": [
+            {"key": "name", "label": "Assunto", "placeholder": "Ex.: Tecnologia", "width": "30%"},
+            {"key": "keywords", "label": "Palavras-chave (separadas por vírgula)",
+             "placeholder": "Ex.: tecnologia, technology, tech", "list": True, "width": "70%"},
         ],
-        "default": [
-            "Tecnologia",
-            "Programação",
-            "Startups",
-        ],
+        "default": _DEFAULT_TOPICS,
     },
     {
         "key": "max_news",
@@ -100,68 +128,9 @@ TOOL_SETTINGS_SCHEMA = [
     },
 ]
 
-# Native RSS feeds per source (tried first). Sources without a public feed
-# (e.g. Reuters, UOL) are discovered via the Google News RSS fallback.
-_SOURCE_FEEDS = {
-    "CNN Brasil": ["https://www.cnnbrasil.com.br/feed/"],
-    "CNN EUA": [
-        "https://rss.cnn.com/rss/edition.rss",
-        "https://rss.cnn.com/rss/edition_technology.rss",
-    ],
-    "BBC Brasil": ["https://feeds.bbci.co.uk/portuguese/rss.xml"],
-    "BBC News": ["https://feeds.bbci.co.uk/news/rss.xml"],
-    "Gazeta do Povo": ["https://www.gazetadopovo.com.br/rss/"],
-    "Revista Oeste": ["https://revistaoeste.com/feed/"],
-    "Folha de S.Paulo": ["https://feeds.folha.uol.com.br/emcimadahora/rss091.xml"],
-    "Estadão": ["https://www.estadao.com.br/rss/ultimas.xml"],
-    "G1": ["https://g1.globo.com/rss/g1/"],
-    "UOL": [],
-    "The Verge": ["https://www.theverge.com/rss/index.xml"],
-    "TechCrunch": ["https://techcrunch.com/feed/"],
-    "Reuters": [],
-}
-
-# Domains used by the Google News RSS fallback (`site:` operator).
-_SOURCE_DOMAINS = {
-    "CNN Brasil": "cnnbrasil.com.br",
-    "CNN EUA": "cnn.com",
-    "Reuters": "reuters.com",
-    "BBC Brasil": "bbc.com",
-    "BBC News": "bbc.com",
-    "Gazeta do Povo": "gazetadopovo.com.br",
-    "Revista Oeste": "revistaoeste.com",
-    "Folha de S.Paulo": "folha.uol.com.br",
-    "Estadão": "estadao.com.br",
-    "G1": "g1.globo.com",
-    "UOL": "uol.com.br",
-    "The Verge": "theverge.com",
-    "TechCrunch": "techcrunch.com",
-}
-
-# Keywords (PT + EN aliases) used to filter feed items by topic. Unknown /
-# custom topics fall back to the topic name itself.
-_TOPIC_KEYWORDS = {
-    "Tecnologia": ["tecnologia", "technology", "tech", "digital"],
-    "Programação": [
-        "programação", "programacao", "código", "codigo", "code", "coding",
-        "developer", "desenvolvedor", "dev", "software", "python",
-        "javascript", "programador",
-    ],
-    "Startups": ["startup", "startups", "empreendedor", "empreendedorismo", "unicórnio"],
-    "Inteligência Artificial": [
-        "inteligência artificial", "inteligencia artificial", " ia ", " ai ",
-        "machine learning", "gpt", "llm", "modelo de linguagem",
-    ],
-    "Negócios": ["negócio", "negocios", "negócios", "business", "mercado", "empresa", "companhia"],
-    "Economia": ["economia", "economy", "inflação", "inflacao", "juros", "selic", "pib", "dólar", "dolar"],
-    "Ciência": ["ciência", "ciencia", "science", "pesquisa", "cientista", "research", "estudo"],
-    "Política": ["política", "politica", "politics", "governo", "eleição", "eleicao", "senado", "congresso", "presidente"],
-    "Esportes": ["esporte", "esportes", "sports", "futebol", "jogo", "campeonato", "copa"],
-}
-
 # Network/runtime guards
 _FEED_TIMEOUT = 10
-_MAX_FETCHES = 20
+_MAX_FETCHES = 30
 _MIN_PER_COMBO = 2
 _EXCERPT_MAX_CHARS = 2500
 _FULL_TEXT_MIN_CHARS = 500
@@ -233,56 +202,169 @@ def _parse_rss(xml_text: str, source_name: str):
     return items
 
 
-def _google_news_rss_url(topic: str, domain: str) -> str:
-    params = urlencode({
-        "q": f"{topic} site:{domain}",
-        "hl": "pt-BR",
-        "gl": "BR",
-        "ceid": "BR:pt-419",
-    })
+def _google_news_rss_url(topic: str, domain: str = "") -> str:
+    """Google News RSS search URL; `site:domain` only when a domain is set."""
+    query = f"{topic} site:{domain}" if domain else topic
+    params = urlencode({"q": query, "hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"})
     return f"https://news.google.com/rss/search?{params}"
 
 
-def _parse_list_arg(value, canonicalizer=None):
-    """Parse a comma/newline separated runtime override into a clean list."""
-    parts = [p.strip() for p in re.split(r"[,;\n]", value or "") if p.strip()]
-    out = []
-    for p in parts:
-        canon = canonicalizer(p) if canonicalizer else p
-        if canon and canon not in out:
-            out.append(canon)
-    return out or None
+def _clean_str(value) -> str:
+    return str(value).strip() if value else ""
+
+
+def _split_keywords(raw) -> list:
+    """Split a comma/semicolon/newline separated keyword string."""
+    if isinstance(raw, (list, tuple)):
+        return [_clean_str(k) for k in raw if _clean_str(k)]
+    return [p.strip() for p in re.split(r"[,;\n]", raw or "") if p.strip()]
+
+
+def _preset_source_lookup(name: str) -> str:
+    """Return the canonical preset name (case-insensitive) or ''."""
+    for known in _PRESET_SOURCES:
+        if known.lower() == name.strip().lower():
+            return known
+    return ""
+
+
+def _preset_topic_lookup(name: str):
+    """Return (canonical_name, keywords) for a preset topic or None."""
+    for known, keywords in _PRESET_TOPICS.items():
+        if known.lower() == name.strip().lower():
+            return known, list(keywords)
+    return None
+
+
+def _coerce_source(value):
+    """
+    Normalize a source entry into {name, domain, feed}.
+
+    Accepts a full dict (from the card), or a legacy plain-string name which
+    is resolved against the built-in presets. Returns None when unusable.
+    """
+    if isinstance(value, dict):
+        raw_name = _clean_str(value.get("name"))
+        if not raw_name:
+            return None
+        preset = _PRESET_SOURCES.get(_preset_source_lookup(raw_name), {})
+        return {
+            "name": _preset_source_lookup(raw_name) or raw_name,
+            "domain": _clean_str(value.get("domain")) or preset.get("domain", ""),
+            "feed": _clean_str(value.get("feed")) or preset.get("feed", ""),
+        }
+    raw_name = _clean_str(value)
+    if not raw_name:
+        return None
+    canonical = _preset_source_lookup(raw_name)
+    preset = _PRESET_SOURCES.get(canonical, {})
+    return {
+        "name": canonical or raw_name,
+        "domain": preset.get("domain", ""),
+        "feed": preset.get("feed", ""),
+    }
+
+
+def _coerce_topic(value):
+    """
+    Normalize a topic entry into {name, keywords}.
+
+    Accepts a dict (from the card), or a legacy plain-string name resolved
+    against the built-in presets. Returns None when unusable.
+    """
+    if isinstance(value, dict):
+        raw_name = _clean_str(value.get("name"))
+        if not raw_name:
+            return None
+        keywords = _split_keywords(value.get("keywords"))
+        preset = _preset_topic_lookup(raw_name)
+        if preset and not keywords:
+            keywords = preset[1]
+            raw_name = preset[0]
+        return {"name": raw_name, "keywords": keywords or [raw_name.lower()]}
+    raw_name = _clean_str(value)
+    if not raw_name:
+        return None
+    preset = _preset_topic_lookup(raw_name)
+    if preset:
+        return {"name": preset[0], "keywords": preset[1]}
+    return {"name": raw_name, "keywords": [raw_name.lower()]}
+
+
+def _matches_topic(item: dict, topic) -> bool:
+    """
+    True when the item matches a topic. `topic` is normally a dict
+    {name, keywords}; legacy plain strings are coerced on the fly.
+    """
+    if isinstance(topic, dict):
+        keywords = topic.get("keywords") or [topic.get("name", "").lower()]
+    else:
+        coerced = _coerce_topic(topic)
+        keywords = coerced["keywords"] if coerced else []
+    haystack = f"{item.get('title', '')} {item.get('text_excerpt', '')}".lower()
+    return any(kw and kw in haystack for kw in keywords)
 
 
 def _effective_config():
-    """Merge the tool's stored settings with the schema defaults."""
+    """
+    Merge the tool's stored settings with the schema defaults.
+
+    An explicitly stored empty list is respected (the user removed every
+    source/topic on purpose); the defaults only apply when the key is absent.
+    """
     try:
         stored = (get_tool_config("fetch_news").get("settings") or {})
     except Exception as e:
         logger.warning("fetch_news: could not read stored settings: %s", e)
         stored = {}
+
     cfg = {}
     for field in TOOL_SETTINGS_SCHEMA:
-        val = stored.get(field["key"], field.get("default"))
-        if field["type"] == "multi_select":
-            val = [v for v in val if v in field["options"]] or list(field.get("default", []))
-        elif field["type"] == "number":
+        key = field["key"]
+        ftype = field["type"]
+        raw = stored[key] if key in stored else field.get("default")
+
+        if ftype == "dynamic_list":
+            coerce = _coerce_source if key == "sources" else _coerce_topic
+            entries, seen = [], set()
+            for value in (raw or []):
+                entry = coerce(value)
+                if entry and entry["name"].lower() not in seen:
+                    seen.add(entry["name"].lower())
+                    entries.append(entry)
+            cfg[key] = entries
+        elif ftype == "number":
             try:
-                val = int(val)
+                val = int(raw)
             except (TypeError, ValueError):
                 val = field.get("default")
-            val = max(field.get("min", 1), min(val, field.get("max", 9999)))
-        cfg[field["key"]] = val
+            cfg[key] = max(field.get("min", 1), min(val, field.get("max", 9999)))
+        else:
+            cfg[key] = raw
     return cfg
+
+
+def _resolve_entries(names, configured, coerce):
+    """Resolve runtime-override names against configured entries + presets."""
+    resolved = []
+    for name in names:
+        match = next(
+            (e for e in configured if e["name"].lower() == name.lower()), None
+        )
+        if match is None:
+            match = coerce(name)
+        if match and match not in resolved:
+            resolved.append(match)
+    return resolved
 
 
 def _collect_candidates(sources, topics, max_news):
     """
     Discover candidate articles for every source × topic combination.
 
-    Native RSS feeds are preferred; Google News RSS is the fallback when a
-    source has no feed or the feed yielded nothing for a topic. Returns
-    (selected, backups, diagnostics).
+    Each source may declare a native `feed` and/or a `domain` (used for the
+    Google News RSS fallback). Sources with neither are skipped with a note.
+    Returns (selected, backups, diagnostics).
     """
     diagnostics = []
     candidates = []
@@ -302,32 +384,38 @@ def _collect_candidates(sources, topics, max_news):
             candidates.append(it)
 
     for source in sources:
+        name = source.get("name") or source.get("domain") or "(fonte sem nome)"
+        domain = source.get("domain") or ""
+        feed = source.get("feed") or ""
+
+        if not domain and not feed:
+            diagnostics.append(f"{name}: nenhum domínio ou RSS configurado — fonte ignorada")
+            continue
+
         native_items = []
-        for feed_url in _SOURCE_FEEDS.get(source, []):
+        if feed:
             if fetches >= _MAX_FETCHES:
-                diagnostics.append(f"{source}: limite de consultas RSS atingido nesta execução")
-                break
-            fetches += 1
-            try:
-                native_items.extend(_parse_rss(_http_get(feed_url), source))
-            except Exception as e:
-                diagnostics.append(f"{source}: feed nativo indisponível ({e})")
+                diagnostics.append(f"{name}: limite de consultas RSS atingido nesta execução")
+            else:
+                fetches += 1
+                try:
+                    native_items.extend(_parse_rss(_http_get(feed), name))
+                except Exception as e:
+                    diagnostics.append(f"{name}: feed nativo indisponível ({e})")
 
         for topic in topics:
             matching = [it for it in native_items if _matches_topic(it, topic)]
-            if len(matching) < _MIN_PER_COMBO:
-                domain = _SOURCE_DOMAINS.get(source)
-                if domain and fetches < _MAX_FETCHES:
-                    fetches += 1
-                    try:
-                        gn_url = _google_news_rss_url(topic, domain)
-                        gn_items = _parse_rss(_http_get(gn_url), source)
-                        matching.extend(
-                            it for it in gn_items
-                            if _matches_topic(it, topic) or domain in it["url"]
-                        )
-                    except Exception as e:
-                        diagnostics.append(f"{source} × {topic}: Google News RSS indisponível ({e})")
+            if len(matching) < _MIN_PER_COMBO and domain and fetches < _MAX_FETCHES:
+                fetches += 1
+                try:
+                    gn_url = _google_news_rss_url(topic["name"], domain)
+                    gn_items = _parse_rss(_http_get(gn_url), name)
+                    matching.extend(
+                        it for it in gn_items
+                        if _matches_topic(it, topic) or domain in it["url"]
+                    )
+                except Exception as e:
+                    diagnostics.append(f"{name} × {topic['name']}: Google News RSS indisponível ({e})")
             add(matching)
 
     if not candidates and not diagnostics:
@@ -335,7 +423,7 @@ def _collect_candidates(sources, topics, max_news):
 
     # Tag matched topics, drop items that match nothing (native general feeds).
     for c in candidates:
-        c["topics"] = [t for t in topics if _matches_topic(c, t)]
+        c["topics"] = [t["name"] for t in topics if _matches_topic(c, t)]
     candidates = [c for c in candidates if c["topics"]]
 
     # Most recent first, then round-robin across sources for diversity.
@@ -345,7 +433,8 @@ def _collect_candidates(sources, topics, max_news):
         by_source[c["source"]].append(c)
 
     selected = []
-    remaining_sources = [s for s in sources if by_source.get(s)]
+    source_names = [s.get("name") or s.get("domain") or "" for s in sources]
+    remaining_sources = [s for s in source_names if by_source.get(s)]
     while len(selected) < max_news and remaining_sources:
         for s in list(remaining_sources):
             if not by_source[s]:
@@ -359,28 +448,16 @@ def _collect_candidates(sources, topics, max_news):
     return selected, backups, diagnostics
 
 
-def _matches_topic(item: dict, topic: str) -> bool:
-    keywords = _TOPIC_KEYWORDS.get(topic, [topic.lower()])
-    haystack = f"{item.get('title', '')} {item.get('text_excerpt', '')}".lower()
-    return any(kw in haystack for kw in keywords)
-
-
-def _normalize_source(name: str):
-    """Map a user-provided source name to its canonical spelling."""
-    for known in _SOURCE_DOMAINS:
-        if known.lower() == name.strip().lower():
-            return known
-    return None
-
-
 def _build_mission(cfg, selected, backups, diagnostics):
     """Render the candidate list + the mandatory agent execution protocol."""
     payload = json.dumps({"selected": selected, "backups": backups}, ensure_ascii=False, indent=2)
     n = cfg["summary_chars"]
     m = cfg["max_news"]
+    source_names = [s["name"] for s in cfg["sources"]]
+    topic_names = [t["name"] for t in cfg["topics"]]
     lines = [
         "=== NEWS BRIEFING MISSION ===",
-        f"CONFIG: sources={cfg['sources']} | topics={cfg['topics']} | "
+        f"CONFIG: sources={source_names} | topics={topic_names} | "
         f"max_news={m} | summary_chars={n}",
         "",
         "STEP 1 — CANDIDATES (already discovered via RSS; do NOT run web searches "
@@ -408,8 +485,9 @@ def _build_mission(cfg, selected, backups, diagnostics):
         "   📰 <title> — <source> — <date>",
         f"   <summary (≤ {n} chars)>",
         "   🔗 <url>",
-        "6) If an entire source failed (paywall, offline), mention it briefly at the "
-        "end — never abort the digest for the remaining sources.",
+        "6) If an entire source failed (paywall, offline, or was not configured "
+        "with a domain/RSS), mention it briefly at the end — never abort the "
+        "digest for the remaining sources.",
         "",
         "FINAL SELF-CHECK before delivering (every box must be true):",
         "[ ] every item has title, source, date and a summary",
@@ -429,14 +507,16 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
     (title, source and date guaranteed) and returns the mandatory multi-step
     protocol the agent must follow to visit each article, summarize it and
     deliver the digest in the requesting channel. Sources/topics/quantity/
-    summary length default to the settings configured in Tools Management and
-    can be overridden per call.
+    summary length default to the settings configured in Tools Management
+    (where sources and topics can be freely added/removed) and can be
+    overridden per call.
 
     Args:
-        topics: Optional comma-separated topics to fetch instead of the
-            configured ones (e.g. "Tecnologia,Startups"). Custom topics are
-            accepted too.
-        sources: Optional comma-separated sources to fetch instead of the
+        topics: Optional comma-separated topic names to fetch instead of the
+            configured ones (e.g. "Tecnologia,Startups"). Names are resolved
+            against the configured topics and the built-in presets; unknown
+            names become custom topics matched by their own name.
+        sources: Optional comma-separated source names to fetch instead of the
             configured ones (e.g. "CNN Brasil,Reuters").
         max_news: Optional override for how many news items the digest may contain.
         summary_chars: Optional override for the per-item summary character limit.
@@ -449,11 +529,13 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
         cfg = _effective_config()
 
         if topics:
-            override = _parse_list_arg(topics)
+            names = _split_keywords(topics)
+            override = _resolve_entries(names, cfg["topics"], _coerce_topic)
             if override:
                 cfg["topics"] = override
         if sources:
-            override = _parse_list_arg(sources, canonicalizer=_normalize_source)
+            names = _split_keywords(sources)
+            override = _resolve_entries(names, cfg["sources"], _coerce_source)
             if override:
                 cfg["sources"] = override
         if max_news:

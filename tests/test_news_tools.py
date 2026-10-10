@@ -55,12 +55,27 @@ DEFAULT_CFG = {
     "enabled": True,
     "allow_others_from_direct_msgs": False,
     "allow_others_from_group_msgs": False,
+    # Deliberately uses the LEGACY plain-string format to exercise the
+    # coercion path (dict entries are the current on-card format).
     "settings": {
         "sources": ["BBC Brasil"],
         "topics": ["Startups"],
         "max_news": 3,
         "summary_chars": 200,
     },
+}
+
+NEW_FORMAT_SETTINGS = {
+    "sources": [
+        {"name": "Canaltech", "domain": "canaltech.com.br", "feed": ""},
+        {"name": "Tecnoblog", "domain": "tecnoblog.com", "feed": "https://tecnoblog.com/feed/"},
+    ],
+    "topics": [
+        {"name": "Hardware", "keywords": ["gpu", "placa de vídeo", "processador"]},
+        {"name": "Lançamentos", "keywords": ["lançamento", "lancamento", "anúncio"]},
+    ],
+    "max_news": 4,
+    "summary_chars": 400,
 }
 
 
@@ -83,12 +98,17 @@ def test_tool_registered():
 def test_schema_has_expected_fields():
     keys = {f["key"]: f for f in TOOL_SETTINGS_SCHEMA}
     assert set(keys) == {"sources", "topics", "max_news", "summary_chars"}
-    assert "CNN Brasil" in keys["sources"]["options"]
-    assert "Reuters" in keys["sources"]["options"]
-    assert "Revista Oeste" in keys["sources"]["options"]
-    assert "Tecnologia" in keys["topics"]["options"]
-    assert "Programação" in keys["topics"]["options"]
-    assert "Startups" in keys["topics"]["options"]
+    # Sources/topics are fully user-managed dynamic lists (add/remove on card).
+    assert keys["sources"]["type"] == "dynamic_list"
+    assert keys["topics"]["type"] == "dynamic_list"
+    src_fields = {f["key"] for f in keys["sources"]["item_fields"]}
+    assert src_fields == {"name", "domain", "feed"}
+    topic_fields = {f["key"] for f in keys["topics"]["item_fields"]}
+    assert topic_fields == {"name", "keywords"}
+    # Seeded defaults are full entries, not bare strings.
+    assert keys["sources"]["default"][0]["name"] == "CNN Brasil"
+    assert keys["sources"]["default"][0]["feed"].startswith("http")
+    assert {"name": "Tecnologia", "keywords": news_tools._PRESET_TOPICS["Tecnologia"]} in keys["topics"]["default"]
     assert keys["summary_chars"]["default"] == 300
     assert keys["max_news"]["default"] == 6
 
@@ -98,24 +118,60 @@ def test_effective_config_uses_schema_defaults(mocker):
     cfg = news_tools._effective_config()
     assert cfg["summary_chars"] == 300
     assert cfg["max_news"] == 6
-    assert "CNN Brasil" in cfg["sources"]
-    assert "Startups" in cfg["topics"]
+    assert cfg["sources"][0]["name"] == "CNN Brasil"
+    assert cfg["sources"][0]["domain"] == "cnnbrasil.com.br"
+    assert any(t["name"] == "Startups" for t in cfg["topics"])
 
 
-def test_effective_config_clamps_and_filters(mocker):
+def test_effective_config_coerces_legacy_string_entries(mocker):
+    mocker.patch("tools.news_tools.get_tool_config", return_value={
+        "enabled": True,
+        "settings": {"sources": ["BBC Brasil"], "topics": ["Startups"]},
+    })
+    cfg = news_tools._effective_config()
+    assert cfg["sources"] == [{
+        "name": "BBC Brasil",
+        "domain": "bbc.com",
+        "feed": "https://feeds.bbci.co.uk/portuguese/rss.xml",
+    }]
+    assert cfg["topics"] == [{
+        "name": "Startups",
+        "keywords": news_tools._PRESET_TOPICS["Startups"],
+    }]
+
+
+def test_effective_config_keeps_user_defined_entries(mocker):
     mocker.patch("tools.news_tools.get_tool_config", return_value={
         "enabled": True,
         "settings": {
-            "summary_chars": "99999",
-            "max_news": -5,
-            "sources": ["Fonte Inexistente"],
+            "sources": [{"name": "Canaltech", "domain": "canaltech.com.br"}],
+            "topics": [{"name": "Hardware", "keywords": ["gpu", "processador"]}],
         },
+    })
+    cfg = news_tools._effective_config()
+    assert cfg["sources"] == [{"name": "Canaltech", "domain": "canaltech.com.br", "feed": ""}]
+    assert cfg["topics"] == [{"name": "Hardware", "keywords": ["gpu", "processador"]}]
+
+
+def test_effective_config_respects_explicitly_empty_lists(mocker):
+    # The user removed every source/topic on purpose — do not resurrect defaults.
+    mocker.patch("tools.news_tools.get_tool_config", return_value={
+        "enabled": True,
+        "settings": {"sources": [], "topics": []},
+    })
+    cfg = news_tools._effective_config()
+    assert cfg["sources"] == []
+    assert cfg["topics"] == []
+
+
+def test_effective_config_clamps_numbers(mocker):
+    mocker.patch("tools.news_tools.get_tool_config", return_value={
+        "enabled": True,
+        "settings": {"summary_chars": "99999", "max_news": -5},
     })
     cfg = news_tools._effective_config()
     assert cfg["summary_chars"] == 1000  # clamped to schema max
     assert cfg["max_news"] == 1          # clamped to schema min
-    assert cfg["sources"] == ["CNN Brasil", "CNN EUA", "Reuters",
-                              "BBC Brasil", "Gazeta do Povo", "Revista Oeste"]  # invalid filtered → defaults
 
 
 # ---------------------------------------------------------------------------
@@ -150,10 +206,59 @@ def test_parse_rss_invalid_xml_returns_empty():
 
 def test_matches_topic():
     item = {"title": "Nova startup de IA levanta US$ 100 milhões", "text_excerpt": ""}
-    assert news_tools._matches_topic(item, "Startups")
+    assert news_tools._matches_topic(item, "Startups")          # legacy string
+    assert news_tools._matches_topic(item, {"name": "Startups", "keywords": ["startup"]})  # dict entry
     assert not news_tools._matches_topic(item, "Política")
     custom = {"title": "Copa do mundo feminina", "text_excerpt": ""}
     assert news_tools._matches_topic(custom, "Copa do mundo feminina")  # custom topic fallback
+
+
+def test_coerce_source_merges_preset_fields():
+    entry = news_tools._coerce_source({"name": "bbc brasil"})  # case-insensitive name
+    assert entry == {"name": "BBC Brasil", "domain": "bbc.com",
+                     "feed": "https://feeds.bbci.co.uk/portuguese/rss.xml"}
+    # User-defined source: kept as-is, empty feed filled with ''.
+    custom = news_tools._coerce_source({"name": "Canaltech", "domain": "canaltech.com.br"})
+    assert custom == {"name": "Canaltech", "domain": "canaltech.com.br", "feed": ""}
+    # Legacy plain string resolves via presets; unknown names become bare entries.
+    assert news_tools._coerce_source("Reuters") == {"name": "Reuters", "domain": "reuters.com", "feed": ""}
+    assert news_tools._coerce_source("Portal X") == {"name": "Portal X", "domain": "", "feed": ""}
+    assert news_tools._coerce_source({}) is None
+    assert news_tools._coerce_source("") is None
+
+
+def test_coerce_topic_handles_strings_and_keywords():
+    entry = news_tools._coerce_topic({"name": "Hardware", "keywords": "gpu, processador"})
+    assert entry == {"name": "Hardware", "keywords": ["gpu", "processador"]}
+    empty = news_tools._coerce_topic({"name": "Custom"})
+    assert empty == {"name": "Custom", "keywords": ["custom"]}
+    preset = news_tools._coerce_topic("Tecnologia")
+    assert preset["keywords"] == news_tools._PRESET_TOPICS["Tecnologia"]
+
+
+def test_collect_candidates_uses_custom_source_domain(mocker):
+    # A user-added source (not in presets) must drive the Google News query.
+    http_get = mocker.patch("tools.news_tools._http_get", return_value=GOOGLE_NEWS_RSS.replace(
+        "Reuters cobre nova tecnologia de chips", "Canaltech cobre nova tecnologia de chips"))
+    selected, _, diagnostics = news_tools._collect_candidates(
+        sources=[{"name": "Canaltech", "domain": "canaltech.com.br", "feed": ""}],
+        topics=[{"name": "Tecnologia", "keywords": ["tecnologia"]}],
+        max_news=3,
+    )
+    url = http_get.call_args[0][0]
+    assert "news.google.com/rss/search" in url
+    assert "canaltech.com.br" in url
+    assert selected and selected[0]["source"] == "Canaltech"
+
+
+def test_collect_candidates_skips_source_without_domain_or_feed():
+    selected, _, diagnostics = news_tools._collect_candidates(
+        sources=[{"name": "Fonte Quebrada", "domain": "", "feed": ""}],
+        topics=[{"name": "Tecnologia", "keywords": ["tecnologia"]}],
+        max_news=3,
+    )
+    assert selected == []
+    assert any("Fonte Quebrada" in d and "configurado" in d for d in diagnostics)
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +358,15 @@ def client(mock_db_path):
 def test_update_and_get_tool_config_settings_roundtrip(client):
     from database import update_tool_config, get_tool_config
     update_tool_config("fetch_news", {
-        "config_data": {"sources": ["G1"], "topics": ["Esportes"], "max_news": 4, "summary_chars": 150}
+        "config_data": {
+            "sources": [{"name": "G1", "domain": "g1.globo.com", "feed": "https://g1.globo.com/rss/g1/"}],
+            "topics": [{"name": "Esportes", "keywords": ["futebol", "copa"]}],
+            "max_news": 4,
+            "summary_chars": 150,
+        }
     })
     cfg = get_tool_config("fetch_news")
-    assert cfg["settings"]["sources"] == ["G1"]
+    assert cfg["settings"]["sources"][0]["name"] == "G1"
     assert cfg["settings"]["max_news"] == 4
 
 
@@ -268,12 +378,22 @@ def test_get_tool_config_missing_row_returns_settings_key(client):
 
 
 def test_api_saves_tool_settings(client):
-    settings = {"sources": ["Reuters", "G1"], "topics": ["Economia"], "max_news": 8, "summary_chars": 400}
+    settings = NEW_FORMAT_SETTINGS
     resp = client.post("/api/settings/tools", json={"tool_name": "fetch_news", "settings": settings})
     assert resp.status_code == 200
 
     from database import get_tool_config
     assert get_tool_config("fetch_news")["settings"] == settings
+
+
+def test_api_saves_empty_dynamic_lists(client):
+    # Removing every source/topic on the card must persist as [] (not defaults).
+    settings = {"sources": [], "topics": [], "max_news": 5, "summary_chars": 300}
+    resp = client.post("/api/settings/tools", json={"tool_name": "fetch_news", "settings": settings})
+    assert resp.status_code == 200
+
+    from database import get_tool_config
+    assert get_tool_config("fetch_news")["settings"]["sources"] == []
 
 
 def test_api_rejects_non_dict_settings(client):
@@ -304,11 +424,46 @@ def test_tools_management_page_renders_news_card_and_schema(client):
     assert 'id="toolSettingsData"' in html
     # Schema is embedded as JSON (Flask's tojson escapes non-ASCII as \uXXXX).
     assert "summary_chars" in html
-    assert "multi_select" in html
+    assert "dynamic_list" in html
     assert "max_news" in html
+    assert "Adicionar fonte" in html
+    assert "Adicionar assunto" in html
 
 
 def test_google_news_rss_url_format():
     url = news_tools._google_news_rss_url("Tecnologia", "reuters.com")
     assert "news.google.com/rss/search" in url
     assert "Tecnologia+site%3Areuters.com" in url
+    # Domain is optional: custom sources without one fall back to a plain query.
+    plain = news_tools._google_news_rss_url("Hardware")
+    assert "site%3A" not in plain
+    assert "Hardware" in plain
+
+
+def test_fetch_news_end_to_end_with_custom_entries(mocker):
+    # Full pipeline with user-added (non-preset) sources and topics.
+    tech_rss = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Tecnoblog</title>
+<item>
+  <title>Tecnoblog lista as melhores GPUs para monitores 4K</title>
+  <link>https://tecnoblog.net/noticias/gpus/</link>
+  <pubDate>Sat, 10 Oct 2026 11:00:00 GMT</pubDate>
+  <description>Guia de placas de vídeo (gpu) e processadores para jogos em monitores 4K.</description>
+</item>
+</channel></rss>"""
+    mocker.patch("utils.security_utils.get_config", return_value="true")
+    mocker.patch("tools.news_tools.get_tool_config", return_value={
+        "enabled": True,
+        "settings": dict(NEW_FORMAT_SETTINGS),
+    })
+    mocker.patch("tools.news_tools._http_get", side_effect=lambda url: tech_rss if "tecnoblog" in url else "")
+    out = fetch_news(topics="Hardware")
+    # Config echo uses the custom entries.
+    assert "Canaltech" in out
+    assert "Tecnoblog" in out
+    assert "Hardware" in out
+    # Feed item matched the custom 'Hardware' keywords (gpu/processador).
+    assert "melhores GPUs" in out
+    # Custom summary limit echoed.
+    assert "summary_chars=400" in out
+    assert "max_news=4" in out

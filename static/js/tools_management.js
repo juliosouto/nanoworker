@@ -73,6 +73,54 @@ function parseToolSettingsData() {
     }
 }
 
+const INPUT_BASE_STYLE = 'background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text-main); padding: 6px 10px; border-radius: 6px; outline: none; box-sizing: border-box; font-size: 0.85rem;';
+
+function buildDynamicItemRow(field, item) {
+    if (typeof item === 'string') item = { name: item }; // legacy value shape
+    const row = document.createElement('div');
+    row.setAttribute('data-dynamic-row', '');
+    row.style.cssText = 'display: flex; gap: 6px; align-items: center;';
+    (field.item_fields || []).forEach(f => {
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.setAttribute('data-item-field', f.key);
+        inp.placeholder = f.placeholder || '';
+        if (f.list) inp.setAttribute('data-list-field', 'true');
+        const val = item ? item[f.key] : '';
+        inp.value = (f.list && Array.isArray(val)) ? val.join(', ') : (val || '');
+        inp.style.cssText = INPUT_BASE_STYLE + ` flex: 1 1 ${f.width || '33%'}; min-width: 0;`;
+        row.appendChild(inp);
+    });
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.textContent = '✕';
+    rm.title = 'Remover';
+    rm.style.cssText = 'background: rgba(239,68,68,0.15); border: none; color: #ef4444; cursor: pointer; border-radius: 6px; width: 28px; height: 28px; flex-shrink: 0; font-size: 0.8rem;';
+    rm.onclick = () => row.remove();
+    row.appendChild(rm);
+    return row;
+}
+
+function renderDynamicList(field, current, wrap) {
+    const listWrap = document.createElement('div');
+    listWrap.setAttribute('data-dynamic-list', field.key);
+    listWrap.style.cssText = 'display: flex; flex-direction: column; gap: 6px; max-height: 230px; overflow-y: auto; padding-right: 4px;';
+    (Array.isArray(current) ? current : []).forEach(item => {
+        listWrap.appendChild(buildDynamicItemRow(field, item));
+    });
+    wrap.appendChild(listWrap);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.textContent = field.add_label || ('+ Adicionar ' + (field.label || field.key));
+    addBtn.style.cssText = 'margin-top: 8px; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.4); color: #93c5fd; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; align-self: flex-start;';
+    addBtn.onclick = () => {
+        listWrap.appendChild(buildDynamicItemRow(field, null));
+        listWrap.scrollTop = listWrap.scrollHeight;
+    };
+    wrap.appendChild(addBtn);
+}
+
 function renderCustomSettings(schema, values) {
     const container = document.getElementById('modalCustomSettings');
     const modalBox = document.querySelector('#toolSettingsModal > div');
@@ -81,6 +129,13 @@ function renderCustomSettings(schema, values) {
 
     if (modalBox) modalBox.style.maxWidth = '400px';
     if (!schema || !schema.length) return;
+
+    // Dynamic add/remove lists need more horizontal room for their rows.
+    if (modalBox && schema.some(f => f.type === 'dynamic_list')) {
+        modalBox.style.maxWidth = '580px';
+        modalBox.style.maxHeight = '90vh';
+        modalBox.style.overflowY = 'auto';
+    }
 
     (schema || []).forEach(field => {
         const wrap = document.createElement('div');
@@ -95,7 +150,9 @@ function renderCustomSettings(schema, values) {
             ? values[field.key]
             : field.default;
 
-        if (field.type === 'multi_select') {
+        if (field.type === 'dynamic_list') {
+            renderDynamicList(field, current, wrap);
+        } else if (field.type === 'multi_select') {
             const list = document.createElement('div');
             list.style.cssText = 'max-height: 150px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px;';
             (field.options || []).forEach(opt => {
@@ -134,14 +191,39 @@ function renderCustomSettings(schema, values) {
 
         container.appendChild(wrap);
     });
-
-    if (modalBox) modalBox.style.maxWidth = '480px';
 }
 
 function collectCustomSettings() {
     const settings = {};
+
+    // Dynamic lists: rows of named sub-fields (added/removed from the card).
+    document.querySelectorAll('#modalCustomSettings [data-dynamic-list]').forEach(listWrap => {
+        const key = listWrap.getAttribute('data-dynamic-list');
+        const items = [];
+        listWrap.querySelectorAll('[data-dynamic-row]').forEach(row => {
+            const obj = {};
+            let hasName = false;
+            row.querySelectorAll('[data-item-field]').forEach(inp => {
+                const fk = inp.getAttribute('data-item-field');
+                const raw = (inp.value || '').trim();
+                if (inp.getAttribute('data-list-field') === 'true') {
+                    obj[fk] = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+                } else {
+                    obj[fk] = raw;
+                }
+                if (fk === 'name' && raw) hasName = true;
+            });
+            if (hasName) items.push(obj);
+        });
+        // An explicit empty array is preserved so removals persist.
+        settings[key] = items;
+    });
+
+    // Scalar fields (number/text/multi_select). Rows without a name are
+    // dropped above; dynamic-list inputs carry no data-setting-key.
     const keys = new Set();
     document.querySelectorAll('#modalCustomSettings [data-setting-key]').forEach(el => {
+        if (el.closest('[data-dynamic-list]')) return;
         keys.add(el.getAttribute('data-setting-key'));
     });
     keys.forEach(key => {
