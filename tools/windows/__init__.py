@@ -4,6 +4,7 @@ from .browser import (
     browser_extract,
     browser_fill,
     browser_navigate,
+    browser_navigate_mobile,
     browser_run_js,
     browser_snapshot,
 )

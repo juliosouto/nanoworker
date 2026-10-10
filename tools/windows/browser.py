@@ -26,6 +26,27 @@ def browser_navigate(url: str) -> str:
     return bm.navigate(url)
 
 @require_permission('PERM_PLAYWRIGHT')
+def browser_navigate_mobile(url: str, device_name: str = "iPhone 13") -> str:
+    """
+    Navigates to a URL emulating a MOBILE device (smartphone), using the built-in headless browser.
+    Use this tool whenever the user wants to browse a website as it appears on a cell phone / mobile
+    device (mobile layout, touch viewport, mobile user-agent). Ideal to check how a site renders on
+    phones or to reach mobile-only versions of pages.
+    After navigating, use browser_snapshot, browser_click, browser_fill, browser_scroll and
+    browser_screenshot — they all operate on the current (mobile) page.
+
+    Args:
+        url: The full URL to navigate to (e.g. 'https://example.com').
+        device_name: The mobile device to emulate. One of: 'iPhone 13', 'iPhone 15 Pro',
+            'Pixel 7', 'Galaxy S24'. Defaults to 'iPhone 13'.
+
+    Returns:
+        str: A success message including the emulated device and viewport, or an error message.
+    """
+    bm = get_browser_manager()
+    return bm.navigate_mobile(url, device_name=device_name)
+
+@require_permission('PERM_PLAYWRIGHT')
 def browser_snapshot(interactive_only: bool = True) -> str:
     """
     Returns an LLM-friendly DOM representation of the current page.

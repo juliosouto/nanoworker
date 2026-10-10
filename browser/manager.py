@@ -130,6 +130,74 @@ def _harden_context(context):
         except Exception as e:
             logger.warning(f"Failed to install consent sweep script: {e}")
 
+# Curated mobile (smartphone) device presets used by the mobile-browsing tools.
+# These mirror Playwright's own device descriptors but are kept in-repo so the
+# feature is deterministic and testable without reaching into the live device
+# catalog at runtime (which may differ across Playwright versions). Any name not
+# present here is still resolved against the live catalog by
+# _resolve_mobile_device() as a best-effort fallback.
+_MOBILE_DEVICES = {
+    "iPhone 13": {
+        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Mobile/15E148 Safari/604.1",
+        "viewport": {"width": 390, "height": 664},
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "iPhone 15 Pro": {
+        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Mobile/15E148 Safari/604.1",
+        "viewport": {"width": 393, "height": 659},
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "Pixel 7": {
+        "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Mobile Safari/537.36",
+        "viewport": {"width": 412, "height": 839},
+        "device_scale_factor": 2.625,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "Galaxy S24": {
+        "user_agent": "Mozilla/5.0 (Linux; Android 14; SM-S921U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Mobile Safari/537.36",
+        "viewport": {"width": 360, "height": 780},
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+}
+
+
+def _resolve_mobile_device(device_name: str):
+    """Resolve a mobile device name to a Playwright context-options dict.
+
+    Looks up the curated presets first, then falls back to the live Playwright
+    device catalog. Returns a dict with snake_case keys ready to be splatted
+    into ``browser.new_context(**options)`` or ``None`` when the device is
+    unknown.
+    """
+    preset = _MOBILE_DEVICES.get(device_name)
+    if preset is not None:
+        return dict(preset)
+
+    # Best-effort fallback to the live catalog for any other device name.
+    try:
+        live = getattr(GlobalBrowser.get_instance().playwright, "devices", None)
+        candidate = live.get(device_name) if isinstance(live, dict) else None
+        if isinstance(candidate, dict) and candidate.get("user_agent"):
+            return {
+                "user_agent": candidate.get("user_agent"),
+                "viewport": candidate.get("viewport"),
+                "device_scale_factor": candidate.get("device_scale_factor", 2),
+                "is_mobile": candidate.get("is_mobile", True),
+                "has_touch": candidate.get("has_touch", True),
+            }
+    except Exception:
+        pass
+
+    return None
+
+
 class GlobalBrowser:
     """Singleton for the Playwright Chromium instance, running in a dedicated thread"""
     _instance = None
@@ -276,6 +344,74 @@ class BrowserManager:
             except Exception as e:
                 return f"Error navigating to {url}: {e}"
         return GlobalBrowser.get_instance().submit_task(_task).result()
+
+    def navigate_mobile(self, url, device_name="iPhone 13"):
+        """Navega até uma URL emulando um dispositivo móvel (smartphone).
+
+        Recria o contexto/página com viewport, user-agent, touch e device-scale
+        de um celular antes de navegar. Faz o replay das proteções de CMP/ads
+        (_harden_context) e do consent sweep, igual ao fluxo de navegação normal.
+
+        Este método NÃO reutiliza start_browser() porque roda dentro da própria
+        thread dedicada do Playwright (não é seguro re-submeter uma task a partir
+        de uma task), mesmo padrão usado por record_navigation().
+        """
+        self.update_activity()
+        global_browser = GlobalBrowser.get_instance()
+
+        def _task():
+            device_options = _resolve_mobile_device(device_name)
+            if not device_options:
+                available = ", ".join(sorted(_MOBILE_DEVICES.keys()))
+                return (
+                    f"Error: unknown mobile device '{device_name}'. "
+                    f"Available devices: {available}."
+                )
+
+            # Fecha qualquer contexto/página anterior antes de reconfigurar.
+            if self.context:
+                try:
+                    if self.page:
+                        self.page.close()
+                    self.context.close()
+                except Exception:
+                    pass
+
+            context_options = dict(device_options)
+            # Respeita o proxy global, se habilitado.
+            try:
+                from utils.proxy_manager import get_playwright_proxy_config
+                proxy_config = get_playwright_proxy_config()
+                if proxy_config:
+                    context_options["proxy"] = proxy_config
+            except Exception:
+                pass
+
+            try:
+                self.context = global_browser.new_context(**context_options)
+                self.page = self.context.new_page()
+                # Reaplica o bloqueio de cookie banners/ads no novo contexto.
+                _harden_context(self.context)
+
+                self.page.goto(url, wait_until="domcontentloaded", timeout=10000)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                try:
+                    self.page.evaluate("window.__nwSweepConsent && window.__nwSweepConsent()")
+                except Exception:
+                    pass
+                vw = device_options.get("viewport", {}).get("width")
+                vh = device_options.get("viewport", {}).get("height")
+                return (
+                    f"Navigated to {url} in mobile mode "
+                    f"(device: {device_name}, viewport: {vw}x{vh})."
+                )
+            except Exception as e:
+                return f"Error navigating to {url} in mobile mode: {e}"
+
+        return global_browser.submit_task(_task).result()
 
     def get_snapshot(self, interactive_only=True):
         self.update_activity()
