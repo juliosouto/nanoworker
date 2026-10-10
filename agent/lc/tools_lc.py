@@ -26,7 +26,7 @@ import inspect
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, get_args, get_origin
 
 from google.genai import types
 from langchain_core.tools import StructuredTool
@@ -54,8 +54,12 @@ _PYDANTIC_TYPE_MAP = {
     "integer": int,
     "number": float,
     "boolean": bool,
-    "array": list,
-    "object": dict,
+    # Parameterized generics, NOT bare list/dict: langchain-google-genai emits
+    # ARRAY-without-items / OBJECT-without-properties for bare types, which the
+    # Gemini API rejects with 400 INVALID_ARGUMENT ("items/properties: missing
+    # field").
+    "array": List[str],
+    "object": Dict[str, str],
 }
 
 
@@ -106,6 +110,21 @@ def tool_param_schema(func: Callable) -> Dict[str, Any]:
 
         prop: Dict[str, Any] = {"type": json_type, "description": param_desc}
 
+        # Gemini API hard requirements for function declarations (otherwise the
+        # request 400s with INVALID_ARGUMENT "...items/properties: missing
+        # field"): ARRAY properties MUST carry `items` and OBJECT properties
+        # MUST carry `properties`. Fill conservative placeholders — inferred
+        # inner type for arrays when annotated (e.g. ``list[str]``), string
+        # otherwise; empty properties for objects. The python tool still
+        # receives the real JSON values the model sends.
+        if json_type == "array":
+            inner = "string"
+            if get_origin(py_type) is not None and get_args(py_type):
+                inner = _TYPE_MAP.get(get_args(py_type)[0], "string")
+            prop["items"] = {"type": inner}
+        elif json_type == "object":
+            prop["properties"] = {}
+
         one_of = re.search(r"Must be one of[:\s]*([^.]+)", param_desc)
         if one_of:
             choices = [
@@ -123,8 +142,16 @@ def tool_param_schema(func: Callable) -> Dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required}
 
 
-def _build_args_schema(func: Callable) -> Any:
-    """Pydantic args_schema built manually (deterministic, no docstring parser)."""
+def _build_args_schema(func: Callable, gemini_safe: bool = False) -> Any:
+    """Pydantic args_schema built manually (deterministic, no docstring parser).
+
+    ``gemini_safe=True`` (LangChain stack + Gemini provider only): dict params
+    are declared as ``str`` — langchain-google-genai emits OBJECT-without-
+    properties for ANY dict field, which the Gemini API rejects with 400
+    INVALID_ARGUMENT ("properties: missing field"). The description tells the
+    model to send a JSON object encoded as a string; the tool functions accept
+    both shapes.
+    """
     try:
         from pydantic import create_model, Field
     except ImportError:  # pragma: no cover - pydantic is a langchain hard dep
@@ -136,10 +163,14 @@ def _build_args_schema(func: Callable) -> Any:
     for pname, pdef in schema["properties"].items():
         param = sig.parameters.get(pname)
         field_type = _PYDANTIC_TYPE_MAP.get(pdef["type"], str)
+        description = pdef.get("description", "")
+        if gemini_safe and pdef["type"] == "object":
+            field_type = str
+            description = f"{description} (JSON object encoded as a string)".strip()
         if param is not None and param.default is not inspect.Parameter.empty:
-            fields[pname] = (field_type, Field(default=param.default, description=pdef.get("description", "")))
+            fields[pname] = (field_type, Field(default=param.default, description=description))
         else:
-            fields[pname] = (field_type, Field(description=pdef.get("description", "")))
+            fields[pname] = (field_type, Field(description=description))
     return create_model(f"{func.__name__}Args", **fields)
 
 
@@ -174,14 +205,16 @@ def cap_tools(funcs: List[Callable]) -> List[Callable]:
     ]
 
 
-def lc_tool(func: Callable) -> StructuredTool:
+def lc_tool(func: Callable, gemini_safe: bool = False) -> StructuredTool:
     """Build a ``StructuredTool`` for a single Python tool.
 
     Description = first line of the docstring (slim schema). The args schema is
     built from the signature + the same parameter-description heuristics used by
     the legacy OpenAI converter, so enums and per-param hints stay intact.
+    ``gemini_safe`` rewrites dict params to JSON strings (see
+    ``_build_args_schema``).
     """
-    args_schema = _build_args_schema(func)
+    args_schema = _build_args_schema(func, gemini_safe=gemini_safe)
     return StructuredTool.from_function(
         func=func,
         name=func.__name__,
@@ -190,7 +223,9 @@ def lc_tool(func: Callable) -> StructuredTool:
     )
 
 
-def build_lc_tools(funcs: List[Callable]) -> List[StructuredTool]:
+def build_lc_tools(
+    funcs: List[Callable], gemini_safe: bool = False
+) -> List[StructuredTool]:
     """Convert a list of Python tool functions into ``StructuredTool`` objects.
 
     A single tool whose schema cannot be built (e.g. a user-authored tool from
@@ -201,7 +236,7 @@ def build_lc_tools(funcs: List[Callable]) -> List[StructuredTool]:
     tools: List[StructuredTool] = []
     for f in funcs:
         try:
-            tools.append(lc_tool(f))
+            tools.append(lc_tool(f, gemini_safe=gemini_safe))
         except Exception as conv_err:
             logger.warning(
                 "Skipping tool '%s': LangChain schema build failed (%s)",

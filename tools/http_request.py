@@ -70,6 +70,14 @@ def http_request(url: str, method: str = "GET", headers: dict = None, body: str 
 
         timeout_seconds = min(max(int(timeout_seconds or 30), 1), 120)
 
+        # The headers param may arrive as a JSON string when the provider
+        # declares it as a string (Gemini-safe schemas) — accept both shapes.
+        if isinstance(headers, str):
+            try:
+                headers = json.loads(headers) if headers.strip() else {}
+            except (ValueError, TypeError):
+                return "Error: 'headers' must be a JSON object (e.g. {\"Authorization\": \"Bearer ...\"}) or omitted."
+
         kwargs = {"timeout": timeout_seconds, "impersonate": "chrome"}
         if headers:
             kwargs["headers"] = headers

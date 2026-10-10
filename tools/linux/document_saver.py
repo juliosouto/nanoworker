@@ -18,6 +18,19 @@ def save_extracted_document(category: str, extracted_data: dict, additional_meta
     Returns:
         str: A success message indicating the saved file name and hash, or an error message.
     """
+    # Dict params may arrive as a JSON string when the provider declares them
+    # as strings (Gemini-safe schemas) — accept both shapes.
+    if isinstance(extracted_data, str):
+        try:
+            extracted_data = json.loads(extracted_data or "{}")
+        except (ValueError, TypeError):
+            return "Error: 'extracted_data' must be a JSON object (e.g. {\"key\": \"value\"})."
+    if isinstance(additional_metadata, str):
+        try:
+            additional_metadata = json.loads(additional_metadata or "{}")
+        except (ValueError, TypeError):
+            return "Error: 'additional_metadata' must be a JSON object (e.g. {\"key\": \"value\"})."
+
     file_content = None
 
     if file_path and os.path.exists(file_path):

@@ -396,12 +396,12 @@ def _flaky_schema_builder(real_fn, broken_name):
     """Wraps a schema-building fn so one named tool raises (simulating a
     user-authored tool whose docstring breaks the schema builder)."""
 
-    def wrapper(func):
+    def wrapper(func, *args, **kwargs):
         if func.__name__ == broken_name:
             raise ValueError(
                 "Arg Returns in docstring not found in function signature"
             )
-        return real_fn(func)
+        return real_fn(func, *args, **kwargs)
 
     return wrapper
 

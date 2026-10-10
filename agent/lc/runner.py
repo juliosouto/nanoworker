@@ -315,7 +315,11 @@ def run_langchain_llm(
         **_build_structured_kwargs(config_kwargs, has_tools),
     )
 
-    lc_tools = build_lc_tools(tool_funcs) if has_tools else []
+    lc_tools = (
+        build_lc_tools(tool_funcs, gemini_safe=(provider == "gemini"))
+        if has_tools
+        else []
+    )
 
     # Agent prompt (tool-calling path) includes the agent_scratchpad placeholder.
     agent_prompt = ChatPromptTemplate.from_messages(
