@@ -49,10 +49,13 @@ def extract_and_generate_audio(message: str) -> tuple[str, str | None]:
             text_without_audio = message.replace(match.group(0), '').strip()
             
             audio_path = generate_audio(audio_text)
+            if not audio_path:
+                logger.error("generate_audio returned empty path")
+                return text_without_audio, None
             return text_without_audio, audio_path
             
     except Exception as e:
-        logger.error(f"Failed to extract and generate audio: {e}")
+        logger.exception(f"Failed to extract and generate audio: {e}")
         
     return message.strip(), None
 
@@ -341,7 +344,7 @@ def generate_audio(text: str, voice: str = "af_heart") -> str:
             
         return os.path.abspath(temp_ogg)
     except Exception as e:
-        logger.error(f"Error generating audio: {e}")
+        logger.exception(f"Error generating audio: {e}")
         return ""
 
 def get_whisper_model():
