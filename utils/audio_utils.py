@@ -172,6 +172,74 @@ def get_xtts_synthesizer():
     return _xtts_synthesizer
 
 
+def _normalize_text_for_tts(text: str, lang: str = "pt-br") -> str:
+    """
+    Normalizes text for TTS synthesis: expands common abbreviations, currencies,
+    and cleans punctuation to ensure natural prosody and rhythm.
+    """
+    import re
+    if not text:
+        return text
+
+    # Basic cleanup
+    t = text.strip()
+
+    if lang == "pt-br":
+        # Currency: R$ 50 ou R$50 -> 50 reais, R$ 50,20 -> 50 reais e 20 centavos
+        def _replace_brl(m):
+            inteiro = m.group(1).replace(".", "")
+            centavos = m.group(2)
+            if centavos and int(centavos) > 0:
+                return f"{inteiro} reais e {centavos} centavos"
+            return f"{inteiro} reais"
+        t = re.sub(r'R\$\s*(\d+(?:\.\d+)?)(?:,(\d{1,2}))?', _replace_brl, t)
+
+        # Percentual
+        t = re.sub(r'(\d+)%', r'\1 por cento', t)
+
+        # Common abbreviations
+        abbrevs = {
+            r'\bvc\b': 'você',
+            r'\bvcs\b': 'vocês',
+            r'\btbm\b': 'também',
+            r'\btb\b': 'também',
+            r'\bpq\b': 'porque',
+            r'\bobg\b': 'obrigado',
+            r'\bblz\b': 'beleza',
+            r'\bpfv\b': 'por favor',
+            r'\bmsg\b': 'mensagem',
+            r'\bmsgs\b': 'mensagens',
+            r'\bwhats\b': 'WhatsApp',
+            r'\bzap\b': 'WhatsApp',
+            r'\bapp\b': 'aplicativo',
+            r'\bDr\.\b': 'Doutor',
+            r'\bSr\.\b': 'Senhor',
+            r'\bSra\.\b': 'Senhora',
+        }
+        for pat, repl in abbrevs.items():
+            t = re.sub(pat, repl, t, flags=re.IGNORECASE)
+
+    elif lang == "en-us":
+        t = re.sub(r'\$(\d+)(?:\.(\d{2}))?', lambda m: f"{m.group(1)} dollars" + (f" and {m.group(2)} cents" if m.group(2) else ""), t)
+        t = re.sub(r'(\d+)%', r'\1 percent', t)
+
+    # Normalize multiple whitespaces and excessive punctuation
+    t = re.sub(r'[!]{2,}', '!', t)
+    t = re.sub(r'[\?]{2,}', '?', t)
+    t = re.sub(r'\.{4,}', '...', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def _split_into_sentences(text: str) -> list[str]:
+    """Splits text into cohesive sentences for natural pause generation."""
+    import re
+    # Split on sentence ending punctuations followed by space or end
+    sentences = re.split(r'(?<=[.!?…])\s+', text)
+    cleaned = [s.strip() for s in sentences if s.strip()]
+    return cleaned if cleaned else [text]
+
+
 def _generate_audio_kokoro(text: str, voice: str = "af_heart", quality: str = "fast") -> str:
     model = get_kokoro_model()
     
@@ -210,43 +278,68 @@ def _generate_audio_kokoro(text: str, voice: str = "af_heart", quality: str = "f
         'hi': 'hf_alpha'
     }
 
-    # Higher fidelity / cleaner voices for Medium preset
+    # Higher fidelity / cleaner voices for Medium and High presets (strictly male)
     default_voices_medium = {
-        'pt-br': 'pf_dora',
-        'en-us': 'af_heart',
-        'es': 'ef_dora',
-        'fr-fr': 'ff_siwis',
-        'ja': 'jf_alpha',
-        'ko': 'kf_alpha',
-        'cmn': 'zf_xiaoxiao',
-        'it': 'if_sara',
-        'hi': 'hf_alpha'
+        'pt-br': 'pm_alex',
+        'en-us': 'am_michael',
+        'es': 'em_alex',
+        'fr-fr': 'fm_bernard',
+        'ja': 'jm_kumo',
+        'ko': 'km_kumo',
+        'cmn': 'zm_yunjian',
+        'it': 'im_nicola',
+        'hi': 'hm_omega'
     }
     
-    default_voices = default_voices_medium if quality == "medium" else default_voices_fast
+    default_voices = default_voices_medium if quality in ("medium", "high") else default_voices_fast
 
     # Only override the voice if it is the default "af_heart"
     selected_voice = voice
     if voice == "af_heart" and kokoro_lang in default_voices:
         selected_voice = default_voices[kokoro_lang]
     
-    # In medium quality mode, if voice is a string and model supports voice vectors (get_voice_style),
-    # blend with a secondary voice to soften harsh sibilance/robotic artifacts if possible
-    if quality == "medium" and hasattr(model, 'get_voice_style') and isinstance(selected_voice, str):
+    # In medium and high modes, blend male voices to smooth harmonics and reduce robotic artifacts
+    if quality in ("medium", "high") and hasattr(model, 'get_voice_style') and isinstance(selected_voice, str):
         try:
-            if kokoro_lang == 'pt-br' and selected_voice == 'pf_dora':
-                v1 = model.get_voice_style('pf_dora')
-                v2 = model.get_voice_style('pm_alex')
-                selected_voice = (v1 * 0.7) + (v2 * 0.3)
-            elif kokoro_lang == 'en-us' and selected_voice == 'af_heart':
-                v1 = model.get_voice_style('af_heart')
-                v2 = model.get_voice_style('af_bella')
+            if kokoro_lang == 'pt-br' and selected_voice == 'pm_alex':
+                v1 = model.get_voice_style('pm_alex')
+                v2 = model.get_voice_style('pm_santa')
+                # 80/20 blend provides warmer harmonics with optimal clarity
+                selected_voice = (v1 * 0.8) + (v2 * 0.2)
+            elif kokoro_lang == 'en-us' and selected_voice in ('am_michael', 'am_echo'):
+                v1 = model.get_voice_style('am_michael')
+                v2 = model.get_voice_style('am_adam')
                 selected_voice = (v1 * 0.6) + (v2 * 0.4)
         except Exception as e:
             logger.debug(f"Voice style blending fallback: {e}")
 
     logger.info(f"Synthesizing Kokoro audio ({quality}): {text[:50]}... (Lang: {kokoro_lang}, Voice: {selected_voice if isinstance(selected_voice, str) else 'blended'})")
-    samples, sample_rate = model.create(text, voice=selected_voice, speed=1.0, lang=kokoro_lang)
+
+    if quality == "high":
+        # High quality: normalized text + sentence-by-sentence synthesis with natural pauses
+        normalized_text = _normalize_text_for_tts(text, lang=kokoro_lang)
+        sentences = _split_into_sentences(normalized_text)
+        
+        all_samples = []
+        sample_rate = 24000
+        # 120ms pause between sentences for breathing rhythm
+        pause_samples = np.zeros(int(sample_rate * 0.12), dtype=np.float32)
+
+        for idx, sent in enumerate(sentences):
+            if not sent.strip():
+                continue
+            s_samples, sr = model.create(sent, voice=selected_voice, speed=1.0, lang=kokoro_lang)
+            sample_rate = sr
+            all_samples.append(np.array(s_samples, dtype=np.float32))
+            if idx < len(sentences) - 1:
+                all_samples.append(pause_samples)
+
+        if all_samples:
+            samples = np.concatenate(all_samples)
+        else:
+            samples, sample_rate = model.create(text, voice=selected_voice, speed=1.0, lang=kokoro_lang)
+    else:
+        samples, sample_rate = model.create(text, voice=selected_voice, speed=1.0, lang=kokoro_lang)
     
     temp_wav = get_temp_file_path(".wav")
     sf.write(temp_wav, samples, sample_rate)
@@ -382,19 +475,32 @@ def generate_audio(text: str, voice: str = "af_heart") -> str:
         tts_engine = "kokoro"
 
     try:
+        is_high_quality = tts_engine in ("kokoro-high", "high")
         if tts_engine in ("xtts", "xtts-v2", "coqui-xtts-v2", "coqui"):
             temp_wav = _generate_audio_xtts(text)
         elif tts_engine in ("kokoro-medium", "medium"):
             temp_wav = _generate_audio_kokoro(text, voice=voice, quality="medium")
+        elif is_high_quality:
+            temp_wav = _generate_audio_kokoro(text, voice=voice, quality="high")
         else:
             temp_wav = _generate_audio_kokoro(text, voice=voice, quality="fast")
             
         # Convert to ogg for WhatsApp using ffmpeg
         temp_ogg = get_temp_file_path("audio.ogg")
-        subprocess.run([
-            "ffmpeg", "-y", "-i", temp_wav,
-            "-c:a", "libopus", "-b:a", "64k", "-strict", "-2", temp_ogg
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Audio filter: for high quality, apply de-esser lowpass + vocal loudness normalization
+        if is_high_quality:
+            ffmpeg_cmd = [
+                "ffmpeg", "-y", "-i", temp_wav,
+                "-af", "lowpass=f=9500,highpass=f=75,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-c:a", "libopus", "-b:a", "96k", "-strict", "-2", temp_ogg
+            ]
+        else:
+            ffmpeg_cmd = [
+                "ffmpeg", "-y", "-i", temp_wav,
+                "-c:a", "libopus", "-b:a", "64k", "-strict", "-2", temp_ogg
+            ]
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
         # Clean up wav
         try:
