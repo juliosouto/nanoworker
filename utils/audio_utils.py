@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import uuid
 
+import numpy as np
 import requests
 import soundfile as sf
 from kokoro_onnx import Kokoro
