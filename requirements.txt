@@ -13,7 +13,15 @@ faster-whisper
 # with "TypeError: open() got an unexpected keyword argument 'metadata_errors'".
 av>=11.0.0
 kokoro-onnx
-TTS
+# NOTE: The original `TTS` (Coqui) package is unmaintained and requires
+# Python <3.12, which breaks the build on python:3.13-bookworm with
+# "No matching distribution found for TTS". `coqui-tts` is the actively
+# maintained Idiap fork; it keeps the same `TTS` import namespace and
+# supports Python 3.10-3.14, so no code changes are needed.
+coqui-tts
+# coqui-tts (XTTS) imports transformers.pytorch_utils.isin_mps_friendly,
+# which was removed in transformers 5.x.
+transformers>=4.57,<5
 soundfile
 cryptography
 openai

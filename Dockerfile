@@ -16,6 +16,14 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements and install python dependencies
 COPY requirements.txt .
+# Pre-install CPU-only torch/torchaudio/torchcodec: coqui-tts' XTTS model
+# imports torchaudio, and since torch 2.9 its package __init__ also requires
+# torchcodec for audio IO (otherwise even `import TTS` fails). The default
+# PyPI wheels bundle CUDA (~2GB+); the VPS has no GPU, so the smaller CPU
+# wheels from the official PyTorch index are enough, version-matched among
+# themselves, and keep the image/build much lighter. pip skips torch again
+# during the requirements install since it will already be satisfied.
+RUN pip install --no-cache-dir torch torchaudio torchcodec --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-cache the tiktoken BPE encoding so real token counting also works
