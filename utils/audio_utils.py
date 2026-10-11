@@ -172,7 +172,7 @@ def get_xtts_synthesizer():
     return _xtts_synthesizer
 
 
-def _generate_audio_kokoro(text: str, voice: str = "af_heart") -> str:
+def _generate_audio_kokoro(text: str, voice: str = "af_heart", quality: str = "fast") -> str:
     model = get_kokoro_model()
     
     # Detect language dynamically
@@ -198,7 +198,7 @@ def _generate_audio_kokoro(text: str, voice: str = "af_heart") -> str:
     kokoro_lang = lang_mapping.get(detected_lang, 'en-us')
     
     # Map languages to best default voices
-    default_voices = {
+    default_voices_fast = {
         'pt-br': 'pm_alex',
         'en-us': 'am_echo',
         'es': 'ef_dora',
@@ -209,13 +209,44 @@ def _generate_audio_kokoro(text: str, voice: str = "af_heart") -> str:
         'it': 'if_sara',
         'hi': 'hf_alpha'
     }
+
+    # Higher fidelity / cleaner voices for Medium preset
+    default_voices_medium = {
+        'pt-br': 'pf_dora',
+        'en-us': 'af_heart',
+        'es': 'ef_dora',
+        'fr-fr': 'ff_siwis',
+        'ja': 'jf_alpha',
+        'ko': 'kf_alpha',
+        'cmn': 'zf_xiaoxiao',
+        'it': 'if_sara',
+        'hi': 'hf_alpha'
+    }
     
+    default_voices = default_voices_medium if quality == "medium" else default_voices_fast
+
     # Only override the voice if it is the default "af_heart"
+    selected_voice = voice
     if voice == "af_heart" and kokoro_lang in default_voices:
-        voice = default_voices[kokoro_lang]
+        selected_voice = default_voices[kokoro_lang]
     
-    logger.info(f"Synthesizing Kokoro audio: {text[:50]}... (Lang: {kokoro_lang}, Voice: {voice})")
-    samples, sample_rate = model.create(text, voice=voice, speed=1.0, lang=kokoro_lang)
+    # In medium quality mode, if voice is a string and model supports voice vectors (get_voice_style),
+    # blend with a secondary voice to soften harsh sibilance/robotic artifacts if possible
+    if quality == "medium" and hasattr(model, 'get_voice_style') and isinstance(selected_voice, str):
+        try:
+            if kokoro_lang == 'pt-br' and selected_voice == 'pf_dora':
+                v1 = model.get_voice_style('pf_dora')
+                v2 = model.get_voice_style('pm_alex')
+                selected_voice = (v1 * 0.7) + (v2 * 0.3)
+            elif kokoro_lang == 'en-us' and selected_voice == 'af_heart':
+                v1 = model.get_voice_style('af_heart')
+                v2 = model.get_voice_style('af_bella')
+                selected_voice = (v1 * 0.6) + (v2 * 0.4)
+        except Exception as e:
+            logger.debug(f"Voice style blending fallback: {e}")
+
+    logger.info(f"Synthesizing Kokoro audio ({quality}): {text[:50]}... (Lang: {kokoro_lang}, Voice: {selected_voice if isinstance(selected_voice, str) else 'blended'})")
+    samples, sample_rate = model.create(text, voice=selected_voice, speed=1.0, lang=kokoro_lang)
     
     temp_wav = get_temp_file_path(".wav")
     sf.write(temp_wav, samples, sample_rate)
@@ -353,8 +384,10 @@ def generate_audio(text: str, voice: str = "af_heart") -> str:
     try:
         if tts_engine in ("xtts", "xtts-v2", "coqui-xtts-v2", "coqui"):
             temp_wav = _generate_audio_xtts(text)
+        elif tts_engine in ("kokoro-medium", "medium"):
+            temp_wav = _generate_audio_kokoro(text, voice=voice, quality="medium")
         else:
-            temp_wav = _generate_audio_kokoro(text, voice=voice)
+            temp_wav = _generate_audio_kokoro(text, voice=voice, quality="fast")
             
         # Convert to ogg for WhatsApp using ffmpeg
         temp_ogg = get_temp_file_path("audio.ogg")

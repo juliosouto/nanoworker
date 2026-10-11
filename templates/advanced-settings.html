@@ -82,6 +82,7 @@
                     <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">TTS Engine</label>
                     <select id="ttsModelSelect" style="width: 100%; padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); font-size: 0.95rem; outline: none; cursor: pointer; transition: all 0.2s ease;">
                         <option value="kokoro" style="background: #1e1e2e; color: white;" {% if tts_model == 'kokoro' %}selected{% endif %}>Kokoro ONNX (Default, Fast)</option>
+                        <option value="kokoro-medium" style="background: #1e1e2e; color: white;" {% if tts_model == 'kokoro-medium' %}selected{% endif %}>Kokoro ONNX (Medium)</option>
                         <option value="xtts-v2" style="background: #1e1e2e; color: white;" {% if tts_model == 'xtts-v2' %}selected{% endif %}>Coqui XTTS-v2 (High Quality)</option>
                     </select>
                 </div>

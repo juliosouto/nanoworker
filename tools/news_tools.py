@@ -250,9 +250,10 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
         source_name = source.get("name") or "News"
         domain = source.get("domain") or ""
 
+        clean_domain = re.sub(r"^https?://", "", domain).split("/")[0].strip()
         for topic in topics:
             topic_name = topic.get("name") if isinstance(topic, dict) else str(topic)
-            query = f"{topic_name} site:{domain}" if domain else f"{topic_name} {source_name}"
+            query = f"{topic_name} site:{clean_domain}" if clean_domain else f"{topic_name} {source_name}"
             
             # 1. Try DuckDuckGo News search first
             try:
@@ -353,12 +354,17 @@ def _summarize_article_with_llm(title: str, text: str, source: str, target_chars
 
         model = lc_settings.summarizer_model()
         if not model:
-            # Check default model in database
+            # Check default worker or enabled model in database
             conn = get_db()
             c = conn.cursor()
-            c.execute("SELECT model_name FROM llm_config WHERE text_output = 1 ORDER BY priority ASC LIMIT 1")
+            c.execute("SELECT worker_model FROM workers_config WHERE is_default = 1 LIMIT 1")
             row = c.fetchone()
-            model = row["model_name"] if row else None
+            if row and row["worker_model"]:
+                model = row["worker_model"]
+            else:
+                c.execute("SELECT model_name FROM llm_config WHERE text_output = 1 AND enabled = 1 LIMIT 1")
+                row = c.fetchone()
+                model = row["model_name"] if row else None
             conn.close()
 
         if model:

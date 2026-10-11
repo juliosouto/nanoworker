@@ -81,6 +81,25 @@ def test_generate_audio_success(mocker):
     path = generate_audio("Hello")
     assert type(path) is str
 
+def test_generate_audio_kokoro_medium_success(mocker):
+    mocker.patch('database.get_config', return_value='kokoro-medium')
+    mocker.patch('utils.audio_utils.get_kokoro_model')
+    mocker.patch('utils.audio_utils.detect', return_value="pt")
+    mocker.patch('utils.file_utils.get_temp_file_path', side_effect=["/tmp/test.wav", "/tmp/audio.ogg"])
+    
+    mock_model = MagicMock()
+    mock_model.create.return_value = (b"samples", 24000)
+    mock_model.get_voice_style.return_value = 1.0
+    au._kokoro_model = mock_model
+    
+    mocker.patch('soundfile.write')
+    mocker.patch('subprocess.run')
+    mocker.patch('os.remove')
+    
+    path = generate_audio("Olá mundo")
+    assert type(path) is str
+    assert mock_model.create.called
+
 def test_generate_audio_xtts_success(mocker):
     mocker.patch('database.get_config', return_value='xtts-v2')
     mock_tts = MagicMock()
