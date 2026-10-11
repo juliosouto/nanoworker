@@ -115,6 +115,26 @@ def get_xtts_synthesizer():
 
     os.environ["COQUI_TOS_AGREED"] = "1"
     import torch
+    import torchaudio
+
+    # Compatibilidade com PyTorch 2.6+
+    _orig_torch_load = torch.load
+    def _safe_torch_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _safe_torch_load
+
+    # Fallback seguro para torchaudio.load via soundfile
+    def _safe_torchaudio_load(filepath, *args, **kwargs):
+        data, sr = sf.read(str(filepath))
+        tensor = torch.from_numpy(data).float()
+        if tensor.ndim == 1:
+            tensor = tensor.unsqueeze(0)
+        else:
+            tensor = tensor.t()
+        return tensor, sr
+    torchaudio.load = _safe_torchaudio_load
+
     from TTS.tts.models.xtts import Xtts
     from TTS.tts.configs.xtts_config import XttsConfig
     from TTS.utils.manage import ModelManager
@@ -228,16 +248,23 @@ def _get_or_create_cached_latents(model, speaker_wavs):
     if _cached_latents is not None:
         return _cached_latents
 
-    cache_path = os.path.join(MODELS_DIR, "speaker_latents.pth")
-    if os.path.exists(cache_path):
-        import torch
-        try:
-            cached = torch.load(cache_path, weights_only=False)
-            device = next(model.parameters()).device
-            _cached_latents = (cached["gpt_cond_latent"].to(device), cached["speaker_embedding"].to(device))
-            return _cached_latents
-        except Exception as e:
-            logger.warning(f"Could not load cached latents: {e}")
+    candidate_cache_paths = [
+        os.path.join(MODELS_DIR, "speaker_latents.pth"),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'speaker_latents.pth'),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'finetuned', 'speaker_latents.pth'),
+        os.path.join(MODELS_DIR, "finetuned", "speaker_latents.pth"),
+    ]
+    for cache_path in candidate_cache_paths:
+        if os.path.exists(cache_path):
+            import torch
+            try:
+                cached = torch.load(cache_path, weights_only=False)
+                device = next(model.parameters()).device
+                _cached_latents = (cached["gpt_cond_latent"].to(device), cached["speaker_embedding"].to(device))
+                logger.info(f"Loaded cached speaker latents from {cache_path}")
+                return _cached_latents
+            except Exception as e:
+                logger.warning(f"Could not load cached latents from {cache_path}: {e}")
 
     if speaker_wavs:
         import torch
