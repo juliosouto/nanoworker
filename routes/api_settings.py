@@ -15,13 +15,24 @@ api_settings_bp = Blueprint('api_settings', __name__)
 def get_agent_name_api():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
-    config = cursor.fetchone()
+    try:
+        cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
+        config = cursor.fetchone()
+        
+        # Query all worker names
+        cursor.execute('SELECT worker_name FROM workers_config')
+        worker_names = [row['worker_name'].strip() for row in cursor.fetchall()]
+    finally:
+        conn.close()
     
-    # Query all worker names
-    cursor.execute('SELECT worker_name FROM workers_config')
-    worker_names = [row['worker_name'].strip() for row in cursor.fetchall()]
-    conn.close()
+    # A missing/renamed column must not break the whole endpoint: the Baileys
+    # worker relies on it to know the worker names, and a 500 would leave it
+    # using a stale worker list (new workers would then be ignored and their
+    # mentions silently dropped).
+    if config is None:
+        logger.warning("whatsapp_config row id=1 not found; falling back to default mention settings.")
+    if not worker_names:
+        logger.warning("No workers found in workers_config; the WhatsApp worker will not be able to match mentions.")
     
     try:
         allow_mentions = bool(config['allow_mentions']) if config else True
@@ -42,8 +53,7 @@ def get_agent_name_api():
         default_worker = get_default_worker()
         agent_name = default_worker['worker_name'] if default_worker else ''
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).exception("Failed to load default worker in /api/config/agent_name")
+        logger.exception("Failed to load default worker in /api/config/agent_name")
         agent_name = ''
     
     require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"

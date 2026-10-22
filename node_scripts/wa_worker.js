@@ -59,7 +59,10 @@ async function getAgentName() {
                 requireAtPrefix = res.data.require_at_prefix !== false;
             }
         } catch (e) {
-            // ignore
+            // Never swallow this silently: a failed fetch keeps the OLD worker
+            // list in memory for up to 60s, so newly added workers (e.g. Mini,
+            // Flint) would be ignored and their mentions silently dropped.
+            console.error(`[Baileys Config] Failed to fetch agent/worker config from ${FLASK_PORT}: ${e.message}. Keeping cached config; retrying in 60s.`);
         }
         lastAgentNameFetch = now;
     }
@@ -109,6 +112,47 @@ function extractQuotedInfo(msgContent) {
     return contextInfo;
 }
 
+// Extracts the JIDs explicitly mentioned in the message (contextInfo.mentionedJid).
+// WhatsApp's native "@" picker does NOT keep the worker name in the text: the
+// text becomes "@<phone-number>" and the real target only exists here. Ignoring
+// this field made every native mention in a group silently dropped.
+function extractMentionedJids(msgContent) {
+    if (!msgContent) return [];
+    const contextInfo = msgContent.extendedTextMessage?.contextInfo ||
+                        msgContent.imageMessage?.contextInfo ||
+                        msgContent.videoMessage?.contextInfo ||
+                        msgContent.audioMessage?.contextInfo ||
+                        msgContent.documentMessage?.contextInfo ||
+                        msgContent.contactMessage?.contextInfo;
+    if (!contextInfo || !Array.isArray(contextInfo.mentionedJid)) return [];
+    return contextInfo.mentionedJid.filter(jid => typeof jid === 'string' && jid);
+}
+
+// True when the message natively mentions OUR OWN account (PN or LID).
+// The same account can be referenced in several ways: the full JID
+// ("5511999999999@s.whatsapp.net"), the LID ("111222333@lid"), the bare
+// number, or with a device suffix ("5511999999999:12@s.whatsapp.net").
+// Normalize all of them so the comparison is reliable.
+function mentionIdentityKeys(value) {
+    if (!value || typeof value !== 'string') return [];
+    const withoutDevice = value.split(':')[0];
+    return [withoutDevice, withoutDevice.split('@')[0]];
+}
+
+function mentionsOwnAccount(mentionedJids) {
+    if (!mentionedJids || mentionedJids.length === 0) return false;
+    const ownIds = new Set();
+    for (const own of [ownJid, ownLid]) {
+        for (const key of mentionIdentityKeys(own)) {
+            if (key) ownIds.add(key);
+        }
+    }
+    if (ownIds.size === 0) return false;
+    return mentionedJids.some(jid =>
+        mentionIdentityKeys(jid).some(key => ownIds.has(key))
+    );
+}
+
 function isGroupChat(remoteJid) {
     if (!remoteJid) return false;
     // Canonical group JIDs always carry the '@g.us' suffix. Keep this check
@@ -121,19 +165,56 @@ function isNoteToSelf(remoteJid, ownJid, ownLid) {
     return remoteJid === ownJid || remoteJid === ownLid;
 }
 
-function checkMentions(text, agentConfig) {
-    if (!text || !agentConfig.allowMentions || !agentConfig.workerNames || agentConfig.workerNames.length === 0) {
+// Builds a matcher for a worker name. The "@" form is matched anywhere in the
+// text but with a word boundary, so "@Mini" matches "Oi @Mini, tudo bem?" while
+// NOT matching "@Miniflores". The bare (no "@") form stays anchored at the
+// beginning, as before, to avoid matching common words mid-sentence.
+function buildMentionRegex(name, requireAt) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (requireAt) {
+        // The "@" is also excluded from the preceding character class, so a
+        // doubled "@" (e.g. "@@Mini") is NOT treated as a mention. This keeps
+        // the Node matcher aligned with the Python matcher.
+        return new RegExp(`(?:^|[^\\p{L}\\p{N}_@])@${escaped}(?![\\p{L}\\p{N}_])`, 'iu');
+    }
+    // The bare form is anchored at the start of the message; leading
+    // whitespace is tolerated (same as the Python matcher).
+    return new RegExp(`^\\s*${escaped}(?![\\p{L}\\p{N}_])`, 'iu');
+}
+
+function checkMentions(text, agentConfig, options = {}) {
+    if (!agentConfig.allowMentions || !agentConfig.workerNames || agentConfig.workerNames.length === 0) {
+        return false;
+    }
+    // A native WhatsApp mention (the "@" picker) does not carry the worker name
+    // in the text at all — it is "@<phone>". The mention is proven by
+    // contextInfo.mentionedJid instead, so accept it as a mention here.
+    // The "allowMentions" switch still governs it, so the admin can turn
+    // group responses off entirely.
+    if (options.nativeMention) {
+        return true;
+    }
+    if (!text) {
         return false;
     }
     const textLower = text.toLowerCase().trim();
     for (const name of agentConfig.workerNames) {
         const nameClean = name.trim();
         const nameNoSpaces = nameClean.replace(/\s+/g, '');
-        if (textLower.startsWith(`@${nameClean}`) || textLower.startsWith(`@${nameNoSpaces}`)) {
+        if (!nameClean) continue;
+
+        // The "@" mention always applies (anywhere in the text).
+        if (buildMentionRegex(nameClean, true).test(textLower)) {
+            return true;
+        }
+        if (nameNoSpaces !== nameClean && buildMentionRegex(nameNoSpaces, true).test(textLower)) {
             return true;
         }
         if (!agentConfig.requireAtPrefix) {
-            if (textLower.startsWith(nameClean) || textLower.startsWith(nameNoSpaces)) {
+            if (buildMentionRegex(nameClean, false).test(textLower)) {
+                return true;
+            }
+            if (nameNoSpaces !== nameClean && buildMentionRegex(nameNoSpaces, false).test(textLower)) {
                 return true;
             }
         }
@@ -253,19 +334,27 @@ async function connectToWhatsApp() {
             const agentConfig = await getAgentName();
             const textContent = extractTextContent(msgContent);
             const msgType = getMessageType(msgContent);
-            
+
+            const mentionedJids = extractMentionedJids(msgContent);
+            const nativeMention = mentionsOwnAccount(mentionedJids);
+
             const context = {
                 isGroup: isGroupChat(remoteJid),
                 isSelf: isNoteToSelf(remoteJid, ownJid, ownLid),
                 isAudio: msgType === 'audio',
-                hasMention: checkMentions(textContent, agentConfig)
+                hasMention: checkMentions(textContent, agentConfig, { nativeMention })
             };
 
             if (!shouldForwardMessage(context, agentConfig)) {
-                // Log dropped messages explicitly so silent filtering by the audio gate
-                // (allowAudioMentions=false) is observable instead of disappearing without a trace.
+                // Log dropped messages explicitly so silent filtering is observable
+                // instead of disappearing without a trace. Text drops used to be
+                // completely silent, which made "works in note-to-self but not in
+                // the group" impossible to diagnose.
                 if (context.isAudio) {
                     console.error(`[Baileys Inbound] 🔊 Dropped audio from ${remoteJid} (not self, no text mention). Set allow_audio_mentions=true in WhatsApp settings to process received audios.`);
+                } else {
+                    const preview = (textContent || '').slice(0, 80).replace(/\n/g, ' ');
+                    console.error(`[Baileys Inbound] 💬 Dropped message from ${remoteJid} (not self, no worker mention detected). text="${preview}" nativeMention=${nativeMention} knownWorkers=[${agentConfig.workerNames.join(', ')}]`);
                 }
                 continue;
             }
@@ -452,6 +541,13 @@ async function connectToWhatsApp() {
                     content: text,
                     message_id: msg.key.id
                 };
+                // Forward the native mention info so the backend can also decide
+                // that a worker was mentioned (the text alone does not contain
+                // the worker name when the user picks it from the "@" list).
+                if (mentionedJids.length > 0) {
+                    payload.mentioned_jid = mentionedJids;
+                    payload.native_mention = nativeMention;
+                }
                 if (audioBase64) {
                     payload.audio_base64 = audioBase64;
                     payload.mimetype = mimeType;
