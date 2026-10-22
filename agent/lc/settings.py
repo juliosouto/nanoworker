@@ -20,9 +20,9 @@ Keys:
     LC_SUMMARIZER_MODEL    str (default "")     - phase 3: cheap model used to
                            summarize old conversation blocks. "" -> summarization
                            disabled; behavior falls back to the legacy slicer.
-    LC_SUMMARY_THRESHOLD_PCT int (default 80)   - phase 3: when the estimated
-                           conversation is over this % of MESSAGE_SLICE_SIZE_TOKENS,
-                           an old block is summarized; below it the path is cheap.
+    LC_SUMMARY_THRESHOLD_PCT int (default 80)   - phase 3 (legacy, summarizer
+                           removed): formerly the % of the message-history
+                           budget above which an old block was summarized.
     LC_SUMMARY_MAX_TOKENS  int (default 200)    - phase 3: token cap for each
                            auto-generated summary block.
     LC_CACHE               'false' (default) | 'true' - phase 5: enable the
@@ -184,8 +184,8 @@ def summarizer_model() -> str:
 
 
 def summary_threshold_pct() -> int:
-    """Percentage of the MESSAGE_SLICE_SIZE_TOKENS budget above which an old
-    conversation block is summarized (phase 3)."""
+    """Legacy phase-3 knob (summarizer removed). Kept only so old installs and
+    tests reading the flag keep working; no runtime behavior depends on it."""
     return _cfg_int("LC_SUMMARY_THRESHOLD_PCT", 80, 10)
 
 

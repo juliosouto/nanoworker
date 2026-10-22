@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sqlite3
 
@@ -85,15 +86,64 @@ def decrypt_value(value: str) -> str:
         pass
     return value
 
+# ---------------------------------------------------------------------------
+# sqlite-vec (vector search extension)
+#
+# Availability is probed once per process: -1 = not probed yet, 0 = unusable
+# (package missing, wheel mismatch, or a Python build without
+# enable_load_extension), 1 = working. The extension is per-connection, so it
+# must be loaded again on every new connection. Any failure degrades
+# gracefully: the app keeps working, only the vector table
+# (message_history_vec) becomes unavailable.
+# ---------------------------------------------------------------------------
+_SQLITE_VEC_STATE = -1
+
+
+def _load_sqlite_vec(conn) -> bool:
+    """Carrega a extensão sqlite-vec na conexão. Retorna True quando disponível."""
+    global _SQLITE_VEC_STATE
+    if _SQLITE_VEC_STATE == 0:
+        return False
+    try:
+        import sqlite_vec
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        _SQLITE_VEC_STATE = 1
+        return True
+    except Exception:
+        if _SQLITE_VEC_STATE != 1:
+            _SQLITE_VEC_STATE = 0
+        return False
+
+
+def sqlite_vec_available() -> bool:
+    """True quando a extensão sqlite-vec pode ser carregada neste ambiente."""
+    global _SQLITE_VEC_STATE
+    if _SQLITE_VEC_STATE == -1:
+        probe = sqlite3.connect(':memory:')
+        try:
+            _SQLITE_VEC_STATE = 1 if _load_sqlite_vec(probe) else 0
+        except Exception:
+            _SQLITE_VEC_STATE = 0
+        finally:
+            probe.close()
+    return _SQLITE_VEC_STATE == 1
+
+
 def get_db() -> sqlite3.Connection:
     """
     Estabelece e retorna uma conexão com o banco de dados SQLite.
-    
+
+    Quando a extensão sqlite-vec está disponível ela é carregada na conexão,
+    habilitando as tabelas virtuais de busca vetorial (message_history_vec).
+
     Retorna:
         sqlite3.Connection: Conexão ativa com o banco.
     """
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    _load_sqlite_vec(conn)
     return conn
 
 def get_config(key: str, default=None) -> str|None:
@@ -737,6 +787,89 @@ def init_db():
     except sqlite3.OperationalError as e:
         pass
 
+    # Message History Table: canonical timeline of TEXT messages per channel.
+    # Group messages that never mention the worker are recorded here too (they
+    # used to be discarded in the Baileys worker). Media is never saved — text
+    # only. The date/hour/minute/second columns are derived from the original
+    # WhatsApp epoch (msg_timestamp) at insert time.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS message_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT UNIQUE,
+        channel_id TEXT NOT NULL,
+        remote_jid TEXT,
+        is_group BOOLEAN DEFAULT 0,
+        sender_id TEXT,
+        sender_id_alt TEXT,
+        sender_name TEXT,
+        from_me BOOLEAN DEFAULT 0,
+        is_bot BOOLEAN DEFAULT 0,
+        content TEXT NOT NULL,
+        msg_timestamp INTEGER,
+        msg_date TEXT,
+        msg_hour INTEGER,
+        msg_minute INTEGER,
+        msg_second INTEGER,
+        was_processed BOOLEAN DEFAULT 0,
+        worker_mentioned BOOLEAN DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_msg_history_channel_ts
+        ON message_history (channel_id, msg_timestamp DESC)
+    ''')
+
+    # Migration guard for databases that already ran the pre-is_bot build:
+    # from_me covers BOTH the human owner (typing on their own phone) and bot
+    # replies, so the LLM role mapping needs the explicit is_bot flag.
+    try:
+        cursor.execute("ALTER TABLE message_history ADD COLUMN is_bot BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Vector index over the message history (sqlite-vec):
+    #   id         -> message_history.id (FK semantics)
+    #   channel_id -> partition key: KNN is scoped per chat (privacy)
+    #   +payload   -> auxiliary JSON snapshot (render without JOIN)
+    #   vector     -> embedding, cosine distance; dims follow the active
+    #                 embeddings provider (gemini=768, openai=1536).
+    # The previous (never-populated) schema is dropped on upgrade.
+    if sqlite_vec_available():
+        try:
+            cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='message_history_vec'")
+            existing = cursor.fetchone()
+            existing_sql = existing['sql'] if existing else None
+            needs_rebuild = False
+            if existing_sql is not None:
+                if 'partition key' not in existing_sql:
+                    needs_rebuild = True  # legacy (pre-RAG) schema
+                else:
+                    # Provider switch (dims change) leaves the old table
+                    # permanently rejecting inserts/KNN: drop and let the boot
+                    # backfill re-embed from message_history.
+                    stored_dims = _vec_table_dims_from_sql(existing_sql)
+                    if stored_dims is not None and stored_dims != get_history_vec_dims():
+                        needs_rebuild = True
+            if needs_rebuild:
+                logging.getLogger(__name__).info(
+                    "message_history_vec schema/dims changed; dropping and recreating. "
+                    "Existing vectors are dropped — the boot backfill re-embeds them."
+                )
+                cursor.execute('DROP TABLE message_history_vec')
+                existing_sql = None
+            if existing_sql is None:
+                cursor.execute(f'''
+                CREATE VIRTUAL TABLE message_history_vec USING vec0(
+                    id INTEGER PRIMARY KEY,
+                    channel_id TEXT partition key,
+                    +payload TEXT,
+                    vector float[{get_history_vec_dims()}] distance_metric=cosine
+                )
+                ''')
+        except sqlite3.OperationalError:
+            pass
+
     # Seed an initial agent if none exist
     cursor.execute('SELECT COUNT(*) FROM agents')
     if cursor.fetchone()[0] == 0:
@@ -937,6 +1070,320 @@ def clear_session_summary(session_id: str) -> None:
         pass
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Message history (message_history / message_history_vec)
+# ---------------------------------------------------------------------------
+
+def get_message_history_size(default: int = 200) -> int:
+    """Número de mensagens mantidas por canal (slider Agent Behavior)."""
+    try:
+        n = int(get_config("MESSAGE_HISTORY_SIZE", str(default)))
+    except (TypeError, ValueError):
+        n = default
+    return max(1, n)
+
+
+def insert_message_history(message_id=None, channel_id=None, remote_jid=None,
+                           is_group=0, sender_id=None, sender_id_alt=None,
+                           sender_name=None, from_me=0, is_bot=0, content='',
+                           msg_timestamp=None, was_processed=0,
+                           worker_mentioned=0):
+    """
+    Grava uma mensagem de TEXTO na linha do tempo do canal.
+
+    - Deduplica reentregas via message_id UNIQUE (message key do WhatsApp).
+    - Deriva data/hora/minuto/segundo do epoch original do WhatsApp
+      (msg_timestamp); sem epoch, usa o horário atual do servidor.
+    - Apara o canal para manter apenas as MESSAGE_HISTORY_SIZE mensagens
+      mais recentes (também limpa as linhas vetoriais órfãs).
+
+    Retorna:
+        int: O id da nova linha, ou None quando o insert foi ignorado
+        (message_id duplicado) ou a linha é inválida (sem canal/conteúdo).
+    """
+    if not channel_id or content is None or not str(content).strip():
+        return None
+
+    ts = None
+    if msg_timestamp is not None:
+        try:
+            ts = int(msg_timestamp)
+        except (TypeError, ValueError):
+            ts = None
+    from datetime import datetime
+    dt = datetime.fromtimestamp(ts) if ts else datetime.now()
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR IGNORE INTO message_history
+                (message_id, channel_id, remote_jid, is_group, sender_id,
+                 sender_id_alt, sender_name, from_me, is_bot, content,
+                 msg_timestamp, msg_date, msg_hour, msg_minute, msg_second,
+                 was_processed, worker_mentioned)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            message_id, channel_id, remote_jid,
+            1 if is_group else 0,
+            sender_id, sender_id_alt, sender_name,
+            1 if from_me else 0,
+            1 if is_bot else 0,
+            str(content), ts,
+            dt.strftime('%Y-%m-%d'),
+            dt.hour, dt.minute, dt.second,
+            1 if was_processed else 0,
+            1 if worker_mentioned else 0,
+        ))
+        if cursor.rowcount == 0:
+            return None  # duplicate message_id -> ignored
+        row_id = cursor.lastrowid
+        _trim_message_history_cursor(cursor, channel_id)
+        conn.commit()
+        return row_id
+    finally:
+        conn.close()
+
+
+def _trim_message_history_cursor(cursor, channel_id) -> int:
+    """Mantém apenas as MESSAGE_HISTORY_SIZE linhas mais recentes do canal e
+    remove as linhas vetoriais órfãs (escopadas por canal). Usa o cursor/txn do
+    chamador.
+
+    Early-exit: quando o canal está dentro do limite nenhum DELETE roda — o
+    trim é executado a cada mensagem inserida, então o custo precisa ser
+    proporcional só ao canal que cresceu.
+    """
+    keep_n = get_message_history_size()
+    try:
+        cursor.execute(
+            'SELECT COUNT(*) FROM message_history WHERE channel_id = ?',
+            (channel_id,),
+        )
+        if cursor.fetchone()[0] <= keep_n:
+            return 0
+    except sqlite3.OperationalError:
+        pass  # table missing: nothing to trim
+
+    cursor.execute('''
+        DELETE FROM message_history
+        WHERE channel_id = ?
+          AND id NOT IN (
+              SELECT id FROM message_history
+              WHERE channel_id = ?
+              ORDER BY msg_timestamp DESC, id DESC
+              LIMIT ?
+          )
+    ''', (channel_id, channel_id, keep_n))
+    deleted = cursor.rowcount
+    if deleted > 0 and sqlite_vec_available():
+        try:
+            cursor.execute('''
+                DELETE FROM message_history_vec
+                WHERE channel_id = ?
+                  AND id NOT IN (SELECT id FROM message_history WHERE channel_id = ?)
+            ''', (channel_id, channel_id))
+        except sqlite3.OperationalError:
+            pass
+    return deleted
+
+
+def mark_message_history_processed(message_id) -> None:
+    """Marca uma linha do histórico como processada pelo worker.
+
+    NÃO grava worker_mentioned: mensagens podem ser processadas sem menção
+    (chats privados, note-to-self, installs com allow_mentions=false).
+    """
+    if not message_id:
+        return
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE message_history
+            SET was_processed = 1
+            WHERE message_id = ?
+        ''', (message_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_channel_history(channel_id) -> int:
+    """Remove toda a linha do tempo de um canal (usado pelo comando '/new')."""
+    if not channel_id:
+        return 0
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM message_history WHERE channel_id = ?', (channel_id,))
+        deleted = cursor.rowcount
+        if deleted > 0 and sqlite_vec_available():
+            try:
+                cursor.execute('''
+                    DELETE FROM message_history_vec
+                    WHERE channel_id = ?
+                      AND id NOT IN (SELECT id FROM message_history WHERE channel_id = ?)
+                ''', (channel_id, channel_id))
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
+
+
+def get_recent_message_history(cursor, channel_id, limit=None, exclude_message_id=None):
+    """
+    Retorna as últimas `limit` linhas da linha do tempo do canal, da MAIS
+    ANTIGA para a MAIS RECENTE (ordem cronológica).
+
+    Usa o cursor do chamador para rodar dentro da mesma transação.
+    `exclude_message_id` pula a mensagem que está sendo processada agora.
+    """
+    if limit is None:
+        limit = get_message_history_size()
+    query = '''
+        SELECT id, message_id, channel_id, remote_jid, is_group, sender_id,
+               sender_id_alt, sender_name, from_me, is_bot, content,
+               msg_timestamp, msg_date, msg_hour, msg_minute, msg_second,
+               was_processed, worker_mentioned, created_at
+        FROM message_history
+        WHERE channel_id = ?
+    '''
+    params = [channel_id]
+    if exclude_message_id:
+        query += ' AND (message_id IS NULL OR message_id != ?)'
+        params.append(exclude_message_id)
+    query += ' ORDER BY msg_timestamp DESC, id DESC LIMIT ?'
+    params.append(limit)
+    cursor.execute(query, params)
+    rows = list(cursor.fetchall())
+    rows.reverse()
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Message history vectors (message_history_vec / sqlite-vec)
+# ---------------------------------------------------------------------------
+
+def get_history_vec_dims(default: int = 768) -> int:
+    """Dimensão dos vetores de message_history_vec.
+
+    Resolução: env NW_HISTORY_VEC_DIMS (testes/deploys) > mapa do provider de
+    embeddings (gemini=768, openai=1536 — mesmo mapa de agent.lc.memory_rag).
+    """
+    env = os.environ.get('NW_HISTORY_VEC_DIMS')
+    if env:
+        try:
+            return max(1, int(env))
+        except (TypeError, ValueError):
+            pass
+    try:
+        from agent.lc.memory_rag import _EMBEDDING_DIMS
+        from agent.lc.embeddings import get_embeddings_provider
+        return _EMBEDDING_DIMS.get(get_embeddings_provider(), default)
+    except Exception:
+        return default
+
+
+def _vec_table_dims_from_sql(sql):
+    """Extrai as dims declaradas (``vector float[N]``) do CREATE da tabela
+    vec0 em sqlite_master. None quando não é possível parsear."""
+    if not sql:
+        return None
+    import re
+    match = re.search(r'vector\s+float\[(\d+)\]', sql)
+    return int(match.group(1)) if match else None
+
+
+def insert_message_vector(row_id, channel_id, payload, vector) -> bool:
+    """
+    Grava/atualiza o vetor de uma mensagem do histórico.
+
+    Args:
+        row_id: message_history.id correspondente.
+        channel_id: canal (partition key da tabela vec0).
+        payload: dict (serializado em JSON) com os metadados de renderização.
+        vector: embedding como lista/JSON ou blob float32 little-endian.
+
+    Retorna False quando o sqlite-vec não está disponível ou falhou
+    (fail-open: a mensagem continua salva, só fica sem vetor).
+    """
+    if row_id is None or not channel_id or vector is None:
+        return False
+    if not sqlite_vec_available():
+        return False
+    payload_json = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    # vec0 accepts the vector as JSON text or a float32 blob; sqlite3 cannot
+    # bind Python lists directly.
+    if isinstance(vector, (list, tuple)):
+        vector = json.dumps([float(x) for x in vector])
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM message_history_vec WHERE id = ?', (row_id,))
+        cursor.execute('''
+            INSERT INTO message_history_vec (id, channel_id, payload, vector)
+            VALUES (?, ?, ?, ?)
+        ''', (row_id, channel_id, payload_json, vector))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.DatabaseError as exc:
+        # DatabaseError é pai de OperationalError e IntegrityError: cobre locks,
+        # dims inválidas e colisão de PK em corrida (INSERT é idempotente via
+        # DELETE+INSERT, então regravar é sempre seguro).
+        logging.getLogger(__name__).warning(
+            "Failed to store message vector for row %s: %s", row_id, exc
+        )
+        return False
+    finally:
+        conn.close()
+
+
+def get_missing_vector_ids(limit: int = 200) -> list:
+    """Ids de message_history (mais recentes primeiro) sem vetor gravado."""
+    if not sqlite_vec_available():
+        return []
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id FROM message_history
+            WHERE id NOT IN (SELECT id FROM message_history_vec)
+            ORDER BY id DESC
+            LIMIT ?
+        ''', (limit,))
+        return [r['id'] for r in cursor.fetchall()]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+
+def get_history_window_cutoff(cursor, channel_id, limit=None):
+    """msg_timestamp mais antigo dentro da janela N do canal (None se vazia).
+
+    Usado pelo retriever para não devolver mensagens que já entram verbatim
+    no contexto (janela de N mensagens).
+    """
+    if limit is None:
+        limit = get_message_history_size()
+    try:
+        cursor.execute('''
+            SELECT MIN(msg_timestamp) FROM (
+                SELECT msg_timestamp FROM message_history
+                WHERE channel_id = ?
+                ORDER BY msg_timestamp DESC, id DESC
+                LIMIT ?
+            )
+        ''', (channel_id, limit))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
 
 
 if __name__ == '__main__':

@@ -37,7 +37,8 @@ def setup_app_config():
             'agent_name', 'USE_RECIPES_AS_TOOLS', 'PLAN_BEFORE_EXECUTION', 'AUTONOMOUS_MODE', 'DEFAULT_LLM_PROVIDER',
             'DEFAULT_LLM_MODEL', 'GEMINI_MODEL', 'QWEN_MODEL',
             'PERM_TERMINAL', 'PERM_PLAYWRIGHT', 'PERM_FS', 'PERM_WEB_SEARCH', 'PERM_TOOL_CREATOR',
-            'MESSAGE_SLICE_SIZE_TOKENS'
+            'MESSAGE_HISTORY_SIZE', 'HISTORY_RAG_ENABLED', 'HISTORY_RAG_SEARCH_TYPE',
+            'HISTORY_RAG_K', 'HISTORY_RAG_FETCH_K', 'HISTORY_RAG_SCORE_THRESHOLD', 'HISTORY_RAG_LAMBDA'
         ]
         # Clear existing configs in scope
         cursor.execute(
@@ -60,7 +61,13 @@ def setup_app_config():
             ('PERM_FS', 'true'),
             ('PERM_WEB_SEARCH', 'true'),
             ('PERM_TOOL_CREATOR', 'true'),
-            ('MESSAGE_SLICE_SIZE_TOKENS', '2000')
+            ('MESSAGE_HISTORY_SIZE', '200'),
+            ('HISTORY_RAG_ENABLED', 'true'),
+            ('HISTORY_RAG_SEARCH_TYPE', 'mmr'),
+            ('HISTORY_RAG_K', '3'),
+            ('HISTORY_RAG_FETCH_K', '20'),
+            ('HISTORY_RAG_SCORE_THRESHOLD', '0.3'),
+            ('HISTORY_RAG_LAMBDA', '0.5')
         ]
         for key, value in default_configs:
             cursor.execute('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)', (key, value))

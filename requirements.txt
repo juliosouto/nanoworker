@@ -49,6 +49,10 @@ langchain-community>=0.4,<1
 faiss-cpu
 tiktoken>=0.14
 
+# Vector search in SQLite (message_history_vec). Loaded as a runtime extension
+# by database._load_sqlite_vec; a missing/unusable package degrades gracefully.
+sqlite-vec
+
 # Testing Dependencies
 pytest
 pytest-flask

@@ -16,12 +16,10 @@ from agent.stop_check import StopRequestedError
 from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.message_utils import (
-    truncate_message,
     resolve_worker_from_content,
     clean_mention,
     apply_plan_before_execution,
 )
-from agent.lc.summarizer import summarize_then_trim
 from utils.session import current_session_id
 
 logger = logging.getLogger(__name__)
@@ -125,43 +123,43 @@ def _detect_wa_channel_type(channel_id: str):
     return is_wa_group, is_wa_private
 
 
-def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_wa_group: bool) -> list:
+def _build_history_from_db(cursor, session_id: str, exclude_message_id: str) -> list:
     """
-    Fetches and builds the Gemini-format conversation history from the database.
+    Fetches and builds the Gemini-format conversation history from the database
+    (messages_in + messages_out), capped to the last MESSAGE_HISTORY_SIZE
+    messages (message count, not tokens) — the history-size limit configured in
+    the Agent Behavior settings.
     """
-    cursor.execute('''
-        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name 
-        FROM messages_in 
-        WHERE session_id = ? AND id != ?
-        
-        UNION ALL
-        
-        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_id_alt, NULL as sender_name 
-        FROM messages_out 
-        WHERE session_id = ?
-        
-        ORDER BY created_at ASC
-    ''', (session_id, exclude_message_id, session_id))
+    from database import get_message_history_size
+    limit = get_message_history_size()
+    cursor.execute(f'''
+        SELECT role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name FROM (
+            SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name 
+            FROM messages_in 
+            WHERE session_id = ? AND id != ?
+            
+            UNION ALL
+            
+            SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_id_alt, NULL as sender_name 
+            FROM messages_out 
+            WHERE session_id = ?
+        )
+        ORDER BY created_at DESC
+        LIMIT ?
+    ''', (session_id, exclude_message_id, session_id, limit))
 
-    rows = cursor.fetchall()
+    rows = list(cursor.fetchall())
+    rows.reverse()  # oldest first
     history = []
     for row in rows:
         role = row['role']
         msg_content = row['content']
-        if role == 'user':
-            if is_wa_group:
-                msg_content = truncate_message(msg_content)
-            if row['sender_id']:
-                sender_label = row['sender_name'] or row['sender_id']
-                ids = row['sender_id']
-                if row['sender_id_alt']:
-                    ids = f"{row['sender_id']} / {row['sender_id_alt']}"
-                msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
-        elif role == 'model' and is_wa_group:
-            # Large tool-result feedbacks (⚙️ Executed tools: ...) pollute small
-            # contexts. Gate behind a config flag so it can be toggled per install.
-            if get_config("TRUNCATE_MODEL_HISTORY_IN_GROUPS", "true").lower() == "true":
-                msg_content = truncate_message(msg_content)
+        if role == 'user' and row['sender_id']:
+            sender_label = row['sender_name'] or row['sender_id']
+            ids = row['sender_id']
+            if row['sender_id_alt']:
+                ids = f"{row['sender_id']} / {row['sender_id_alt']}"
+            msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
             from utils.image_utils import build_gemini_part
@@ -179,6 +177,90 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
                 types.Content(role=role, parts=parts)
             )
     return history
+
+
+def _build_history_from_message_history(cursor, channel_id: str, exclude_client_message_id=None) -> list:
+    """
+    Builds the Gemini-format history for WhatsApp channels from the canonical
+    message_history timeline: the last MESSAGE_HISTORY_SIZE rows of the channel
+    (mentioned or not — the full group context now reaches the model), oldest
+    first. Rows written by the BOT (is_bot=1) become 'model' turns; everything
+    else — including messages typed by the human owner on their own phone
+    (from_me=1, is_bot=0) — stays a 'user' turn with the "[Message from: ...]"
+    label.
+    """
+    from database import get_recent_message_history
+    rows = get_recent_message_history(
+        cursor, channel_id, exclude_message_id=exclude_client_message_id
+    )
+    history = []
+    for row in rows:
+        msg_content = row['content'] or ''
+        if row['is_bot']:
+            role = 'model'
+        else:
+            role = 'user'
+            if row['sender_id']:
+                sender_label = row['sender_name'] or row['sender_id']
+                ids = row['sender_id']
+                if row['sender_id_alt']:
+                    ids = f"{row['sender_id']} / {row['sender_id_alt']}"
+                msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
+        parts = [types.Part.from_text(text=msg_content)]
+        if history and history[-1].role == role:
+            history[-1].parts.extend(parts)
+        else:
+            history.append(types.Content(role=role, parts=parts))
+    return history
+
+
+def _attach_history_rag(cursor, channel_id: str, rag_query: str, content: str,
+                        current_client_message_id=None) -> str:
+    """
+    Retrieves the most relevant vectorized history of the WhatsApp channel and
+    appends the context block to ``content`` (the labeled user prompt).
+
+    ``rag_query`` must be the mention-cleaned, label-free text so the query
+    embedding matches the vectorized corpus (stored as plain message text).
+    Fail-open: any failure returns ``content`` unchanged.
+    """
+    try:
+        from agent.lc.history_rag import (
+            CONTEXT_FOOTER,
+            CONTEXT_HEADER,
+            format_history_context,
+            get_settings as history_rag_settings,
+            retrieve_relevant_history,
+        )
+        from database import get_history_window_cutoff
+
+        rag = history_rag_settings()
+        if not rag.enabled:
+            return content
+
+        current_row_id = None
+        if current_client_message_id:
+            cursor.execute('SELECT id FROM message_history WHERE message_id = ?', (current_client_message_id,))
+            row = cursor.fetchone()
+            current_row_id = row['id'] if row else None
+        cutoff_ts = get_history_window_cutoff(cursor, channel_id)
+        retrieved = retrieve_relevant_history(
+            rag_query,
+            channel_id,
+            exclude_id=current_row_id,
+            cutoff_ts=cutoff_ts,
+            settings=rag,
+        )
+        if retrieved:
+            logger.info("History RAG: attached %d relevant messages to the prompt", len(retrieved))
+            return (
+                f"{content}\n\n{CONTEXT_HEADER}\n"
+                f"{format_history_context(retrieved)}\n{CONTEXT_FOOTER}"
+            )
+        return content
+    except Exception as exc:
+        logger.warning("History RAG retrieval failed (%s); continuing without context", exc)
+        return content
 
 
 def _check_is_admin(sender_id: str) -> bool:
@@ -278,28 +360,37 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     channel_id = session_row['channel_id'] if session_row else None
     is_wa_group, is_wa_private = _detect_wa_channel_type(channel_id)
 
-    # Fetch history
-    history = _build_history_from_db(cursor, session_id, message_in_id, is_wa_group)
-
     # Get current message info
-    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_id_alt, sender_name FROM messages_in WHERE id = ?', (message_in_id,))
+    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_id_alt, sender_name, client_message_id FROM messages_in WHERE id = ?', (message_in_id,))
     current_msg = cursor.fetchone()
     current_image_base64 = current_msg['image_base64'] if current_msg else None
     current_gemini_uri = current_msg['gemini_file_uri'] if current_msg else None
     current_sender_id = current_msg['sender_id'] if current_msg else None
     current_sender_id_alt = current_msg['sender_id_alt'] if current_msg else None
     current_sender_name = current_msg['sender_name'] if current_msg else None
+    current_client_message_id = current_msg['client_message_id'] if current_msg else None
 
     # Ensure client is available for fallback handling
     client = None
+
+    # Fetch history. WhatsApp channels rebuild it from the message_history
+    # timeline (last MESSAGE_HISTORY_SIZE rows of the channel, including group
+    # messages that never mentioned the worker). Other channels keep the
+    # messages_in/messages_out rebuild, capped by message count.
+    if channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):
+        history = _build_history_from_message_history(cursor, channel_id, current_client_message_id)
+    else:
+        history = _build_history_from_db(cursor, session_id, message_in_id)
 
     worker = resolve_worker_from_content(original_content)
 
     # Clean worker mention from content
     content = clean_mention(original_content)
 
-    if is_wa_group:
-        content = truncate_message(content)
+    # History RAG search query: mention-cleaned and WITHOUT the
+    # "[Message from: ...]" label, so the query embedding matches the
+    # vectorized corpus (stored as plain message text).
+    rag_query = content
 
     if current_sender_id:
         sender_label = current_sender_name or current_sender_id
@@ -307,14 +398,19 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
+
+    # History RAG (WhatsApp channels): retrieve the most relevant vectorized
+    # history of this channel and APPEND it to the user's prompt before the
+    # LLM call. Parameters come from the Agent Behavior page; any failure is
+    # fail-open (the reply is produced without the extra context).
+    if channel_id and channel_id.startswith(("wa_web:", "whatsapp:")):
+        content = _attach_history_rag(cursor, channel_id, rag_query, content, current_client_message_id)
+
     content = apply_plan_before_execution(content)
 
-    # Phase-3: slice the whole conversation (history + current message) with
-    # progressive summarization instead of dropping oldest messages blindly:
-    # old blocks are compressed into a cached running summary (sessions.summary)
-    # while the most recent LC_KEEP_RECENT_MSGS stay verbatim; a real-token
-    # langchain_core trimmer is the last resort.
-    history, content = summarize_then_trim(history, content, session_id, cursor, message_in_id)
+    # The context size is bounded by message count (MESSAGE_HISTORY_SIZE) —
+    # token-based slicing was removed. The last N timeline messages are the
+    # only history limit.
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part

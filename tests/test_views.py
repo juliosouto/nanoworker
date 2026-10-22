@@ -132,7 +132,7 @@ def test_agent_behavior_config_page(mock_get_default_worker, client):
 @patch('routes.views.get_config')
 def test_agent_behavior_config_page_exceptions(mock_get_config, mock_get_default_worker, client):
     mock_get_default_worker.return_value = None
-    mock_get_config.side_effect = lambda k, d="": "invalid_int" if k in ["AUTONOMOUS_MODE", "MESSAGE_SLICE_SIZE_TOKENS"] else d
+    mock_get_config.side_effect = lambda k, d="": "invalid_int" if k in ["AUTONOMOUS_MODE", "MESSAGE_HISTORY_SIZE"] else d
     response = client.get('/settings/agent_behavior')
     assert response.status_code == 200
 

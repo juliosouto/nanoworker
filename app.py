@@ -148,6 +148,18 @@ elif __name__ != '__main__':
     run_workers = True
 
 if run_workers:
+    # History vector backfill (background, bounded per boot; fail-open).
+    def _history_vector_backfill():
+        try:
+            from agent.lc.history_rag import backfill_missing_vectors
+            count = backfill_missing_vectors(limit=200)
+            if count:
+                logging.info("History vector backfill: %d messages vectorized", count)
+        except Exception as exc:
+            logging.error("History vector backfill failed: %s", exc)
+
+    threading.Thread(target=_history_vector_backfill, daemon=True, name="history-vec-backfill").start()
+
     worker_script = os.path.join(os.path.dirname(__file__), 'node_scripts', 'wa_worker.js')
     if os.path.exists(worker_script):
         logging.info("Starting Baileys WhatsApp Worker (wa_worker.js) in the background...")

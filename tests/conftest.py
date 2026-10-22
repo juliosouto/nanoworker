@@ -80,3 +80,15 @@ def legacy_stack_for_tests(monkeypatch):
     unaffected either way.
     """
     monkeypatch.setenv("LLM_STACK", "legacy")
+
+
+@pytest.fixture(autouse=True)
+def history_vec_dims_for_tests(monkeypatch):
+    """
+    Align message_history_vec dims with the autouse FakeEmbeddings (size=8).
+
+    The production dims follow the embeddings provider map (gemini=768,
+    openai=1536) via database.get_history_vec_dims(); tests would otherwise
+    create a 768-dim table and then insert 8-dim FakeEmbeddings.
+    """
+    monkeypatch.setenv("NW_HISTORY_VEC_DIMS", "8")

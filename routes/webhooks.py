@@ -111,11 +111,15 @@ def extract_and_send_images(out_text, target_jid):
     return remaining, sent
 
 
-def _build_wa_callback(target_jid, reply_to_msg_id=None):
+def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None):
     """Build an on_complete callback that sends the agent reply via Baileys."""
     from utils.audio_utils import extract_and_generate_audio
 
     last_progress_msg_id = None
+    # The bot's own replies join the same channel timeline (from_me=1) so the
+    # LLM history rebuilt from message_history keeps the assistant turns
+    # interleaved with the (possibly mention-less) group messages.
+    history_channel_id = channel_id or f"wa_web:{(target_jid or '').split(':')[0]}"
 
     def on_complete(out_text):
         nonlocal last_progress_msg_id
@@ -161,6 +165,31 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None):
                         last_progress_msg_id = msg_id
                     elif not is_progress_msg:
                         last_progress_msg_id = None
+
+                    # Record the delivered reply (text only) in the channel
+                    # timeline. Progress/heartbeat messages are NOT recorded.
+                    # is_bot=1 marks it as an assistant turn (from_me alone
+                    # would also cover the human owner typing on their phone).
+                    if not is_progress_msg and text_to_send:
+                        try:
+                            import time as _time
+                            from database import insert_message_history
+                            bot_row_id = insert_message_history(
+                                message_id=msg_id,
+                                channel_id=history_channel_id,
+                                remote_jid=target_jid,
+                                is_group=target_jid.endswith('@g.us'),
+                                from_me=1,
+                                is_bot=1,
+                                content=text_to_send,
+                                msg_timestamp=int(_time.time()),
+                                was_processed=1,
+                            )
+                            if bot_row_id is not None:
+                                from agent.lc.history_rag import vectorize_message
+                                vectorize_message(bot_row_id)
+                        except Exception as history_err:
+                            logging.error(f"Failed to record bot reply in message_history: {history_err}")
 
             if audio_path:
                 resp = req.post(f'{BAILEYS_URL}/send_audio', json={"file_path": audio_path, "jid": target_jid}, timeout=5)
@@ -235,6 +264,41 @@ def webhook():
     if data['channel_id'].startswith('wa_web:'):
         target_jid = resolve_target_jid(data)
 
+        # 2.0 Record EVERY text message into the channel timeline BEFORE the
+        # permission gate. Group messages without a worker mention used to be
+        # discarded by the worker; now they are saved with metadata into
+        # message_history but never reach the agent pipeline.
+        history_saved = None
+        try:
+            from database import insert_message_history
+            history_saved = insert_message_history(
+                message_id=data.get('message_id'),
+                channel_id=data['channel_id'],
+                remote_jid=data.get('remote_jid') or '',
+                is_group=1 if (data.get('remote_jid') or '').endswith('@g.us') else 0,
+                sender_id=data.get('sender_id'),
+                sender_id_alt=data.get('sender_id_alt'),
+                sender_name=data.get('sender_name'),
+                from_me=1 if data.get('from_me') else 0,
+                content=content,
+                msg_timestamp=data.get('msg_timestamp'),
+            )
+        except Exception as history_err:
+            logging.error(f"Failed to record inbound message in message_history: {history_err}")
+
+        # Vectorize the stored message (sqlite-vec). Fail-open: on any error the
+        # message stays text-only in the timeline and the boot backfill retries.
+        if history_saved is not None:
+            from agent.lc.history_rag import vectorize_message
+            vectorize_message(history_saved)
+
+        if data.get('history_only'):
+            # Mention-less text message from the Baileys worker: saved above,
+            # never processed. The worker keeps replying only when mentioned.
+            return jsonify({
+                "status": "saved_only" if history_saved else "duplicate",
+            }), 200
+
         allowed, reason = check_wa_permissions(data, content)
         if not allowed:
             # Every refusal must short-circuit here. should_process_wa_message returns
@@ -247,7 +311,17 @@ def webhook():
                 callback("Rate limit reached. Please wait a minute.")
             return jsonify({"status": "ignored", "reason": reason or "permissions_or_disabled"}), 200
 
-        on_complete = _build_wa_callback(target_jid, data.get('message_id'))
+        # The message reached the processing pipeline: flag its history row.
+        if history_saved:
+            try:
+                from database import mark_message_history_processed
+                mark_message_history_processed(data.get('message_id'))
+            except Exception:
+                pass
+
+        on_complete = _build_wa_callback(
+            target_jid, data.get('message_id'), channel_id=data['channel_id']
+        )
         _send_composing_presence(target_jid)
 
     # 3. Save attachment

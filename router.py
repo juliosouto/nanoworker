@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 import threading
 import uuid
 
@@ -77,6 +78,19 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
         clear_session_summary(session_id)
         cursor.execute('DELETE FROM messages_in WHERE session_id = ?', (session_id,))
         cursor.execute('DELETE FROM messages_out WHERE session_id = ?', (session_id,))
+        # The channel timeline (message_history) is reset too, so the LLM
+        # history rebuilt from it starts from zero. The vector table, when the
+        # sqlite-vec extension is available, is cleaned of orphan rows.
+        try:
+            cursor.execute('DELETE FROM message_history WHERE channel_id = ?', (channel_id,))
+            from database import sqlite_vec_available
+            if sqlite_vec_available():
+                try:
+                    cursor.execute('DELETE FROM message_history_vec WHERE channel_id = ? AND id NOT IN (SELECT id FROM message_history WHERE channel_id = ?)', (channel_id, channel_id))
+                except sqlite3.OperationalError:
+                    pass
+        except sqlite3.OperationalError:
+            pass  # table missing on databases not yet migrated
         conn.commit()
         conn.close()
         

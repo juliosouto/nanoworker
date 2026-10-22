@@ -222,21 +222,35 @@ function checkMentions(text, agentConfig, options = {}) {
     return false;
 }
 
-function shouldForwardMessage(context, agentConfig) {
+// Decides how a message flows to the Flask backend:
+//   'process'      -> full pipeline (mention / note-to-self / allowed audio)
+//   'history_only' -> recorded into message_history with metadata, never
+//                     processed by the LLM (the worker keeps answering only
+//                     when mentioned). No media is downloaded on this path.
+//   false          -> dropped entirely (media without mention, audio without
+//                     mention when allow_audio_mentions=false, etc.)
+function messageFlow(context, agentConfig) {
     // A única exceção: chat com si mesmo
     if (context.isSelf) {
-        return true;
+        return 'process';
     }
     
     // Se possui menção, passa (texto já tem a menção)
     if (context.hasMention) {
-        return true;
+        return 'process';
     }
     
     // Se for áudio, permitimos o envio para o backend caso configurado,
     // para que a transcrição avalie a menção do lado de lá.
     if (context.isAudio && agentConfig.allowAudioMentions) {
-        return true;
+        return 'process';
+    }
+
+    // Texto sem menção: vai apenas para o histórico (message_history). Em vez
+    // de descartar mensagens de grupo que não mencionam o worker, elas são
+    // salvas com metadados; o processamento continua apenas com menção.
+    if (context.isText) {
+        return 'history_only';
     }
     
     return false;
@@ -342,19 +356,22 @@ async function connectToWhatsApp() {
                 isGroup: isGroupChat(remoteJid),
                 isSelf: isNoteToSelf(remoteJid, ownJid, ownLid),
                 isAudio: msgType === 'audio',
+                isText: msgType === 'text',
                 hasMention: checkMentions(textContent, agentConfig, { nativeMention })
             };
 
-            if (!shouldForwardMessage(context, agentConfig)) {
+            const flow = messageFlow(context, agentConfig);
+            if (!flow) {
                 // Log dropped messages explicitly so silent filtering is observable
                 // instead of disappearing without a trace. Text drops used to be
                 // completely silent, which made "works in note-to-self but not in
-                // the group" impossible to diagnose.
+                // the group" impossible to diagnose. Plain text is no longer
+                // dropped: it flows as 'history_only' below.
                 if (context.isAudio) {
                     console.error(`[Baileys Inbound] 🔊 Dropped audio from ${remoteJid} (not self, no text mention). Set allow_audio_mentions=true in WhatsApp settings to process received audios.`);
                 } else {
                     const preview = (textContent || '').slice(0, 80).replace(/\n/g, ' ');
-                    console.error(`[Baileys Inbound] 💬 Dropped message from ${remoteJid} (not self, no worker mention detected). text="${preview}" nativeMention=${nativeMention} knownWorkers=[${agentConfig.workerNames.join(', ')}]`);
+                    console.error(`[Baileys Inbound] 📎 Dropped media message from ${remoteJid} (not self, no worker mention; only text is kept in history). text="${preview}" nativeMention=${nativeMention} knownWorkers=[${agentConfig.workerNames.join(', ')}]`);
                 }
                 continue;
             }
@@ -539,8 +556,17 @@ async function connectToWhatsApp() {
                     sender_jid_alt: altSenderJid,
                     remote_jid: remoteJid,
                     content: text,
-                    message_id: msg.key.id
+                    message_id: msg.key.id,
+                    // Original WhatsApp epoch (falls back to now) so the backend
+                    // can store real date/hour/minute/second metadata.
+                    msg_timestamp: msgTimestamp || Math.floor(Date.now() / 1000),
+                    from_me: msg.key.fromMe === true
                 };
+                // Text without a worker mention: the backend only records it
+                // into message_history and must NOT run the agent pipeline.
+                if (flow === 'history_only') {
+                    payload.history_only = true;
+                }
                 // Forward the native mention info so the backend can also decide
                 // that a worker was mentioned (the text alone does not contain
                 // the worker name when the user picks it from the "@" list).

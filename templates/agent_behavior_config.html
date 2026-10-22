@@ -96,15 +96,65 @@
                 <div style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
                     <div style="flex: 1; margin-right: 16px;">
                         <label
-                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Message Slice Size (Tokens)</label>
-                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Maximum combined size (history + current message) sent to the LLM. Oldest messages are dropped first.</small>
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">History Size (Messages)</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Number of text messages kept in the database per channel (the history size). Group messages without a mention are recorded too; the worker only replies when mentioned.</small>
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                         <button type="button" id="sliceSizeMinus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">-</button>
-                        <input type="range" id="sliceSizeSlider" min="200" max="10000" step="50" value="{{ message_slice_size_tokens }}"
+                        <input type="range" id="sliceSizeSlider" min="10" max="2000" step="10" value="{{ history_size_messages }}"
                             style="width: 100px; cursor: pointer;">
                         <button type="button" id="sliceSizePlus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">+</button>
-                        <span id="sliceSizeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 32px; text-align: center; margin-left: 4px;">{{ message_slice_size_tokens }}</span>
+                        <span id="sliceSizeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 32px; text-align: center; margin-left: 4px;">{{ history_size_messages }}</span>
+                    </div>
+                </div>
+
+                <div style="border-top: 1px solid var(--border-color); margin-top: 4px; padding-top: 16px; margin-bottom: 8px; display: flex; align-items: flex-start; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">History Retrieval (RAG)</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">When mentioned, search the vectorized channel history (sqlite-vec) and attach the most relevant past messages to your prompt before calling the LLM.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">
+                        <input type="checkbox" id="historyRagToggle" {% if history_rag_enabled %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="historyRagKnob"></span>
+                    </label>
+                </div>
+
+                <div id="historyRagParams" style="display: flex; flex-direction: column; gap: 10px; padding: 0 2px 8px 2px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <small style="color: var(--text-muted);">Search type</small>
+                        <select id="historyRagSearchType"
+                            style="padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                            <option value="similarity" {% if history_rag_search_type == 'similarity' %}selected{% endif %}>similarity</option>
+                            <option value="mmr" {% if history_rag_search_type == 'mmr' %}selected{% endif %}>mmr</option>
+                            <option value="similarity_score_threshold" {% if history_rag_search_type == 'similarity_score_threshold' %}selected{% endif %}>similarity_score_threshold</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <small style="color: var(--text-muted);">k (results attached)</small>
+                        <input type="number" id="historyRagK" min="1" max="20" value="{{ history_rag_k }}"
+                            style="width: 90px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <small style="color: var(--text-muted);">fetch_k (candidates before re-rank)</small>
+                        <input type="number" id="historyRagFetchK" min="1" max="200" value="{{ history_rag_fetch_k }}"
+                            style="width: 90px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                    </div>
+                    <div id="historyRagScoreThresholdRow" style="display: none; align-items: center; justify-content: space-between;">
+                        <small style="color: var(--text-muted);">score threshold (0-1)</small>
+                        <input type="number" step="0.05" min="0" max="1" id="historyRagScoreThreshold" value="{{ history_rag_score_threshold }}"
+                            style="width: 90px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                    </div>
+                    <div id="historyRagLambdaRow" style="display: none; align-items: center; justify-content: space-between;">
+                        <small style="color: var(--text-muted);">mmr lambda (0=relevance, 1=diversity)</small>
+                        <input type="number" step="0.05" min="0" max="1" id="historyRagLambda" value="{{ history_rag_lambda }}"
+                            style="width: 90px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
                     </div>
                 </div>
             </div>

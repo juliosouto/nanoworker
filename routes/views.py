@@ -200,9 +200,26 @@ def agent_behavior_config_page():
         am_val = 1
 
     try:
-        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '2000'))
+        history_size = int(get_config('MESSAGE_HISTORY_SIZE', '200'))
     except (ValueError, TypeError):
-        slice_tokens = 250
+        history_size = 200
+
+    try:
+        history_rag_k = int(get_config('HISTORY_RAG_K', '3'))
+    except (ValueError, TypeError):
+        history_rag_k = 3
+    try:
+        history_rag_fetch_k = int(get_config('HISTORY_RAG_FETCH_K', '20'))
+    except (ValueError, TypeError):
+        history_rag_fetch_k = 20
+    try:
+        history_rag_score_threshold = float(get_config('HISTORY_RAG_SCORE_THRESHOLD', '0.3'))
+    except (ValueError, TypeError):
+        history_rag_score_threshold = 0.3
+    try:
+        history_rag_lambda = float(get_config('HISTORY_RAG_LAMBDA', '0.5'))
+    except (ValueError, TypeError):
+        history_rag_lambda = 0.5
 
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
@@ -210,7 +227,13 @@ def agent_behavior_config_page():
         use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'false').lower() == 'true',
         plan_before_execution=get_config('PLAN_BEFORE_EXECUTION', 'false').lower() == 'true',
         autonomous_mode=am_val,
-        message_slice_size_tokens=slice_tokens,
+        history_size_messages=history_size,
+        history_rag_enabled=get_config('HISTORY_RAG_ENABLED', 'true').lower() == 'true',
+        history_rag_search_type=get_config('HISTORY_RAG_SEARCH_TYPE', 'mmr'),
+        history_rag_k=history_rag_k,
+        history_rag_fetch_k=history_rag_fetch_k,
+        history_rag_score_threshold=history_rag_score_threshold,
+        history_rag_lambda=history_rag_lambda,
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')

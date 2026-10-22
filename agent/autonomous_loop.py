@@ -12,7 +12,7 @@ from agent.db_feedback import insert_feedback
 from agent.llm_router import invoke_llm_with_fallback
 from agent.stop_check import StopRequestedError, reset_stop_check, set_stop_check
 from database import get_config
-from utils.message_utils import MEDIA_PLACEHOLDER, slice_conversation_to_budget
+from utils.message_utils import MEDIA_PLACEHOLDER
 
 
 def _strip_media_parts(send_content):
@@ -290,10 +290,10 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
                             parts.append(p)
                         history.append(types.Content(role="user", parts=parts))
                         history.append(types.Content(role="model", parts=[types.Part.from_text(text=mock_response_raw)]))
-                        # Re-apply the combined slice budget, since the history
-                        # just grew by the previous turn + reflection feedback.
-                        history, trimmed = slice_conversation_to_budget(history, feedback_text)
-                        current_send_content = [types.Part.from_text(text=trimmed)]
+                        # Token-based slicing was removed; the reflection
+                        # feedback is sent as-is on top of the history (the
+                        # overall context is bounded by message count).
+                        current_send_content = [types.Part.from_text(text=feedback_text)]
                     else:
                         break
             else:

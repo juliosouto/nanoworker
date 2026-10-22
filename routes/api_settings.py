@@ -102,7 +102,13 @@ def save_settings():
         'tts_model': 'TTS_MODEL',
         'whisper_model': 'WHISPER_MODEL',
         'autonomous_mode': 'AUTONOMOUS_MODE',
-        'message_slice_size_tokens': 'MESSAGE_SLICE_SIZE_TOKENS',
+        'history_size_messages': 'MESSAGE_HISTORY_SIZE',
+        'history_rag_enabled': 'HISTORY_RAG_ENABLED',
+        'history_rag_search_type': 'HISTORY_RAG_SEARCH_TYPE',
+        'history_rag_k': 'HISTORY_RAG_K',
+        'history_rag_fetch_k': 'HISTORY_RAG_FETCH_K',
+        'history_rag_score_threshold': 'HISTORY_RAG_SCORE_THRESHOLD',
+        'history_rag_lambda': 'HISTORY_RAG_LAMBDA',
         'max_download_size_mb': 'MAX_DOWNLOAD_SIZE_MB'
     }
     
