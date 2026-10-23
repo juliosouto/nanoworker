@@ -9,6 +9,9 @@ from utils.message_utils import clean_mention
 
 logger = logging.getLogger(__name__)
 
+# The '/new' chat command (deletes the channel's history) is disabled.
+ENABLE_NEW_COMMAND = False
+
 def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=None, sender_name=None, image_base64=None, file_mime_type=None, file_name=None, on_complete=None, client_message_id=None):
     """
     Finds/creates a session, writes to messages_in, and dispatches
@@ -70,7 +73,9 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
     agent_name = default_worker['worker_name'] if default_worker else ''
     cleaned_content = clean_mention(content, agent_name)
 
-    if cleaned_content == "/new":
+    # '/new' (wipes the channel history) is disabled: the message is treated
+    # as regular input. Flip ENABLE_NEW_COMMAND to restore it.
+    if ENABLE_NEW_COMMAND and cleaned_content == "/new":
         # Phase-3 cleanup: a fresh conversation must not inherit a stale summary
         # from the old one.
         from database import clear_session_summary

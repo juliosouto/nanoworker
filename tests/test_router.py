@@ -54,6 +54,21 @@ def test_route_inbound_message_existing_session(mock_worker, mock_thread_start, 
         assert mock_thread_start.called
 
 @patch('utils.message_utils.get_default_worker', return_value={'worker_name': 'test_worker'})
+@patch('threading.Thread.start')
+def test_route_inbound_message_new_command_disabled(mock_thread_start, mock_worker, test_app):
+    # '/new' is disabled: it must not clear history and is processed as a
+    # regular (async) message.
+    from router import route_inbound_message
+    with test_app.app_context():
+        cb = MagicMock()
+        m_id, s_id, is_sync = route_inbound_message('some_channel', '/new', on_complete=cb)
+        assert is_sync is False
+        assert mock_thread_start.called
+        for call in cb.call_args_list:
+            assert call.args[0] != "History cleared! Starting a new conversation."
+
+@patch('utils.message_utils.get_default_worker', return_value={'worker_name': 'test_worker'})
+@patch('router.ENABLE_NEW_COMMAND', True)
 def test_route_inbound_message_clear_history(mock_worker, test_app):
     from router import route_inbound_message
     with test_app.app_context():
