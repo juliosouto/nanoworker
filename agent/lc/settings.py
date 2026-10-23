@@ -143,16 +143,16 @@ def tool_compact_schema() -> bool:
 
 
 def tool_relevance_filter() -> bool:
-    """True when the opt-in LangChain tool-relevance filter is active.
+    """True when the LangChain tool-relevance filter is active.
 
     When enabled, a lightweight LLM call narrows the permitted tool set to the
     tools likely needed by the user's message before the main provider call
-    (saves tokens and reduces tool confusion for small models). Default is OFF
-    ('false'): all permitted tools are sent, exactly as before. The filter is
+    (saves tokens and reduces tool confusion for small models). Default is ON
+    ('true'); set it to 'false' to send all permitted tools. The filter is
     fail-open — any error keeps the full tool set.
     """
     raw = os.environ.get("TOOL_RELEVANCE_FILTER") or _cfg(
-        "TOOL_RELEVANCE_FILTER", "false"
+        "TOOL_RELEVANCE_FILTER", "true"
     )
     return str(raw).strip().lower() == "true"
 

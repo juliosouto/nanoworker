@@ -144,12 +144,12 @@ def test_advanced_settings_page(client):
     response = client.get('/settings/advanced')
     assert response.status_code == 200
 
-def test_advanced_settings_tool_relevance_filter_defaults_off(client, monkeypatch):
-    # No env var and no SQLite row: the switch renders disabled.
+def test_advanced_settings_tool_relevance_filter_defaults_on(client, monkeypatch):
+    # No env var and no SQLite row: the switch renders enabled.
     monkeypatch.delenv('TOOL_RELEVANCE_FILTER', raising=False)
     response = client.get('/settings/advanced')
     assert response.status_code == 200
-    assert b'id="toolRelevanceToggle" checked' not in response.data
+    assert b'id="toolRelevanceToggle" checked' in response.data
 
 def test_advanced_settings_tool_relevance_filter_env_override(client, monkeypatch):
     # The UI reads the same env > app_config source as the runtime
