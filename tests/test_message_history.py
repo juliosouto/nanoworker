@@ -87,6 +87,17 @@ def test_insert_splits_timestamp_metadata(db):
     assert row['worker_mentioned'] == 0
 
 
+def test_history_size_zero_keeps_nothing(db):
+    assert get_message_history_size() == 10000  # production default
+    database.set_config('MESSAGE_HISTORY_SIZE', '0')
+    assert get_message_history_size() == 0
+    row_id = insert_message_history(
+        message_id='WA-Z', channel_id=CHANNEL, content='x', msg_timestamp=1,
+    )
+    assert row_id is not None  # inserted, then immediately trimmed away
+    assert _count(db) == 0
+
+
 def test_insert_deduplicates_message_id(db):
     first = insert_message_history(
         message_id='WA-DUP', channel_id=CHANNEL, content='hello'

@@ -55,8 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const minusBtn = document.getElementById('autonomousModeMinus');
     const plusBtn = document.getElementById('autonomousModePlus');
 
-    const sliceSlider = document.getElementById('sliceSizeSlider');
-    const sliceSliderValue = document.getElementById('sliceSizeValue');
+    const historySizeInput = document.getElementById('historySizeInput');
     const sliceMinusBtn = document.getElementById('sliceSizeMinus');
     const slicePlusBtn = document.getElementById('sliceSizePlus');
 
@@ -67,11 +66,11 @@ document.addEventListener('DOMContentLoaded', () => {
         slider.addEventListener('change', autoSaveToggles);
     }
 
-    if(sliceSlider) {
-        sliceSlider.addEventListener('input', function() {
-            if(sliceSliderValue) sliceSliderValue.textContent = this.value;
+    if(historySizeInput) {
+        historySizeInput.addEventListener('change', () => {
+            sanitizeHistorySizeInput();
+            autoSaveToggles();
         });
-        sliceSlider.addEventListener('change', autoSaveToggles);
     }
 
     if(minusBtn) minusBtn.addEventListener('click', () => {
@@ -83,11 +82,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     if(sliceMinusBtn) sliceMinusBtn.addEventListener('click', () => {
-        if(sliceSlider) updateSliceSlider(parseInt(sliceSlider.value) - 10);
+        if(historySizeInput) updateHistorySize(parseInt(historySizeInput.value) - 10);
     });
 
     if(slicePlusBtn) slicePlusBtn.addEventListener('click', () => {
-        if(sliceSlider) updateSliceSlider(parseInt(sliceSlider.value) + 10);
+        if(historySizeInput) updateHistorySize(parseInt(historySizeInput.value) + 10);
     });
 
     loadUserMemories();
@@ -106,17 +105,24 @@ function updateSlider(val) {
     autoSaveToggles();
 }
 
-function updateSliceSlider(val) {
-    const sliceSlider = document.getElementById('sliceSizeSlider');
-    const sliceSliderValue = document.getElementById('sliceSizeValue');
-    if(!sliceSlider) return;
+function sanitizeHistorySizeInput() {
+    const historySizeInput = document.getElementById('historySizeInput');
+    if(!historySizeInput) return;
+    let newVal = parseInt(historySizeInput.value);
+    if (isNaN(newVal)) newVal = 10000;
+    if (newVal < 0) newVal = 0;
+    if (newVal > 1000000) newVal = 1000000;
+    historySizeInput.value = newVal;
+}
+
+function updateHistorySize(val) {
+    const historySizeInput = document.getElementById('historySizeInput');
+    if(!historySizeInput) return;
     let newVal = parseInt(val);
     if (isNaN(newVal)) return;
-    if (newVal < 10) newVal = 10;
-    if (newVal > 2000) newVal = 2000;
-    newVal = Math.round(newVal / 10) * 10;
-    sliceSlider.value = newVal;
-    if(sliceSliderValue) sliceSliderValue.textContent = newVal;
+    if (newVal < 0) newVal = 0;
+    if (newVal > 1000000) newVal = 1000000;
+    historySizeInput.value = newVal;
     autoSaveToggles();
 }
 
@@ -133,7 +139,7 @@ function autoSaveToggles() {
     const useRecipesAsTools = document.getElementById('useRecipesToggle')?.checked;
     const planBeforeExecution = document.getElementById('planBeforeExecutionToggle')?.checked;
     const autonomousMode = parseInt(document.getElementById('autonomousModeSlider')?.value) || 1;
-    const historySizeMessages = parseInt(document.getElementById('sliceSizeSlider')?.value) || 200;
+    const historySizeMessages = parseInt(document.getElementById('historySizeInput')?.value);
     const historyRagEnabled = document.getElementById('historyRagToggle')?.checked;
     const historyRagSearchType = document.getElementById('historyRagSearchType')?.value || 'mmr';
     const historyRagK = parseInt(document.getElementById('historyRagK')?.value) || 3;
@@ -149,7 +155,7 @@ function autoSaveToggles() {
             use_recipes_as_tools: useRecipesAsTools,
             plan_before_execution: planBeforeExecution,
             autonomous_mode: autonomousMode,
-            history_size_messages: historySizeMessages,
+            history_size_messages: isNaN(historySizeMessages) ? 10000 : historySizeMessages,
             history_rag_enabled: historyRagEnabled,
             history_rag_search_type: historyRagSearchType,
             history_rag_k: historyRagK,

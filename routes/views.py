@@ -200,9 +200,9 @@ def agent_behavior_config_page():
         am_val = 1
 
     try:
-        history_size = int(get_config('MESSAGE_HISTORY_SIZE', '200'))
+        history_size = int(get_config('MESSAGE_HISTORY_SIZE', '10000'))
     except (ValueError, TypeError):
-        history_size = 200
+        history_size = 10000
 
     try:
         history_rag_k = int(get_config('HISTORY_RAG_K', '3'))

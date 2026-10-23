@@ -1076,13 +1076,14 @@ def clear_session_summary(session_id: str) -> None:
 # Message history (message_history / message_history_vec)
 # ---------------------------------------------------------------------------
 
-def get_message_history_size(default: int = 200) -> int:
-    """Número de mensagens mantidas por canal (slider Agent Behavior)."""
+def get_message_history_size(default: int = 10000) -> int:
+    """Número de mensagens mantidas por canal (campo History Size, Agent
+    Behavior). 0 = não manter histórico (linhas e vetores são apagados)."""
     try:
         n = int(get_config("MESSAGE_HISTORY_SIZE", str(default)))
     except (TypeError, ValueError):
         n = default
-    return max(1, n)
+    return max(0, n)
 
 
 def insert_message_history(message_id=None, channel_id=None, remote_jid=None,

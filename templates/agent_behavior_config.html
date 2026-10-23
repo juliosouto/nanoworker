@@ -97,14 +97,13 @@
                     <div style="flex: 1; margin-right: 16px;">
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">History Size (Messages)</label>
-                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Number of text messages kept in the database per channel (the history size). Group messages without a mention are recorded too; the worker only replies when mentioned.</small>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Editable number of text messages kept in the database per channel, from 0 (keep nothing) up to 1000000. Group messages without a mention are recorded too; the worker only replies when mentioned.</small>
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                         <button type="button" id="sliceSizeMinus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">-</button>
-                        <input type="range" id="sliceSizeSlider" min="10" max="2000" step="10" value="{{ history_size_messages }}"
-                            style="width: 100px; cursor: pointer;">
+                        <input type="number" id="historySizeInput" min="0" max="1000000" step="1" value="{{ history_size_messages }}"
+                            style="width: 130px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.9rem; text-align: right;">
                         <button type="button" id="sliceSizePlus" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s;">+</button>
-                        <span id="sliceSizeValue" style="font-size: 0.95rem; font-weight: 500; min-width: 32px; text-align: center; margin-left: 4px;">{{ history_size_messages }}</span>
                     </div>
                 </div>
 

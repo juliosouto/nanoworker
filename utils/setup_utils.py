@@ -61,7 +61,7 @@ def setup_app_config():
             ('PERM_FS', 'true'),
             ('PERM_WEB_SEARCH', 'true'),
             ('PERM_TOOL_CREATOR', 'true'),
-            ('MESSAGE_HISTORY_SIZE', '200'),
+            ('MESSAGE_HISTORY_SIZE', '10000'),
             ('HISTORY_RAG_ENABLED', 'true'),
             ('HISTORY_RAG_SEARCH_TYPE', 'mmr'),
             ('HISTORY_RAG_K', '3'),
