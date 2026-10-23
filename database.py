@@ -870,6 +870,27 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # BM25 keyword index over the message history (FTS5, always available in
+    # standard SQLite builds). rowid mirrors message_history.id and channel_id
+    # is stored UNINDEXED so every keyword query (and cleanup) is scoped to a
+    # single chat. The backfill is idempotent: pre-existing rows (stored before
+    # this index existed) are indexed on the first boot.
+    try:
+        cursor.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS message_history_fts USING fts5(
+            content,
+            channel_id UNINDEXED,
+            tokenize='porter unicode61'
+        )
+        ''')
+        cursor.execute('''
+        INSERT INTO message_history_fts(rowid, content, channel_id)
+            SELECT id, content, channel_id FROM message_history
+            WHERE id NOT IN (SELECT rowid FROM message_history_fts)
+        ''')
+    except sqlite3.OperationalError:
+        pass
+
     # Seed an initial agent if none exist
     cursor.execute('SELECT COUNT(*) FROM agents')
     if cursor.fetchone()[0] == 0:
@@ -1141,6 +1162,13 @@ def insert_message_history(message_id=None, channel_id=None, remote_jid=None,
         if cursor.rowcount == 0:
             return None  # duplicate message_id -> ignored
         row_id = cursor.lastrowid
+        try:
+            cursor.execute('''
+                INSERT INTO message_history_fts(rowid, content, channel_id)
+                VALUES (?, ?, ?)
+            ''', (row_id, str(content), channel_id))
+        except sqlite3.OperationalError:
+            pass  # FTS unavailable: keyword leg degrades, history is kept
         _trim_message_history_cursor(cursor, channel_id)
         conn.commit()
         return row_id
@@ -1188,6 +1216,15 @@ def _trim_message_history_cursor(cursor, channel_id) -> int:
             ''', (channel_id, channel_id))
         except sqlite3.OperationalError:
             pass
+    if deleted > 0:
+        try:
+            cursor.execute('''
+                DELETE FROM message_history_fts
+                WHERE channel_id = ?
+                  AND rowid NOT IN (SELECT id FROM message_history WHERE channel_id = ?)
+            ''', (channel_id, channel_id))
+        except sqlite3.OperationalError:
+            pass
     return deleted
 
 
@@ -1230,6 +1267,14 @@ def clear_channel_history(channel_id) -> int:
                 ''', (channel_id, channel_id))
             except sqlite3.OperationalError:
                 pass
+        try:
+            cursor.execute('''
+                DELETE FROM message_history_fts
+                WHERE channel_id = ?
+                  AND rowid NOT IN (SELECT id FROM message_history WHERE channel_id = ?)
+            ''', (channel_id, channel_id))
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         return deleted
     finally:

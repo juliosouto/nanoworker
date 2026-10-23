@@ -111,7 +111,7 @@
                     <div style="flex: 1; margin-right: 16px;">
                         <label
                             style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">History Retrieval (RAG)</label>
-                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">When mentioned, search the vectorized channel history (sqlite-vec) and attach the most relevant past messages to your prompt before calling the LLM.</small>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">When mentioned, a hybrid search (semantic vectors + BM25 keywords) over the channel history attaches the most relevant past messages to your prompt before calling the LLM.</small>
                     </div>
                     <label
                         style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">

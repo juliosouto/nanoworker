@@ -15,7 +15,13 @@ import pytest
 from app import app
 
 import database
-from database import get_missing_vector_ids, init_db, insert_message_history, set_config
+from database import (
+    clear_channel_history,
+    get_missing_vector_ids,
+    init_db,
+    insert_message_history,
+    set_config,
+)
 
 CHANNEL_A = "wa_web:gA@g.us"
 CHANNEL_B = "wa_web:gB@g.us"
@@ -458,12 +464,21 @@ def test_trim_is_channel_scoped_and_keeps_other_channels(db, cluster_embeddings)
            JOIN message_history h ON h.id = v.id WHERE h.channel_id = ?''',
         (CHANNEL_B,),
     ).fetchall()
-    conn.close()
 
     assert a_hist == 3
     assert a_vec == 3
     assert vec_ids == hist_ids  # no orphaned vectors after the scoped cleanup
     assert [r['id'] for r in b_vec] == [rid_b]  # other channel untouched
+
+    a_fts = conn.execute(
+        'SELECT COUNT(*) FROM message_history_fts WHERE channel_id = ?', (CHANNEL_A,)
+    ).fetchone()[0]
+    b_fts = conn.execute(
+        'SELECT COUNT(*) FROM message_history_fts WHERE channel_id = ?', (CHANNEL_B,)
+    ).fetchone()[0]
+    assert a_fts == 3   # FTS trimmed/scoped together with the history rows
+    assert b_fts == 1   # other channel untouched
+    conn.close()
 
 
 def test_insert_vector_idempotent(db, cluster_embeddings):
@@ -481,3 +496,116 @@ def test_insert_vector_idempotent(db, cluster_embeddings):
     conn.close()
     assert len(rows) == 1  # DELETE+INSERT: never duplicated
     assert json.loads(rows[0]['payload'])['n'] == 2
+
+
+def test_fts_table_created(db):
+    names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert 'message_history_fts' in names
+
+
+def test_fts_sync_on_insert_trim_and_clear(db):
+    _add(CHANNEL_A, 'relatorio A1', 1000)
+    _add(CHANNEL_B, 'relatorio B1', 1000)
+
+    def fts_ids(channel):
+        conn = _connect_with_vec()
+        rows = conn.execute(
+            'SELECT rowid FROM message_history_fts WHERE channel_id = ? ORDER BY rowid',
+            (channel,))
+        ids = [r['rowid'] for r in rows]
+        conn.close()
+        return ids
+
+    assert len(fts_ids(CHANNEL_A)) == 1  # synced on insert
+    assert len(fts_ids(CHANNEL_B)) == 1
+
+    # Trim channel A beyond the limit: FTS row of the trimmed message removed.
+    set_config('MESSAGE_HISTORY_SIZE', '1')
+    _add(CHANNEL_A, 'relatorio A2', 1001)
+    assert len(fts_ids(CHANNEL_A)) == 1
+
+    # Clear channel A: FTS emptied, channel B untouched.
+    clear_channel_history(CHANNEL_A)
+    assert fts_ids(CHANNEL_A) == []
+    assert len(fts_ids(CHANNEL_B)) == 1
+
+
+def test_fts_backfilled_on_init(db):
+    # Simulate rows stored before the FTS index existed (raw insert).
+    conn = _connect_with_vec()
+    conn.execute(
+        "INSERT INTO message_history (message_id, channel_id, content, msg_timestamp) "
+        "VALUES ('raw-1', ?, 'relatorio cru pre-fts', 1)",
+        (CHANNEL_A,),
+    )
+    conn.commit()
+    before = conn.execute(
+        'SELECT COUNT(*) FROM message_history_fts WHERE channel_id = ?', (CHANNEL_A,)
+    ).fetchone()[0]
+    conn.close()
+    assert before == 0
+
+    init_db()  # idempotent backfill
+    conn = _connect_with_vec()
+    after = conn.execute(
+        'SELECT COUNT(*) FROM message_history_fts WHERE channel_id = ?', (CHANNEL_A,)
+    ).fetchone()[0]
+    conn.close()
+    assert after == 1
+
+
+def test_bm25_leg_works_without_embeddings(db, monkeypatch):
+    """Hybrid value: when the semantic leg is dead (no embeddings), the BM25
+    keyword leg alone still answers the query."""
+    import agent.lc.embeddings as e
+    monkeypatch.setattr(e, 'embeddings_available', lambda: False)
+
+    _add(CHANNEL_A, 'relatorio mensal daqui', 1000)
+
+    from agent.lc.history_rag import HistoryRagSettings, retrieve_relevant_history
+
+    results = retrieve_relevant_history(
+        'relatorio', CHANNEL_A,
+        settings=HistoryRagSettings(enabled=True, search_type='similarity',
+                                    k=3, fetch_k=20, score_threshold=0.0,
+                                    lambda_mult=0.5),
+    )
+    contents = [r['payload']['content'] for r in results]
+    assert contents == ['relatorio mensal daqui']
+    assert results[0]['score'] is None  # no semantic score available (BM25-only)
+
+
+def test_query_with_operators_does_not_crash(db, cluster_embeddings):
+    _add(CHANNEL_A, 'relatorio com aspas e (parenteses)', 1000)
+    _vectorize_all()
+
+    from agent.lc.history_rag import HistoryRagSettings, retrieve_relevant_history
+
+    results = retrieve_relevant_history(
+        'relatorio" OR (NEAR(a b)', CHANNEL_A,
+        settings=HistoryRagSettings(enabled=True, search_type='similarity',
+                                    k=5, fetch_k=20, score_threshold=0.0,
+                                    lambda_mult=0.5),
+    )
+    contents = [r['payload']['content'] for r in results]
+    assert any('relatorio' in c for c in contents)  # sanitized, no FTS5 injection
+
+
+def test_hybrid_fusion_ranks_dual_leg_first(db, cluster_embeddings):
+    """A document matched by BOTH legs (semantic + BM25) must rank above a
+    document matched by only one leg."""
+    _add(CHANNEL_A, 'relatorio semanal', 1000)
+    _add(CHANNEL_A, 'futebol hoje', 1001)
+    _vectorize_all()
+
+    from agent.lc.history_rag import HistoryRagSettings, retrieve_relevant_history
+
+    results = retrieve_relevant_history(
+        'relatorio futebol', CHANNEL_A,
+        settings=HistoryRagSettings(enabled=True, search_type='similarity',
+                                    k=2, fetch_k=20, score_threshold=0.0,
+                                    lambda_mult=0.5),
+    )
+    contents = [r['payload']['content'] for r in results]
+    assert contents[0] == 'relatorio semanal'
+    assert contents[1] == 'futebol hoje'

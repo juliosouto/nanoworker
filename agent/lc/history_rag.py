@@ -1,6 +1,7 @@
-"""History RAG: vectorizes the message_history timeline into sqlite-vec and
-retrieves relevant past messages to attach to the user's prompt before the
-LLM call (the worker only triggers this when it is mentioned).
+"""History RAG: HYBRID retrieval over the message_history timeline — semantic
+vectors (sqlite-vec, cosine) fused with BM25 keyword matches (FTS5, porter +
+unicode61) via Reciprocal Rank Fusion — attached to the user's prompt before
+the LLM call (the worker only triggers this when it is mentioned).
 
 Design notes:
 - ``database.py`` stays pure SQL; embeddings orchestration lives here,
@@ -164,22 +165,74 @@ def backfill_missing_vectors(limit: int = 200) -> int:
     return done
 
 
+def _fts_query_for(query):
+    r"""Sanitizes the query into an FTS5 OR-of-quoted-tokens expression.
+
+    - ``re.findall(r"\w+")`` keeps only word characters, so user-supplied FTS5
+      operators (AND/OR/NEAR, quotes, parens) can never be injected;
+    - tokens are joined with OR so conversational queries match documents that
+      contain any of the terms — bm25() then ranks by term rarity (IDF);
+    - returns None when no usable token remains (keyword leg is skipped).
+    """
+    import re
+
+    tokens, seen = [], set()
+    for token in re.findall(r"\w+", query, re.UNICODE):
+        token = token.lower()
+        if token and token not in seen:
+            seen.add(token)
+            tokens.append(token)
+        if len(tokens) >= 16:
+            break
+    if not tokens:
+        return None
+    return " OR ".join('"%s"' % t for t in tokens)
+
+
+def _bm25_search(conn, fts_query, channel_id, exclude_id=None, cutoff_ts=None, limit=20):
+    """BM25 keyword leg (FTS5, porter + unicode61). Returns message_history
+    ids, best-first (most negative bm25 first). The JOIN carries the channel
+    scope plus the same exclusion/cutoff filters the semantic leg applies."""
+    sql = """
+        SELECT message_history_fts.rowid AS rowid
+        FROM message_history_fts
+        JOIN message_history h ON h.id = message_history_fts.rowid
+        WHERE message_history_fts MATCH ?
+          AND message_history_fts.channel_id = ?
+    """
+    params = [fts_query, channel_id]
+    if exclude_id is not None:
+        sql += ' AND message_history_fts.rowid != ?'
+        params.append(exclude_id)
+    if cutoff_ts is not None:
+        sql += ' AND h.msg_timestamp < ?'
+        params.append(cutoff_ts)
+    sql += ' ORDER BY bm25(message_history_fts) LIMIT ?'
+    params.append(limit)
+    return [row["rowid"] for row in conn.execute(sql, params).fetchall()]
+
+
+def _rrf_fuse(ranked_lists, rrf_k: int = 60) -> dict:
+    """Reciprocal Rank Fusion across ranked id lists (each best-first):
+    score(d) = sum over legs of 1 / (rrf_k + position_of_d_in_leg)."""
+    scores = {}
+    for ranked in ranked_lists:
+        for position, row_id in enumerate(ranked, start=1):
+            scores[row_id] = scores.get(row_id, 0.0) + 1.0 / (rrf_k + position)
+    return scores
+
+
 def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None,
                               settings: HistoryRagSettings | None = None) -> list:
     """
-    Retrieves the most relevant past messages of ``channel_id`` for ``query``.
+    HYBRID retrieval over the channel history: the semantic vector leg
+    (sqlite-vec, cosine) is fused with the BM25 keyword leg (FTS5) via
+    Reciprocal Rank Fusion, then filtered/re-ranked by ``settings.search_type``.
 
-    Args:
-        query: user's (mention-cleaned) message used as the search query.
-        channel_id: restricts the search to the current chat (partition key).
-        exclude_id: message_history.id of the message being processed now.
-        cutoff_ts: skip messages already inside the verbatim N-message window
-            (payload msg_ts >= cutoff_ts), so the prompt never duplicates the
-            recent context.
-        settings: HistoryRagSettings (read from app_config when omitted).
-
-    Returns:
-        list of {"id": int, "score": float, "payload": dict}, best first.
+    Degradation (fail-open): without embeddings the BM25 leg alone still
+    answers; without keyword data the semantic leg alone answers; with neither,
+    returns []. The query embedding is skipped entirely when the channel has no
+    vectors.
     """
     settings = settings or get_settings()
     if not settings.enabled or not channel_id or not (query or "").strip():
@@ -187,129 +240,177 @@ def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None
 
     from database import get_db
 
-    # Cheap early exit: a partition with no vectors cannot return anything, so
-    # skip paying for the query embedding. (A partition-key COUNT is a plain
-    # vec0 partition query.) If the check itself fails, fall through and let
-    # the KNN attempt handle it.
+    fts_query = _fts_query_for(query)
+
+    # Partition sizes decide which legs can run — and avoid paying for the
+    # query embedding when the channel has no vectors at all.
     conn = get_db()
     try:
         cursor = conn.cursor()
-        cursor.execute(
-            'SELECT COUNT(*) FROM message_history_vec WHERE channel_id = ?',
-            (channel_id,),
-        )
-        if cursor.fetchone()[0] == 0:
-            return []
-    except Exception as exc:
-        logger.debug("History RAG partition check failed (%s); continuing", exc)
+        try:
+            cursor.execute(
+                'SELECT COUNT(*) FROM message_history_vec WHERE channel_id = ?',
+                (channel_id,),
+            )
+            vec_count = cursor.fetchone()[0]
+        except Exception:
+            vec_count = 0
     finally:
         conn.close()
 
-    try:
-        import agent.lc.embeddings as embeddings
-
-        if not embeddings.embeddings_available():
-            return []
-        query_vector = embeddings.get_embeddings().embed_query(query)
-    except Exception as exc:
-        logger.warning("History RAG: query embedding failed (%s); no context attached", exc)
+    if vec_count == 0 and fts_query is None:
+        # No vectors for the channel and no usable keyword tokens: neither leg
+        # could return anything — skip the embedding API call entirely. (The
+        # BM25 leg itself is cheap when the channel has no keyword hits, so it
+        # is attempted without a pre-count — a COUNT over an FTS5 UNINDEXED
+        # column would be a full table scan per retrieval.)
         return []
+
+    query_vector = None
+    if vec_count > 0:
+        try:
+            import agent.lc.embeddings as embeddings
+
+            if embeddings.embeddings_available():
+                query_vector = embeddings.get_embeddings().embed_query(query)
+        except Exception as exc:
+            logger.warning("History RAG: query embedding failed (%s); BM25-only", exc)
+            query_vector = None
+
+    semantic_candidates = {}
+    semantic_ranked = []
+    bm25_ranked = []
+    bm25_payloads = {}
 
     conn = get_db()
     try:
-        sql = '''
-            SELECT id, distance, payload, vector
-            FROM message_history_vec
-            WHERE channel_id = ? AND vector MATCH ? AND k = ?
-        '''
-        params = [channel_id, json.dumps(query_vector), settings.fetch_k]
-        if exclude_id is not None:
-            sql += ' AND id != ?'
-            params.append(exclude_id)
-        sql += ' ORDER BY distance'
-        rows = conn.execute(sql, params).fetchall()
-    except Exception as exc:
-        logger.warning("History RAG query failed (%s); no context attached", exc)
-        return []
+        if query_vector is not None:
+            sql = """
+                SELECT id, distance, payload, vector
+                FROM message_history_vec
+                WHERE channel_id = ? AND vector MATCH ? AND k = ?
+            """
+            params = [channel_id, json.dumps(query_vector), settings.fetch_k]
+            if exclude_id is not None:
+                sql += ' AND id != ?'
+                params.append(exclude_id)
+            sql += ' ORDER BY distance'
+            for row in conn.execute(sql, params).fetchall():
+                try:
+                    payload = json.loads(row["payload"]) if row["payload"] else {}
+                except (TypeError, ValueError):
+                    payload = {}
+                if cutoff_ts is not None and (payload.get("msg_ts") or 0) >= cutoff_ts:
+                    continue  # already verbatim in the recent-window context
+                semantic_candidates[row["id"]] = {
+                    "payload": payload,
+                    "vector": row["vector"],
+                    "distance": row["distance"],
+                }
+                semantic_ranked.append(row["id"])
+
+        if fts_query is not None:
+            try:
+                bm25_ranked = _bm25_search(
+                    conn, fts_query, channel_id,
+                    exclude_id=exclude_id, cutoff_ts=cutoff_ts,
+                    limit=settings.fetch_k,
+                )
+            except Exception as exc:
+                logger.warning("History RAG: BM25 leg failed (%s); semantic-only", exc)
+                bm25_ranked = []
+            missing = [rid for rid in bm25_ranked if rid not in semantic_candidates]
+            if missing:
+                placeholders = ",".join("?" * len(missing))
+                for row in conn.execute(f"""
+                    SELECT id, channel_id, content, sender_id, sender_name, is_bot,
+                           msg_timestamp, msg_date, msg_hour, msg_minute, msg_second
+                    FROM message_history
+                    WHERE id IN ({placeholders})
+                """, missing):
+                    bm25_payloads[row["id"]] = _payload_from_row(row)
     finally:
         conn.close()
 
+    fused = _rrf_fuse([semantic_ranked, bm25_ranked])
+    fused_ids = sorted(fused, key=lambda rid: fused[rid], reverse=True)
+
     candidates = []
-    for row in rows:
-        try:
-            payload = json.loads(row["payload"]) if row["payload"] else {}
-        except (TypeError, ValueError):
-            payload = {}
-        if cutoff_ts is not None and (payload.get("msg_ts") or 0) >= cutoff_ts:
-            continue  # already verbatim in the recent-window context
+    for rid in fused_ids:
+        known = semantic_candidates.get(rid)
         candidates.append({
-            "id": row["id"],
-            "distance": row["distance"],
-            "payload": payload,
-            "vector": row["vector"],
+            "id": rid,
+            "payload": known["payload"] if known else bm25_payloads.get(rid, {}),
+            "vector": known["vector"] if known else None,
+            "distance": known["distance"] if known else None,
+            "rrf": fused[rid],
         })
 
     if settings.search_type == "similarity_score_threshold":
         picked = [
             c for c in candidates
-            if (1.0 - float(c["distance"])) >= settings.score_threshold
+            if c["distance"] is not None
+            and (1.0 - float(c["distance"])) >= settings.score_threshold
         ][:settings.k]
     elif settings.search_type == "mmr":
-        picked = _mmr_select(query_vector, candidates, settings)
+        picked = _mmr_select(candidates, settings)
     else:  # similarity
         picked = candidates[:settings.k]
 
     return [
-        {"id": c["id"], "score": round(1.0 - float(c["distance"]), 4), "payload": c["payload"]}
+        {
+            "id": c["id"],
+            "score": (round(1.0 - float(c["distance"]), 4)
+                      if c["distance"] is not None else None),
+            "payload": c["payload"],
+        }
         for c in picked
     ]
 
 
-def _mmr_select(query_vector, candidates, settings) -> list:
-    """Maximal Marginal Relevance over the fetched candidates.
+def _mmr_select(candidates, settings) -> list:
+    """Maximal Marginal Relevance over the fused candidate pool.
 
-    score = lambda * sim(query, doc) - (1 - lambda) * max sim(doc, selected)
-    Candidate vectors come back from vec0 as float32 little-endian blobs.
+    relevance  = normalized fusion (RRF) score (semantic + keyword legs);
+    redundancy = max cosine similarity to already-selected candidates that
+    have vectors (BM25-only candidates carry no redundancy signal).
     """
     if not candidates:
         return []
     try:
         import numpy as np
 
-        vecs = np.array(
-            [np.frombuffer(bytes(c["vector"]), dtype="<f4") for c in candidates],
-            dtype="f4",
-        )
-        qv = np.array(query_vector, dtype="f4")
-        if vecs.ndim != 2 or qv.ndim != 1 or vecs.shape[1] != qv.shape[0]:
-            raise ValueError("vector dimension mismatch")
+        max_rrf = max(c["rrf"] for c in candidates) or 1.0
+        vecs = {}
+        for c in candidates:
+            if c.get("vector"):
+                v = np.frombuffer(bytes(c["vector"]), dtype="<f4")
+                norm = float(np.linalg.norm(v))
+                if norm:
+                    vecs[c["id"]] = v / norm
 
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        vecs = vecs / norms
-        qnorm = float(np.linalg.norm(qv))
-        if qnorm:
-            qv = qv / qnorm
-
-        selected, remaining = [], list(range(len(candidates)))
+        selected, remaining = [], list(candidates)
         while remaining and len(selected) < settings.k:
-            best_idx, best_score = None, float("-inf")
-            for idx in remaining:
-                redundancy = max(
-                    (float(vecs[idx] @ vecs[sel]) for sel in selected),
-                    default=0.0,
-                )
+            best, best_score = None, float("-inf")
+            for c in remaining:
+                redundancy = 0.0
+                if c["id"] in vecs and selected:
+                    sims = [
+                        float(vecs[c["id"]] @ vecs[s["id"]])
+                        for s in selected if s["id"] in vecs
+                    ]
+                    redundancy = max(sims) if sims else 0.0
                 score = (
-                    settings.lambda_mult * (1.0 - float(candidates[idx]["distance"]))
+                    settings.lambda_mult * (c["rrf"] / max_rrf)
                     - (1.0 - settings.lambda_mult) * redundancy
                 )
                 if score > best_score:
-                    best_idx, best_score = idx, score
-            selected.append(best_idx)
-            remaining.remove(best_idx)
-        return [candidates[i] for i in selected]
+                    best, best_score = c, score
+            selected.append(best)
+            remaining.remove(best)
+        return selected
     except Exception as exc:
-        logger.warning("History RAG: MMR failed (%s); falling back to plain similarity", exc)
+        logger.warning("History RAG: MMR failed (%s); falling back to fusion order", exc)
         return candidates[:settings.k]
 
 

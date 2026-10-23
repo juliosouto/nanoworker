@@ -89,6 +89,13 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
                     cursor.execute('DELETE FROM message_history_vec WHERE channel_id = ? AND id NOT IN (SELECT id FROM message_history WHERE channel_id = ?)', (channel_id, channel_id))
                 except sqlite3.OperationalError:
                     pass
+            # FTS5 é nativo do SQLite (não depende da extensão vec): o cleanup
+            # roda incondicionalmente para que '/new' nunca deixe órfãos no
+            # índice de keywords.
+            try:
+                cursor.execute('DELETE FROM message_history_fts WHERE channel_id = ? AND rowid NOT IN (SELECT id FROM message_history WHERE channel_id = ?)', (channel_id, channel_id))
+            except sqlite3.OperationalError:
+                pass
         except sqlite3.OperationalError:
             pass  # table missing on databases not yet migrated
         conn.commit()
