@@ -20,6 +20,7 @@ function saveSettings() {
     const llmPref3 = document.getElementById('llmPref3')?.value;
     const llmPref4 = document.getElementById('llmPref4')?.value;
     const llmPref5 = document.getElementById('llmPref5')?.value;
+    const cloudflareAccountId = document.getElementById('cloudflareAccountId')?.value;
 
     const payload = {};
     if (llmPref1 !== undefined) payload.llm_pref_1 = llmPref1;
@@ -27,6 +28,7 @@ function saveSettings() {
     if (llmPref3 !== undefined) payload.llm_pref_3 = llmPref3;
     if (llmPref4 !== undefined) payload.llm_pref_4 = llmPref4;
     if (llmPref5 !== undefined) payload.llm_pref_5 = llmPref5;
+    if (cloudflareAccountId !== undefined) payload.cloudflare_account_id = cloudflareAccountId.trim();
 
     fetch('/api/settings', {
         method: 'POST',
@@ -34,7 +36,7 @@ function saveSettings() {
         body: JSON.stringify(payload)
     }).then(res => res.json()).then(data => {
         if (data.status === 'success') {
-            showToast('Preference order updated successfully!');
+            showToast('Settings saved successfully!');
         } else {
             showToast('Error saving settings.');
         }

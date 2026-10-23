@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 _JSON_SCHEMA_PROVIDERS = {"openai", "groq", "openrouter"}
 # Providers that only support the looser "json_object" response format.
 _JSON_OBJECT_PROVIDERS = {"qwen", "deepseek"}
+# Cloudflare Workers AI is intentionally absent from both sets: its JSON Mode
+# (response_format) is only honored by a small model list (llama-3.x,
+# hermes-2-pro, deepseek-coder/r1-distill) — e.g. @cf/qwen/qwen3.8-27b is NOT
+# on it — so it uses the prompt-based fallback below (parity with ollama/nvidia).
 # Gemini is handled via its own config keys (response_mime_type/response_schema).
 _GEMINI_PROVIDERS = {"gemini", "google"}
 

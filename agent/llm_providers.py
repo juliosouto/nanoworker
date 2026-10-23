@@ -667,3 +667,72 @@ def call_nvidia_llm(
         limit_tokens,
         on_complete=on_complete,
     )
+
+
+def call_cloudflare_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    max_output_tokens: int = None,
+    on_complete=None,
+) -> str:
+    """
+    Makes a call to the Cloudflare Workers AI API (OpenAI compatible endpoint).
+
+    Arguments:
+        model_name (str): The Workers AI model slug INCLUDING its prefix
+            (e.g. "@cf/qwen/qwen3.8-27b" or "@hf/..."). The prefix is required
+            by the API and is intentionally NOT stripped.
+        history (list): The conversation history.
+        config_kwargs (dict): Additional generation configurations (e.g. system_instruction).
+        content (any): The content of the current user message.
+        cursor (sqlite3.Cursor): The database cursor.
+        session_id (str): Session ID.
+        message_in_id (str): Input message ID.
+        table (str): Output table name.
+        api_key (str, optional): Cloudflare API token (per-model, stored in
+            llm_config). Raises exception if missing.
+        max_output_tokens (int, optional): Maximum limit for output tokens.
+
+    Returns:
+        str: The generated response text.
+    """
+    import openai
+
+    if not api_key:
+        raise ValueError("API Key for Cloudflare model is not set.")
+
+    # The Workers AI OpenAI-compatible base URL embeds the account ID, which is
+    # per-provider (not per-model): read it from app_config at call time,
+    # mirroring the OLLAMA_BASE_URL pattern.
+    account_id = (get_config("CLOUDFLARE_ACCOUNT_ID", "") or "").strip()
+    if not account_id:
+        raise ValueError(
+            "CLOUDFLARE_ACCOUNT_ID is not set. Configure it in the "
+            "LLM Models page (Cloudflare Account ID field)."
+        )
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+    )
+    limit_tokens = max_output_tokens if max_output_tokens else None
+    return execute_openai_compatible_llm(
+        client,
+        model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        limit_tokens,
+        on_complete=on_complete,
+    )

@@ -399,6 +399,7 @@ def llm_config_page():
     has_openai_key = bool(get_config('OPENAI_API_KEY'))
     anthropic_model = os.environ.get('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
     has_anthropic_key = bool(get_config('ANTHROPIC_API_KEY'))
+    cloudflare_account_id = get_config('CLOUDFLARE_ACCOUNT_ID', '')
     
     llm_pref_1 = get_config('LLM_PREF_1', '')
     llm_pref_2 = get_config('LLM_PREF_2', '')
@@ -450,6 +451,7 @@ def llm_config_page():
         deepseek_model=deepseek_model, has_deepseek_key=has_deepseek_key,
         openai_model=openai_model, has_openai_key=has_openai_key,
         anthropic_model=anthropic_model, has_anthropic_key=has_anthropic_key,
+        cloudflare_account_id=cloudflare_account_id,
         llm_pref_1=llm_pref_1, llm_pref_2=llm_pref_2,
         llm_pref_3=llm_pref_3, llm_pref_4=llm_pref_4,
         llm_pref_5=llm_pref_5,

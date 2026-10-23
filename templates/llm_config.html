@@ -111,6 +111,21 @@
             </div>
         </div>
 
+        <div class="glass-panel" style="display: flex; flex-direction: column; grid-column: 1 / -1;">
+            <h3 style="margin-top: 0; margin-bottom: 8px; font-weight: 600; font-size: 1.1rem;">Cloudflare Workers AI
+            </h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0; margin-bottom: 14px;">
+                Required to call Cloudflare-hosted models (e.g. <code>@cf/qwen/qwen3.8-27b</code>). Find the Account ID
+                on the Cloudflare Dashboard overview page or in the URL <code>dash.cloudflare.com/&lt;account_id&gt;</code>.
+                The API token goes in each model's "API Key" field below.
+            </p>
+            <div class="premium-input-container" style="max-width: 480px;">
+                <label class="premium-label" for="cloudflareAccountId">Cloudflare Account ID</label>
+                <input type="text" id="cloudflareAccountId" class="premium-input" value="{{ cloudflare_account_id }}"
+                    placeholder="e.g. 023e105f4ecef8ad9ca31a8372d0c353" onchange="saveSettings()">
+            </div>
+        </div>
+
         <div class="glass-panel" style="display: flex; flex-direction: column; grid-column: 1 / -1; margin-top: 8px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
                 <h3 style="margin: 0; font-weight: 600; font-size: 1.1rem;">Registered AI Models</h3>
@@ -332,12 +347,12 @@
                         <div class="premium-input-container" style="margin-bottom: 0;">
                             <label class="premium-label" for="new_model_name">Model Name *</label>
                             <input type="text" id="new_model_name" required class="premium-input"
-                                placeholder="e.g. gemini-2.5-flash">
+                                placeholder="e.g. gemini-2.5-flash or @cf/qwen/qwen3.8-27b">
                         </div>
                         <div class="premium-input-container" style="margin-bottom: 0;">
                             <label class="premium-label" for="new_provider">Provider *</label>
                             <input type="text" id="new_provider" required class="premium-input"
-                                placeholder="e.g. google, openai, groq">
+                                placeholder="e.g. google, openai, groq, cloudflare">
                         </div>
                         <div class="premium-input-container" style="margin-bottom: 0;">
                             <label class="premium-label" for="new_api_key">API Key</label>

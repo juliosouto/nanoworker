@@ -90,6 +90,7 @@ def save_settings():
         'anthropic_model': 'ANTHROPIC_MODEL',
         'openrouter_api_key': 'OPENROUTER_API_KEY',
         'openrouter_model': 'OPENROUTER_MODEL',
+        'cloudflare_account_id': 'CLOUDFLARE_ACCOUNT_ID',
         'llm_pref_1': 'LLM_PREF_1',
         'llm_pref_2': 'LLM_PREF_2',
         'llm_pref_3': 'LLM_PREF_3',

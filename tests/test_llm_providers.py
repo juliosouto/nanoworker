@@ -8,7 +8,8 @@ from agent.llm_providers import (
     call_openai_llm,
     call_ollama_llm,
     call_openrouter_llm,
-    call_nvidia_llm
+    call_nvidia_llm,
+    call_cloudflare_llm
 )
 
 @pytest.fixture
@@ -420,3 +421,28 @@ def test_call_nvidia_llm_success(mock_openai, mock_execute, mock_cursor):
     # Ensure the "nvidia/" prefix was stripped before calling the API
     args, kwargs = mock_execute.call_args
     assert args[1] == "poolside/laguna-xs-2.1"
+
+def test_call_cloudflare_llm_no_api_key():
+    with pytest.raises(ValueError, match="API Key for Cloudflare"):
+        call_cloudflare_llm("model", [], {}, "content", MagicMock(), "sess", "msg", "tbl")
+
+@patch('agent.llm_providers.get_config', return_value='')
+def test_call_cloudflare_llm_no_account_id(mock_get_config):
+    with pytest.raises(ValueError, match="CLOUDFLARE_ACCOUNT_ID is not set"):
+        call_cloudflare_llm("model", [], {}, "content", MagicMock(), "sess", "msg", "tbl", api_key="test_key")
+
+@patch('agent.llm_providers.execute_openai_compatible_llm')
+@patch('openai.OpenAI')
+@patch('agent.llm_providers.get_config', return_value='acct123')
+def test_call_cloudflare_llm_success(mock_get_config, mock_openai, mock_execute, mock_cursor):
+    mock_execute.return_value = "Cloudflare Response"
+    res = call_cloudflare_llm("@cf/qwen/qwen3.8-27b", [], {}, "Hello", mock_cursor, "sess", "msg", "tbl", api_key="test_key")
+    assert res == "Cloudflare Response"
+    # The account ID read from app_config is embedded in the base URL
+    mock_openai.assert_called_once_with(
+        api_key="test_key",
+        base_url="https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1",
+    )
+    # The full "@cf/"-prefixed slug is required by the API and is NOT stripped
+    args, kwargs = mock_execute.call_args
+    assert args[1] == "@cf/qwen/qwen3.8-27b"

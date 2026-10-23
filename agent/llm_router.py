@@ -323,6 +323,29 @@ def route_llm_call(
             max_output_tokens,
             on_complete=on_complete,
         )
+    # Cloudflare is checked before the Qwen/OpenAI branches for the same reason
+    # as NVIDIA: Workers AI hosts models from many families whose names overlap
+    # other providers' prefix heuristics (e.g. "@cf/qwen/qwen3.8-27b"). The
+    # "provider" column is the source of truth; the "@cf/" / "@hf/" prefixes are
+    # the fallback for models not registered in llm_config.
+    elif (
+        provider == "cloudflare"
+        or model_name.lower().startswith("@cf/")
+        or model_name.lower().startswith("@hf/")
+    ):
+        return _providers.call_cloudflare_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            max_output_tokens,
+            on_complete=on_complete,
+        )
     elif provider == "qwen" or model_name.lower().startswith("qwen"):
         return _providers.call_qwen_llm(
             model_name,

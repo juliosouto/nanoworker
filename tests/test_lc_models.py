@@ -195,6 +195,44 @@ class TestOllamaModel(unittest.TestCase):
         self.assertEqual(m.model_name, "phi")
 
 
+class TestCloudflareModel(unittest.TestCase):
+    """cloudflare → ChatOpenAI with the dynamic Workers AI base URL."""
+
+    def test_prefixes_resolve_to_cloudflare(self):
+        self.assertEqual(resolve_provider(None, "@cf/qwen/qwen3.8-27b"), "cloudflare")
+        self.assertEqual(
+            resolve_provider(None, "@hf/thebloke/deepseek-coder-6.7b-instruct-awq"),
+            "cloudflare",
+        )
+
+    def test_base_url_built_from_account_id(self):
+        with patch("database.get_config", return_value="acct123"):
+            m = make_chat_model(
+                "@cf/qwen/qwen3.8-27b", provider="cloudflare", api_key="tok"
+            )
+        self.assertEqual(
+            m.openai_api_base,
+            "https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1",
+        )
+        # The full "@cf/" slug is required by the API and must NOT be stripped.
+        self.assertEqual(m.model_name, "@cf/qwen/qwen3.8-27b")
+        self.assertEqual(m.temperature, 1.0)
+
+    def test_missing_account_id_raises(self):
+        with patch("database.get_config", return_value=""):
+            with self.assertRaises(ValueError):
+                make_chat_model(
+                    "@cf/qwen/qwen3.8-27b", provider="cloudflare", api_key="tok"
+                )
+
+    def test_missing_key_raises(self):
+        with patch("database.get_config", return_value="acct123"):
+            with self.assertRaises(ValueError):
+                make_chat_model(
+                    "@cf/qwen/qwen3.8-27b", provider="cloudflare", api_key=None
+                )
+
+
 
 
 if __name__ == "__main__":

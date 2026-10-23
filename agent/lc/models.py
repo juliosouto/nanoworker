@@ -9,6 +9,8 @@ legacy loops:
     * temperature default: Gemini 2.0, every OpenAI-compatible provider 1.0;
     * Groq ``max_tokens`` default 1024 (parity with ``call_groq_llm``);
     * fixed base URLs for Qwen (DashScope), OpenRouter and NVIDIA NIM;
+    * Cloudflare Workers AI base URL built at call time from the
+      ``CLOUDFLARE_ACCOUNT_ID`` app_config key (mirrors OLLAMA_BASE_URL);
     * Ollama via the OpenAI-compatible endpoint (``ChatOpenAI(base_url=...)``),
       matching the legacy ``openai.OpenAI(base_url=OLLAMA_BASE_URL)`` client.
 
@@ -55,7 +57,8 @@ def resolve_provider(
         1. the user-configured ``provider`` column (already lower-cased);
         2. a model-name prefix, with NVIDIA checked FIRST (NIM hosts models
            whose last path segment overlaps other providers' prefixes, e.g.
-           ``nvidia/qwen/...`` or ``nvidia/openai/...``), then qwen/groq/openai/
+           ``nvidia/qwen/...`` or ``nvidia/openai/...``), then the Cloudflare
+           Workers AI prefixes (``@cf/``/``@hf/``), then qwen/groq/openai/
            ollama/openrouter;
         3. ``default`` ('gemini' unless the caller overrides it — e.g.
            ``lc.outputs`` passes ``None`` to express "no native branch").
@@ -74,6 +77,10 @@ def resolve_provider(
     lower = (model_name or "").lower()
     if lower.startswith("nvidia/"):
         return "nvidia"
+    # Cloudflare Workers AI: slugs keep the "@cf/" (Cloudflare-hosted) or
+    # "@hf/" (Hugging Face on Cloudflare) prefix, e.g. "@cf/qwen/qwen3.8-27b".
+    if lower.startswith("@cf/") or lower.startswith("@hf/"):
+        return "cloudflare"
     if lower.startswith("qwen"):
         return "qwen"
     if lower.startswith("groq/"):
@@ -180,6 +187,24 @@ def _make_gemini(
     return ChatGoogleGenerativeAI(**kwargs)
 
 
+def _cloudflare_base_url() -> str:
+    """Builds the Workers AI OpenAI-compatible base URL from the account ID.
+
+    Reads CLOUDFLARE_ACCOUNT_ID from app_config at call time (set via
+    Settings → LLM Configuration), mirroring the OLLAMA_BASE_URL pattern.
+    Raises a clear error when unset so the fallback chain can surface it.
+    """
+    from database import get_config
+
+    account_id = (get_config("CLOUDFLARE_ACCOUNT_ID", "") or "").strip()
+    if not account_id:
+        raise ValueError(
+            "CLOUDFLARE_ACCOUNT_ID is not set. Configure it in the "
+            "LLM Models page (Cloudflare Account ID field)."
+        )
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+
+
 def _make_openai_compat(
     model_name, provider, api_key, temperature, max_output_tokens, response_format
 ):
@@ -196,6 +221,10 @@ def _make_openai_compat(
         ),
     }
     base_url = PROVIDER_BASE_URLS.get(provider)
+    if provider == "cloudflare":
+        # Dynamic URL (needs the account ID); the full "@cf/..." model name is
+        # passed through untouched — the API requires the prefix.
+        base_url = _cloudflare_base_url()
     if base_url:
         kwargs["base_url"] = base_url
     if max_output_tokens:
