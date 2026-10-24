@@ -133,7 +133,7 @@ def test_text_and_image_model_not_diverted(
 @patch("agent.image_generation.generate_image_llm")
 @patch("agent.llm_providers.call_openrouter_llm")
 @patch("database.get_db")
-def test_image_only_non_openrouter_raises(
+def test_image_only_unsupported_provider_raises(
     mock_get_db, mock_chat, mock_img, mock_dec, mock_stack
 ):
     import pytest
@@ -144,6 +144,26 @@ def test_image_only_non_openrouter_raises(
     conn.cursor.return_value = cur
     mock_get_db.return_value = conn
 
-    with pytest.raises(ValueError, match="only implemented for OpenRouter"):
+    with pytest.raises(ValueError, match="only implemented for OpenRouter and Cloudflare"):
         _call("gemini-image-model")
     mock_img.assert_not_called()
+
+
+@patch("agent.llm_router.lc_settings.stack_enabled", return_value=False)
+@patch("database.decrypt_value", return_value="dec-key")
+@patch("agent.image_generation.generate_image_llm")
+@patch("database.get_db")
+def test_image_only_cloudflare_routes_to_image_backend(
+    mock_get_db, mock_img, mock_dec, mock_stack
+):
+    conn = MagicMock()
+    cur = MagicMock()
+    cur.fetchone.return_value = _row(provider="cloudflare")
+    conn.cursor.return_value = cur
+    mock_get_db.return_value = conn
+
+    mock_img.return_value = "![imagem gerada](/api/temp/gen_cf.png)"
+    result = _call("@cf/black-forest-labs/flux-2-klein-9b")
+
+    mock_img.assert_called_once()
+    assert result == "![imagem gerada](/api/temp/gen_cf.png)"

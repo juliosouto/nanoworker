@@ -152,6 +152,138 @@ def _emit_feedback(cursor, table, session_id, message_in_id, message, on_complet
             logger.warning(f"on_complete failed for image feedback: {e}")
 
 
+def _generate_cloudflare_image(
+    model_name: str,
+    prompt: str,
+    api_key: str,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    on_complete=None,
+) -> str:
+    """
+    Generates an image via Cloudflare Workers AI REST API.
+    POST /client/v4/accounts/{account_id}/ai/run/{model_name}
+    """
+    from database import get_config
+
+    account_id = (get_config("CLOUDFLARE_ACCOUNT_ID", "") or "").strip()
+    if not account_id:
+        raise ValueError(
+            "CLOUDFLARE_ACCOUNT_ID is not set. Configure it in the "
+            "LLM Models page (Cloudflare Account ID field)."
+        )
+
+    # Clean model slug: keep @cf/ or @hf/ prefix if present
+    actual_model = (
+        model_name[len("cloudflare/") :]
+        if model_name.lower().startswith("cloudflare/")
+        else model_name
+    )
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{actual_model}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    _emit_feedback(
+        cursor,
+        table,
+        session_id,
+        message_in_id,
+        "Gerando imagem com Cloudflare Workers AI...",
+        on_complete,
+    )
+
+    last_exc = None
+    response = None
+    for attempt in range(_API_CALL_MAX_RETRIES):
+        try:
+            # Try JSON body first (standard for text-to-image on Workers AI)
+            response = requests.post(
+                url,
+                headers={**headers, "Content-Type": "application/json"},
+                json={"prompt": prompt},
+                timeout=_REQUEST_TIMEOUT,
+            )
+            # If the specific model requires multipart/form-data (e.g. FLUX.2 klein)
+            if response.status_code == 400 and "multipart" in response.text.lower():
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    data={"prompt": prompt},
+                    timeout=_REQUEST_TIMEOUT,
+                )
+            response.raise_for_status()
+            break
+        except Exception as e:
+            last_exc = e
+            if _is_provider_balance_error(e):
+                if attempt >= _API_CALL_MAX_RETRIES - 1:
+                    raise
+                wait_seconds = _PROVIDER_BALANCE_WAIT
+                feedback = (
+                    f"💳 Cloudflare provider unavailable (402) on attempt "
+                    f"{attempt + 1}/{_API_CALL_MAX_RETRIES}. Waiting {wait_seconds:.0f}s..."
+                )
+            elif _is_rate_limit_error(e):
+                if attempt >= _API_CALL_MAX_RETRIES - 1:
+                    raise
+                wait_seconds = _wait_seconds_for_rate_limit(e)
+                feedback = (
+                    f"⏳ Rate limit (429) on attempt {attempt + 1}/"
+                    f"{_API_CALL_MAX_RETRIES}. Waiting {wait_seconds:.0f}s..."
+                )
+            else:
+                raise
+
+            _emit_feedback(
+                cursor, table, session_id, message_in_id, feedback, on_complete
+            )
+            if sleep_interruptible(wait_seconds):
+                raise StopRequestedError("Stopped while waiting to retry image generation.")
+    else:
+        raise last_exc
+
+    content_type = response.headers.get("Content-Type", "").lower()
+    basename = None
+
+    if "application/json" in content_type:
+        body = response.json()
+        result = body.get("result") if isinstance(body, dict) else None
+        if isinstance(result, dict) and result.get("image"):
+            basename = _save_image_bytes(result["image"], "image/jpeg")
+        elif isinstance(body, dict) and body.get("image"):
+            basename = _save_image_bytes(body["image"], "image/jpeg")
+    elif content_type.startswith("image/"):
+        ext = _ext_for_media_type(content_type)
+        out_path = get_temp_file_path(f"gen_{uuid.uuid4().hex[:8]}.{ext}")
+        with open(out_path, "wb") as f:
+            f.write(response.content)
+        basename = os.path.basename(out_path)
+    else:
+        # Fallback: check if body is raw image binary despite headers
+        if response.content and len(response.content) > 100:
+            ext = "png"
+            if response.content.startswith(b"\xff\xd8\xff"):
+                ext = "jpg"
+            elif response.content.startswith(b"\x89PNG"):
+                ext = "png"
+            out_path = get_temp_file_path(f"gen_{uuid.uuid4().hex[:8]}.{ext}")
+            with open(out_path, "wb") as f:
+                f.write(response.content)
+            basename = os.path.basename(out_path)
+
+    if not basename:
+        raise ValueError(
+            f"Cloudflare image generation response contained no image data. "
+            f"Response: {response.text[:200]}"
+        )
+
+    return f"![imagem gerada](/api/temp/{basename})"
+
+
 def generate_image_llm(
     model_name: str,
     history: list,
@@ -164,9 +296,10 @@ def generate_image_llm(
     api_key: str = None,
     max_output_tokens: int = None,
     on_complete=None,
+    provider: str = None,
 ) -> str:
     """
-    Generates an image for an image-only model via OpenRouter's images endpoint.
+    Generates an image for an image-only model via OpenRouter or Cloudflare.
 
     Mirrors the signature of the ``call_*_llm`` providers so ``route_llm_call``
     can dispatch to it transparently (including from the fallback chain).
@@ -176,7 +309,28 @@ def generate_image_llm(
     unrecoverable errors so the model fallback chain can take over.
     """
     if not api_key:
-        raise ValueError("API Key for OpenRouter model is not set.")
+        raise ValueError(f"API Key for model '{model_name}' is not set.")
+
+    prompt = _content_to_prompt(content)
+    if not prompt:
+        raise ValueError(
+            "Could not extract a text prompt for image generation from the message."
+        )
+
+    # Cloudflare image generation
+    if (provider and provider.lower() == "cloudflare") or model_name.lower().startswith(
+        ("@cf/", "@hf/", "cloudflare/")
+    ):
+        return _generate_cloudflare_image(
+            model_name,
+            prompt,
+            api_key,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            on_complete=on_complete,
+        )
 
     # Strip an "openrouter/" prefix (chat models keep it, image slugs don't).
     actual_model = (
@@ -184,12 +338,6 @@ def generate_image_llm(
         if model_name.lower().startswith("openrouter/")
         else model_name
     )
-
-    prompt = _content_to_prompt(content)
-    if not prompt:
-        raise ValueError(
-            "Could not extract a text prompt for image generation from the message."
-        )
 
     headers = {
         "Authorization": f"Bearer {api_key}",

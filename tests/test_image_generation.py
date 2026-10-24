@@ -197,3 +197,44 @@ def test_generate_image_llm_non_retryable_raises(mock_post, mock_cursor):
         )
     assert mock_post.call_count == 1
 
+
+@patch("agent.image_generation.get_temp_file_path", return_value="/t/gen_cf123.jpg")
+@patch("agent.image_generation.requests.post")
+@patch("database.get_config", return_value="test-account-id")
+@patch("builtins.open", new_callable=MagicMock)
+def test_generate_image_llm_cloudflare_success(
+    mock_open, mock_get_cfg, mock_post, mock_temp, mock_cursor
+):
+    fake_b64 = base64.b64encode(b"fakejpeg").decode()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"Content-Type": "application/json"}
+    resp.json.return_value = {"result": {"image": fake_b64}, "success": True}
+    resp.raise_for_status.return_value = None
+    mock_post.return_value = resp
+
+    result = generate_image_llm(
+        "@cf/black-forest-labs/flux-2-klein-9b",
+        [], {}, "a futuristic city",
+        mock_cursor, "sess", "msg", "messages_out",
+        api_key="cf-key",
+        provider="cloudflare",
+    )
+
+    assert result == "![imagem gerada](/api/temp/gen_cf123.jpg)"
+    assert mock_post.called
+    call_url = mock_post.call_args[0][0]
+    assert "accounts/test-account-id/ai/run/@cf/black-forest-labs/flux-2-klein-9b" in call_url
+
+
+@patch("database.get_config", return_value="")
+def test_generate_image_llm_cloudflare_missing_account_id(mock_get_cfg, mock_cursor):
+    with pytest.raises(ValueError, match="CLOUDFLARE_ACCOUNT_ID is not set"):
+        generate_image_llm(
+            "@cf/black-forest-labs/flux-2-klein-9b",
+            [], {}, "a cat",
+            mock_cursor, "sess", "msg", "messages_out",
+            api_key="cf-key",
+            provider="cloudflare",
+        )
+

@@ -259,7 +259,10 @@ def route_llm_call(
     # for now (its /api/v1/images endpoint); a mis-registered image-only model on
     # another provider raises a clear error that the fallback chain can surface.
     if image_output and not text_output and not summarize:
-        if provider == "openrouter" or model_name.lower().startswith("openrouter/"):
+        if (
+            provider in ("openrouter", "cloudflare")
+            or model_name.lower().startswith(("openrouter/", "@cf/", "@hf/", "cloudflare/"))
+        ):
             from agent.image_generation import generate_image_llm
 
             return generate_image_llm(
@@ -274,10 +277,11 @@ def route_llm_call(
                 api_key,
                 max_output_tokens,
                 on_complete=on_complete,
+                provider=provider,
             )
         raise ValueError(
             f"Model '{model_name}' is image-only (image_output=1, text_output=0); "
-            f"dedicated image generation is only implemented for OpenRouter."
+            f"dedicated image generation is only implemented for OpenRouter and Cloudflare."
         )
 
     # Fase 5: LangChain execution stack. When LLM_STACK=langchain, route through
