@@ -12,4 +12,4 @@ from .windows_screenshot import take_windows_screenshot
 from .scheduling import delete_scheduled_task, list_scheduled_tasks, schedule_task
 from .web_scraper import extract_webpage_text
 from .web_search import search_web
-from .whatsapp import send_whatsapp_file, send_whatsapp_message
+from .whatsapp import send_whatsapp_file, send_whatsapp_message, send_whatsapp_poll

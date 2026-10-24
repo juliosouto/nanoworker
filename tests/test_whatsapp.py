@@ -640,3 +640,77 @@ def test_is_allowed_to_private_lid_resolves_member(wa_setup, mocker):
     mocker.patch('database.get_db', return_value=mock_conn)
     mocker.patch('requests.get', return_value=MagicMock(status_code=404))
     assert wa_module._is_allowed_to("wa_web:5522999999999@lid") is True
+
+
+def test_send_whatsapp_poll_success(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    setup_db_mock(mocker, allowed_to="5511999999999")
+    mocker.patch('requests.get')
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "sent", "target": "5511999999999@s.whatsapp.net", "message_id": "poll-msg-123"}
+    mock_post = mocker.patch('requests.post', return_value=mock_resp)
+
+    res = wa_module.send_whatsapp_poll("5511999999999", "Qual o melhor dia?", ["Segunda", "Terça"])
+    assert "successfully" in res
+    assert mock_post.called
+    kwargs = mock_post.call_args[1]
+    assert kwargs["json"]["question"] == "Qual o melhor dia?"
+    assert kwargs["json"]["options"] == ["Segunda", "Terça"]
+    assert kwargs["json"]["selectable_count"] == 1
+
+
+def test_send_whatsapp_poll_multiple_choice_and_group(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    setup_db_mock(mocker, allowed_to="120363123456789-123@g.us")
+    mocker.patch('requests.get')
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "sent", "target": "120363123456789-123@g.us", "message_id": "poll-grp-456"}
+    mock_post = mocker.patch('requests.post', return_value=mock_resp)
+
+    res = wa_module.send_whatsapp_poll("120363123456789-123@g.us", "Quais dias?", ["A", "B", "C"], multiple_choice=True)
+    assert "successfully" in res
+    kwargs = mock_post.call_args[1]
+    assert kwargs["json"]["selectable_count"] == 3
+
+
+def test_send_whatsapp_poll_validation_errors(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    setup_db_mock(mocker, allowed_to="5511999999999")
+    mocker.patch('requests.get')
+
+    # Empty question
+    res = wa_module.send_whatsapp_poll("5511999999999", "", ["A", "B"])
+    assert "Error: Poll question cannot be empty" in res
+
+    # Too few options
+    res = wa_module.send_whatsapp_poll("5511999999999", "Pergunta?", ["A"])
+    assert "Error: A poll must have at least 2 non-empty options" in res
+
+
+def test_send_whatsapp_poll_denied(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    setup_db_mock(mocker, allowed_to="5511999999999")
+    mocker.patch('requests.get')
+
+    res = wa_module.send_whatsapp_poll("5511888888888", "Pergunta?", ["A", "B"])
+    assert "Access Denied" in res
+
+
+def test_send_whatsapp_poll_json_string_options(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    setup_db_mock(mocker, allowed_to="5511999999999")
+    mocker.patch('requests.get')
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "sent", "target": "5511999999999@s.whatsapp.net", "message_id": "poll-msg-str"}
+    mock_post = mocker.patch('requests.post', return_value=mock_resp)
+
+    res = wa_module.send_whatsapp_poll("5511999999999", "Qual cor?", '["Azul", "Vermelho"]')
+    assert "successfully" in res
+    kwargs = mock_post.call_args[1]
+    assert kwargs["json"]["options"] == ["Azul", "Vermelho"]

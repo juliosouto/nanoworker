@@ -280,3 +280,6 @@ models/*/*
 !models/*/.gitkeep
 *.pth
 *.onnx
+
+# Temp files
+temp.py

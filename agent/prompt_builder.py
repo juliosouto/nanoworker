@@ -93,9 +93,10 @@ def _inject_channel_rules(system_prompt: str, channel_id: str, include_tool_rule
                 f"for standard replies. The system will automatically forward your text to the chat. "
                 f"However, if you need to send an image or file (like a screenshot) to the current conversation, you MUST use "
                 f"the send_whatsapp_file tool (with phone_number='{clean_channel}'). "
+                f"If you need to create a poll or voting, use the send_whatsapp_poll tool (with phone_number='{clean_channel}'). "
                 f"The phone_number '{clean_channel}' is the FULL destination address and already contains the correct suffix: '@g.us' "
-                f"means this chat is a GROUP (send the file to that group), while '@lid' or '@s.whatsapp.net' means a private chat "
-                f"(send the file back to that specific user). DO NOT remove or re-derive the suffix — pass it exactly as given. "
+                f"means this chat is a GROUP (send the file or poll to that group), while '@lid' or '@s.whatsapp.net' means a private chat "
+                f"(send back to that specific user). DO NOT remove or re-derive the suffix — pass it exactly as given. "
                 f"If you need to send to another chat or group, use their respective phone_number.\n\n{system_prompt}"
             )
         else:

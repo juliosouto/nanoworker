@@ -88,6 +88,7 @@ function getMessageType(msgContent) {
     if (msgContent.videoMessage) return 'video';
     if (msgContent.documentMessage) return 'document';
     if (msgContent.conversation || (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text)) return 'text';
+    if (msgContent.pollCreationMessage || msgContent.pollCreationMessageV2 || msgContent.pollCreationMessageV3) return 'text';
     return 'other';
 }
 
@@ -98,6 +99,12 @@ function extractTextContent(msgContent) {
     if (msgContent.imageMessage?.caption) return msgContent.imageMessage.caption;
     if (msgContent.videoMessage?.caption) return msgContent.videoMessage.caption;
     if (msgContent.documentMessage?.caption) return msgContent.documentMessage.caption;
+    const poll = msgContent.pollCreationMessage || msgContent.pollCreationMessageV2 || msgContent.pollCreationMessageV3;
+    if (poll) {
+        const title = poll.name || '';
+        const opts = (poll.options || []).map(o => o.optionName || '').filter(Boolean);
+        return `[Enquete: ${title} | Opções: ${opts.join(', ')}]`;
+    }
     return '';
 }
 
@@ -798,6 +805,58 @@ app.post('/send_audio', async (req, res) => {
     } catch (err) {
         console.error('Failed to send audio via Baileys:', err);
         res.status(500).json({ error: 'Failed to send audio' });
+    }
+});
+
+app.post('/send_poll', async (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+
+    const { question, options, selectable_count, jid } = req.body;
+    if (!question || typeof question !== 'string' || !question.trim()) {
+        return res.status(400).json({ error: 'Missing or invalid question parameter' });
+    }
+
+    if (!Array.isArray(options) || options.length < 2) {
+        return res.status(400).json({ error: 'options must be an array with at least 2 items' });
+    }
+
+    const cleanedOptions = options.map(opt => String(opt).trim()).filter(Boolean);
+    if (cleanedOptions.length < 2) {
+        return res.status(400).json({ error: 'options must contain at least 2 non-empty choices' });
+    }
+
+    const targetJid = ensureJidSuffix(jid || ownJid);
+    clearTyping(targetJid);
+
+    try {
+        console.log(`[Baileys Outbound Poll] to ${targetJid}: "${question}" with ${cleanedOptions.length} options`);
+        const pollPayload = {
+            poll: {
+                name: question.trim(),
+                values: cleanedOptions,
+                selectableCount: Number(selectable_count) || 1
+            }
+        };
+
+        const sentMsg = await sock.sendMessage(targetJid, pollPayload);
+        const msgKey = sentMsg && sentMsg.key ? sentMsg.key.id : null;
+        if (msgKey) {
+            botSentMsgIds.add(msgKey);
+            if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
+        }
+
+        if (!msgKey) {
+            console.error(`[Baileys Outbound Poll] No message id returned for ${targetJid} -> delivery NOT confirmed`);
+            return res.status(502).json({ error: 'Message not accepted by WhatsApp (no message id returned)', target: targetJid });
+        }
+
+        console.log(`[Baileys Outbound Poll] Delivered to ${targetJid} msgId=${msgKey}`);
+        res.json({ status: 'sent', target: targetJid, message_id: msgKey });
+    } catch (err) {
+        console.error('Failed to send poll via Baileys:', err);
+        res.status(500).json({ error: 'Failed to send poll', details: err.message || err.toString() });
     }
 });
 
