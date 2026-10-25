@@ -21,97 +21,6 @@
 
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 24px;">
         <div class="glass-panel" style="display: flex; flex-direction: column; grid-column: 1 / -1;">
-            <h3 style="margin-top: 0; margin-bottom: 16px; font-weight: 600; font-size: 1.1rem;">LLM Preference Order
-            </h3>
-            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0; margin-bottom: 16px;">
-                Set the order of preference for the LLM models.
-            </p>
-            <div class="settings-form"
-                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px;">
-                <div class="premium-select-container">
-                    <label class="premium-select-label">1st
-                        Preference</label>
-                    <div class="premium-select-wrapper">
-                        <select id="llmPref1" onchange="saveSettings()" class="premium-select">
-                        <option value="">None</option>
-                        {% for provider, provider_models in models|groupby('provider') %}
-                        <optgroup label="{{ provider }}">
-                            {% for m in provider_models %}
-                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
-                            {% endfor %}
-                        </optgroup>
-                        {% endfor %}
-                    </select>
-                    </div>
-                </div>
-                <div class="premium-select-container">
-                    <label class="premium-select-label">2nd
-                        Preference</label>
-                    <div class="premium-select-wrapper">
-                        <select id="llmPref2" onchange="saveSettings()" class="premium-select">
-                        <option value="">None</option>
-                        {% for provider, provider_models in models|groupby('provider') %}
-                        <optgroup label="{{ provider }}">
-                            {% for m in provider_models %}
-                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
-                            {% endfor %}
-                        </optgroup>
-                        {% endfor %}
-                    </select>
-                    </div>
-                </div>
-                <div class="premium-select-container">
-                    <label class="premium-select-label">3rd
-                        Preference</label>
-                    <div class="premium-select-wrapper">
-                        <select id="llmPref3" onchange="saveSettings()" class="premium-select">
-                        <option value="">None</option>
-                        {% for provider, provider_models in models|groupby('provider') %}
-                        <optgroup label="{{ provider }}">
-                            {% for m in provider_models %}
-                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
-                            {% endfor %}
-                        </optgroup>
-                        {% endfor %}
-                    </select>
-                    </div>
-                </div>
-                <div class="premium-select-container">
-                    <label class="premium-select-label">4th
-                        Preference</label>
-                    <div class="premium-select-wrapper">
-                        <select id="llmPref4" onchange="saveSettings()" class="premium-select">
-                        <option value="">None</option>
-                        {% for provider, provider_models in models|groupby('provider') %}
-                        <optgroup label="{{ provider }}">
-                            {% for m in provider_models %}
-                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
-                            {% endfor %}
-                        </optgroup>
-                        {% endfor %}
-                    </select>
-                    </div>
-                </div>
-                <div class="premium-select-container">
-                    <label class="premium-select-label">5th
-                        Preference</label>
-                    <div class="premium-select-wrapper">
-                        <select id="llmPref5" onchange="saveSettings()" class="premium-select">
-                        <option value="">None</option>
-                        {% for provider, provider_models in models|groupby('provider') %}
-                        <optgroup label="{{ provider }}">
-                            {% for m in provider_models %}
-                            <option value="{{ m.model_name }}">{{ m.model_name }}</option>
-                            {% endfor %}
-                        </optgroup>
-                        {% endfor %}
-                    </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="glass-panel" style="display: flex; flex-direction: column; grid-column: 1 / -1; margin-top: 8px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
                 <h3 style="margin: 0; font-weight: 600; font-size: 1.1rem;">Registered AI Models</h3>
                 <span
@@ -533,11 +442,6 @@
 <script>
     window.APP_STATE = window.APP_STATE || {};
     window.APP_STATE.registeredModels = {{ models | tojson | safe }} || [];
-    window.APP_STATE.llmPref1 = '{{ llm_pref_1 }}';
-    window.APP_STATE.llmPref2 = '{{ llm_pref_2 }}';
-    window.APP_STATE.llmPref3 = '{{ llm_pref_3 }}';
-    window.APP_STATE.llmPref4 = '{{ llm_pref_4 }}';
-    window.APP_STATE.llmPref5 = '{{ llm_pref_5 }}';
 </script>
 <script src="{{ url_for('static', filename='js/llm_config.js') }}"></script>
 {% endblock %}

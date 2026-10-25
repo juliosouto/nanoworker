@@ -51,3 +51,31 @@ function deleteJob(jobId) {
         showToast('Error communicating with server.');
     });
 }
+
+function saveCronPreferences() {
+    const payload = {
+        cron_pref_1: document.getElementById('cronPref1')?.value || '',
+        cron_pref_2: document.getElementById('cronPref2')?.value || '',
+        cron_pref_3: document.getElementById('cronPref3')?.value || '',
+        cron_pref_4: document.getElementById('cronPref4')?.value || '',
+        cron_pref_5: document.getElementById('cronPref5')?.value || '',
+    };
+
+    fetch('/api/cron/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showToast('Cron worker preferences saved successfully!');
+        } else {
+            showToast('Error saving preferences.');
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('Error communicating with server.');
+    });
+}

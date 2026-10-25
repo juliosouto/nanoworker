@@ -55,3 +55,22 @@ def test_delete_cron_job(client):
     cursor.execute("SELECT * FROM cron_jobs WHERE id = 'j2'")
     assert cursor.fetchone() is None
     conn.close()
+
+def test_save_cron_preferences(client):
+    from database import get_config
+    payload = {
+        'cron_pref_1': 'WorkerAlpha',
+        'cron_pref_2': 'WorkerBeta',
+        'cron_pref_3': '',
+        'cron_pref_4': 'WorkerDelta',
+        'cron_pref_5': ''
+    }
+    response = client.post('/api/cron/preferences', json=payload)
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'success'
+
+    assert get_config('CRON_WORKER_PREF_1') == 'WorkerAlpha'
+    assert get_config('CRON_WORKER_PREF_2') == 'WorkerBeta'
+    assert get_config('CRON_WORKER_PREF_3') == ''
+    assert get_config('CRON_WORKER_PREF_4') == 'WorkerDelta'
+    assert get_config('CRON_WORKER_PREF_5') == ''

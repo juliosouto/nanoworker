@@ -3,8 +3,37 @@
 {% block title %}NanoWorker - Cron Jobs{% endblock %}
 
 {% block content %}
-<div style="max-width: 1200px; margin: 0 auto;">
-    <h2 style="margin-bottom: 24px; font-weight: 600;">Manage Cron Jobs</h2>
+<div style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h2 style="font-weight: 600; margin: 0;">Manage Cron Jobs</h2>
+    </div>
+
+    <!-- Cron Jobs Worker Preference Order Panel -->
+    <div class="glass-panel" style="display: flex; flex-direction: column;">
+        <h3 style="margin-top: 0; margin-bottom: 8px; font-weight: 600; font-size: 1.1rem;">Cron Worker Preference Order</h3>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0; margin-bottom: 16px;">
+            Set the ordered list of fallback workers for scheduled tasks. When a scheduled task executes, it tries these workers in sequence.
+        </p>
+        <div class="settings-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px;">
+            {% for i in range(1, 6) %}
+            <div class="premium-select-container">
+                <label class="premium-select-label">
+                    {% if i == 1 %}1st Preference{% elif i == 2 %}2nd Preference{% elif i == 3 %}3rd Preference{% elif i == 4 %}4th Preference{% else %}5th Preference{% endif %}
+                </label>
+                <div class="premium-select-wrapper">
+                    <select id="cronPref{{ i }}" onchange="saveCronPreferences()" class="premium-select">
+                        <option value="">None</option>
+                        {% for w in workers %}
+                        <option value="{{ w.worker_name }}" {% if (i == 1 and cron_pref_1 == w.worker_name) or (i == 2 and cron_pref_2 == w.worker_name) or (i == 3 and cron_pref_3 == w.worker_name) or (i == 4 and cron_pref_4 == w.worker_name) or (i == 5 and cron_pref_5 == w.worker_name) %}selected{% endif %}>
+                            {{ w.worker_name }} ({{ w.worker_model }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
     
     <!-- Desktop Table View -->
     <div class="cron-table-wrapper" style="background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--border-color); overflow-x: auto; width: 100%;">

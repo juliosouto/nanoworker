@@ -1,45 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-    if(window.APP_STATE && window.APP_STATE.llmPref1) {
-        const p1 = document.getElementById('llmPref1');
-        const p2 = document.getElementById('llmPref2');
-        const p3 = document.getElementById('llmPref3');
-        const p4 = document.getElementById('llmPref4');
-        const p5 = document.getElementById('llmPref5');
-        
-        if (p1) p1.value = window.APP_STATE.llmPref1;
-        if (p2) p2.value = window.APP_STATE.llmPref2;
-        if (p3) p3.value = window.APP_STATE.llmPref3;
-        if (p4) p4.value = window.APP_STATE.llmPref4;
-        if (p5) p5.value = window.APP_STATE.llmPref5;
-    }
 });
-
-function saveSettings() {
-    const llmPref1 = document.getElementById('llmPref1')?.value;
-    const llmPref2 = document.getElementById('llmPref2')?.value;
-    const llmPref3 = document.getElementById('llmPref3')?.value;
-    const llmPref4 = document.getElementById('llmPref4')?.value;
-    const llmPref5 = document.getElementById('llmPref5')?.value;
-
-    const payload = {};
-    if (llmPref1 !== undefined) payload.llm_pref_1 = llmPref1;
-    if (llmPref2 !== undefined) payload.llm_pref_2 = llmPref2;
-    if (llmPref3 !== undefined) payload.llm_pref_3 = llmPref3;
-    if (llmPref4 !== undefined) payload.llm_pref_4 = llmPref4;
-    if (llmPref5 !== undefined) payload.llm_pref_5 = llmPref5;
-
-    fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    }).then(res => res.json()).then(data => {
-        if (data.status === 'success') {
-            showToast('Settings saved successfully!');
-        } else {
-            showToast('Error saving settings.');
-        }
-    });
-}
 
 function toggleCloudflareField() {
     const provider = (document.getElementById('new_provider')?.value || '').trim().toLowerCase();

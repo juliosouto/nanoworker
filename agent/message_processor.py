@@ -284,9 +284,42 @@ def _check_is_admin(sender_id: str) -> bool:
     return False
 
 
+def _resolve_cron_worker_preferences():
+    """
+    Resolves the chain of workers and models from CRON_WORKER_PREF_1..5.
+    Returns (primary_worker, models_to_try).
+    If no preference is configured or matching, returns (None, []).
+    """
+    pref_names = [get_config(f"CRON_WORKER_PREF_{i}", "") for i in range(1, 6)]
+    pref_names = [p.strip() for p in pref_names if p and p.strip()]
+    if not pref_names:
+        return None, []
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature FROM workers_config')
+    workers = [dict(w) for w in cursor.fetchall()]
+    conn.close()
+
+    workers_by_name = { (w['worker_name'] or '').strip().lower(): w for w in workers }
+
+    matched_workers = []
+    models_to_try = []
+    for name in pref_names:
+        w = workers_by_name.get(name.lower())
+        if w:
+            matched_workers.append(w)
+            model = (w.get('worker_model') or '').strip()
+            if model and model not in models_to_try:
+                models_to_try.append(model)
+
+    primary_worker = matched_workers[0] if matched_workers else None
+    return primary_worker, models_to_try
+
+
 def _resolve_models(worker) -> list:
     """
-    Determines the ordered list of models to try, based on worker config or global preferences.
+    Determines the ordered list of models to try, based on worker config or fallback preferences.
     """
     if worker and worker.get('worker_model'):
         return [worker['worker_model']]
@@ -384,6 +417,27 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
     worker = resolve_worker_from_content(original_content)
 
+    # For scheduled jobs without explicit worker mention, honor cron worker preferences chain
+    cron_models = []
+    if current_sender_id == 'scheduler':
+        from utils.message_utils import _find_worker_mention
+        from database import get_config
+        require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+        # Check if the content explicitly mentioned a worker
+        conn_chk = get_db()
+        cur_chk = conn_chk.cursor()
+        cur_chk.execute('SELECT worker_name FROM workers_config')
+        all_worker_names = [r['worker_name'] for r in cur_chk.fetchall()]
+        conn_chk.close()
+        
+        has_explicit_mention = _find_worker_mention(original_content, all_worker_names, require_at=require_at)
+        if not has_explicit_mention:
+            cron_worker, pref_models = _resolve_cron_worker_preferences()
+            if cron_worker:
+                worker = cron_worker
+            if pref_models:
+                cron_models = pref_models
+
     # Clean worker mention from content
     content = clean_mention(original_content)
 
@@ -428,7 +482,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         last_user = history.pop()
         send_content = last_user.parts + send_content
 
-    models_to_try = _resolve_models(worker)
+    if cron_models:
+        models_to_try = cron_models
+    else:
+        models_to_try = _resolve_models(worker)
 
     try:
         tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True

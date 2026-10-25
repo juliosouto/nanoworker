@@ -400,12 +400,6 @@ def llm_config_page():
     anthropic_model = os.environ.get('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
     has_anthropic_key = bool(get_config('ANTHROPIC_API_KEY'))
     cloudflare_account_id = get_config('CLOUDFLARE_ACCOUNT_ID', '')
-    
-    llm_pref_1 = get_config('LLM_PREF_1', '')
-    llm_pref_2 = get_config('LLM_PREF_2', '')
-    llm_pref_3 = get_config('LLM_PREF_3', '')
-    llm_pref_4 = get_config('LLM_PREF_4', '')
-    llm_pref_5 = get_config('LLM_PREF_5', '')
 
     conn = get_db()
     cursor = conn.cursor()
@@ -452,9 +446,6 @@ def llm_config_page():
         openai_model=openai_model, has_openai_key=has_openai_key,
         anthropic_model=anthropic_model, has_anthropic_key=has_anthropic_key,
         cloudflare_account_id=cloudflare_account_id,
-        llm_pref_1=llm_pref_1, llm_pref_2=llm_pref_2,
-        llm_pref_3=llm_pref_3, llm_pref_4=llm_pref_4,
-        llm_pref_5=llm_pref_5,
         models=model_list)
 
 @views_bp.route('/llm-models')
@@ -478,6 +469,7 @@ def workers_page():
 
 @views_bp.route('/cron')
 def cron_jobs_page():
+    from database import get_config
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -487,8 +479,23 @@ def cron_jobs_page():
         ORDER BY c.next_run ASC
     ''')
     jobs = cursor.fetchall()
+
+    cursor.execute('SELECT id, worker_name, worker_model FROM workers_config ORDER BY worker_name ASC')
+    workers = cursor.fetchall()
     conn.close()
-    return render_template('cron_jobs.html', jobs=jobs)
+
+    cron_prefs = [get_config(f"CRON_WORKER_PREF_{i}", "") for i in range(1, 6)]
+
+    return render_template(
+        'cron_jobs.html',
+        jobs=jobs,
+        workers=[dict(w) for w in workers],
+        cron_pref_1=cron_prefs[0],
+        cron_pref_2=cron_prefs[1],
+        cron_pref_3=cron_prefs[2],
+        cron_pref_4=cron_prefs[3],
+        cron_pref_5=cron_prefs[4],
+    )
 
 @views_bp.route('/dashboard')
 def dashboard_page():
