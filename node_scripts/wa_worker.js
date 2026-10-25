@@ -701,6 +701,34 @@ app.post('/send', async (req, res) => {
     }
 });
 
+app.post('/delete', async (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+
+    const { message_id, jid } = req.body;
+    if (!message_id) {
+        return res.status(400).json({ error: 'Missing message_id parameter' });
+    }
+
+    const targetJid = ensureJidSuffix(jid || ownJid);
+
+    try {
+        console.log(`[Baileys Outbound] Deleting message ${message_id} in ${targetJid}`);
+        await sock.sendMessage(targetJid, {
+            delete: {
+                remoteJid: targetJid,
+                id: message_id,
+                fromMe: true
+            }
+        });
+        res.json({ status: 'deleted', target: targetJid, message_id });
+    } catch (err) {
+        console.error(`Failed to delete message ${message_id} via Baileys:`, err);
+        res.status(500).json({ error: 'Failed to delete message', details: err.message || err.toString() });
+    }
+});
+
 app.post('/send_file', async (req, res) => {
     if (!sock || !ownJid) {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });

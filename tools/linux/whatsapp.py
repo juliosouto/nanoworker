@@ -178,14 +178,20 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
         try:
             # Sessions are stored with the full JID suffix ('@g.us', '@lid',
             # '@s.whatsapp.net'), plus the legacy suffix-less form for sessions created
-            # before JIDs carried a suffix. Match all of them so a bare target still
-            # resolves to its canonical chat.
-            candidate_channels = [
-                f"wa_web:{clean_target}@g.us", f"whatsapp:{clean_target}@g.us",
-                f"wa_web:{clean_target}@lid", f"whatsapp:{clean_target}@lid",
-                f"wa_web:{clean_target}@s.whatsapp.net", f"whatsapp:{clean_target}@s.whatsapp.net",
-                f"wa_web:{clean_target}", f"whatsapp:{clean_target}",
-            ]
+            # before JIDs carried a suffix. Match all of them (preserving both clean digits
+            # and raw group JID identifiers with dashes like '5519991732206-1423590162')
+            # so any target form resolves to its canonical chat.
+            raw_target = str(phone_number).replace("wa_web:", "").replace("whatsapp:", "").split("@")[0].split(":")[0].replace("+", "").replace(" ", "")
+            full_jid = str(phone_number).replace("wa_web:", "").replace("whatsapp:", "").replace("+", "").replace(" ", "")
+
+            candidate_channels = set()
+            for prefix in ("wa_web:", "whatsapp:"):
+                candidate_channels.add(f"{prefix}{full_jid}")
+                for t in {clean_target, raw_target}:
+                    candidate_channels.add(f"{prefix}{t}")
+                    for suffix in ("@g.us", "@lid", "@s.whatsapp.net"):
+                        candidate_channels.add(f"{prefix}{t}{suffix}")
+
             placeholders = ",".join("?" for _ in candidate_channels)
             cursor.execute(
                 f"""
@@ -197,7 +203,7 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
                 ORDER BY m.id DESC
                 LIMIT 1
                 """,
-                candidate_channels,
+                list(candidate_channels),
             )
             row = cursor.fetchone()
             if row:

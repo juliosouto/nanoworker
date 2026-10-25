@@ -145,6 +145,18 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None):
                 )
             )
 
+            # If this is a final successful response and we previously posted
+            # a progress / retry error message, delete that progress message first.
+            if not is_progress_msg and last_progress_msg_id:
+                try:
+                    del_payload = {"message_id": last_progress_msg_id, "jid": target_jid}
+                    del_resp = req.post(f'{BAILEYS_URL}/delete', json=del_payload, timeout=5)
+                    logging.info(f"Progress message deletion response: {del_resp.status_code} {del_resp.text}")
+                except Exception as del_err:
+                    logging.warning(f"Failed to delete progress message {last_progress_msg_id}: {del_err}")
+                finally:
+                    last_progress_msg_id = None
+
             # When images were delivered, the remaining text already rode along
             # as the first image's caption; only send it separately if no image
             # was actually sent.

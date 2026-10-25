@@ -519,6 +519,25 @@ def test_is_allowed_to_group_resolves_requesting_member(wa_setup, mocker):
     assert wa_module._is_allowed_to("wa_web:120363123456789-123@g.us") is True
 
 
+def test_is_allowed_to_group_with_dash_jid_resolves_requesting_member(wa_setup, mocker):
+    """A dash-format group JID (e.g. 5519991732206-1423590162@g.us) resolves sessions with dash."""
+    os_name, wa_module = wa_setup
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [
+        {"allowed_to": "5519988789215", "allow_mentions": 0, "allow_outgoing_mentions": 0},
+        {"sender_id": "5519988789215"},
+    ]
+    mocker.patch('database.get_db', return_value=mock_conn)
+    mocker.patch('requests.get', return_value=MagicMock(status_code=404))
+    assert wa_module._is_allowed_to("5519991732206-1423590162@g.us") is True
+    # Verify the channel query sent to SQL includes the dash version:
+    query_channels = mock_cursor.execute.call_args[0][1]
+    assert "wa_web:5519991732206-1423590162@g.us" in query_channels
+
+
+
 def test_is_allowed_to_group_denied_for_unknown_member(wa_setup, mocker):
     """A group whose requesting member is not in Allowed To is blocked."""
     os_name, wa_module = wa_setup

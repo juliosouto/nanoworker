@@ -370,3 +370,46 @@ def test_progress_messages_not_recorded(mock_extract, mock_post, client):
     ).fetchone()[0]
     conn.close()
     assert count == 0
+
+
+@patch('requests.post')
+@patch('utils.audio_utils.extract_and_generate_audio')
+def test_success_response_deletes_prior_progress_message(mock_extract, mock_post, client):
+    from routes.webhooks import _build_wa_callback
+    cb = _build_wa_callback('12036301234567890@g.us', channel_id=CHANNEL)
+
+    # 1. Send progress message
+    mock_extract.return_value = ('⚠️ 503 Error on attempt 1/5. Retrying...', None)
+    resp_mock = mock_post.return_value
+    resp_mock.status_code = 200
+    resp_mock.json.return_value = {'message_id': 'progress-msg-123'}
+
+    cb('⚠️ 503 Error on attempt 1/5. Retrying...')
+
+    # Verify progress was sent
+    assert mock_post.call_args[0][0].endswith('/send')
+    assert mock_post.call_args[1]['json']['text'] == '⚠️ 503 Error on attempt 1/5. Retrying...'
+
+    # 2. Send successful final response
+    mock_extract.return_value = ('Tudo certo! Aqui está sua resposta.', None)
+    resp_mock.json.return_value = {'message_id': 'final-msg-456'}
+
+    cb('Tudo certo! Aqui está sua resposta.')
+
+    # Check the calls made to requests.post:
+    # First: progress message send
+    # Second: delete call for progress-msg-123
+    # Third: send call for final response
+    calls = mock_post.call_args_list
+    assert len(calls) == 3
+
+    delete_call = calls[1]
+    assert delete_call[0][0].endswith('/delete')
+    assert delete_call[1]['json'] == {
+        'message_id': 'progress-msg-123',
+        'jid': '12036301234567890@g.us',
+    }
+
+    send_final_call = calls[2]
+    assert send_final_call[0][0].endswith('/send')
+    assert send_final_call[1]['json']['text'] == 'Tudo certo! Aqui está sua resposta.'
