@@ -609,3 +609,28 @@ def test_hybrid_fusion_ranks_dual_leg_first(db, cluster_embeddings):
     contents = [r['payload']['content'] for r in results]
     assert contents[0] == 'relatorio semanal'
     assert contents[1] == 'futebol hoje'
+
+
+def test_semantic_leg_keeps_fetch_budget_after_cutoff(db, cluster_embeddings):
+    """The nearest vectors sit inside the verbatim window (cutoff). They must not
+    eat the KNN budget: the leg has to look further and still return fetch_k."""
+    # Inserted first so they win the distance tie (lowest id) and are the
+    # nearest neighbours of the query.
+    for i in range(3):
+        _add(CHANNEL_A, f'relatorio recente {i}', 2000 + i)
+    for i in range(4):
+        _add(CHANNEL_A, f'relatorio antigo {i}', 1000 + i)
+    _vectorize_all()
+
+    from agent.lc.history_rag import HistoryRagSettings, retrieve_relevant_history
+
+    settings = HistoryRagSettings(enabled=True, search_type='similarity',
+                                  k=2, fetch_k=2, score_threshold=0.0,
+                                  lambda_mult=0.5)
+    # 'xrelatorio' shares the cluster (substring) but no keyword token, so only
+    # the semantic leg can answer: the keyword leg cannot mask the bug.
+    results = retrieve_relevant_history(
+        'xrelatorio', CHANNEL_A, cutoff_ts=1500, settings=settings
+    )
+    assert len(results) == 2
+    assert all(r['payload']['content'].startswith('relatorio antigo') for r in results)

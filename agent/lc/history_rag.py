@@ -189,6 +189,52 @@ def _fts_query_for(query):
     return " OR ".join('"%s"' % t for t in tokens)
 
 
+def _semantic_leg(conn, channel_id, query_vector, fetch_k, exclude_id=None,
+                  cutoff_ts=None, max_k=None):
+    """Semantic (KNN) leg: returns (candidates, ranked_ids) with ``fetch_k``
+    rows that survive the exclusions.
+
+    sqlite-vec returns the k nearest rows first; the current message and the
+    verbatim window are dropped afterwards. So k is doubled until ``fetch_k``
+    rows survive, the index runs out of rows, or ``max_k`` (the channel's
+    vector count) is reached. Without this, excluded rows would consume the
+    fetch budget and the leg could return fewer than requested.
+    """
+    limit = max(fetch_k, max_k or fetch_k)
+    k = fetch_k
+    serialized = json.dumps(query_vector)
+    while True:
+        rows = conn.execute(
+            """
+            SELECT id, distance, payload, vector
+            FROM message_history_vec
+            WHERE channel_id = ? AND vector MATCH ? AND k = ?
+            ORDER BY distance
+            """,
+            [channel_id, serialized, k],
+        ).fetchall()
+        candidates, ranked = {}, []
+        for row in rows:
+            if exclude_id is not None and row["id"] == exclude_id:
+                continue
+            try:
+                payload = json.loads(row["payload"]) if row["payload"] else {}
+            except (TypeError, ValueError):
+                payload = {}
+            if cutoff_ts is not None and (payload.get("msg_ts") or 0) >= cutoff_ts:
+                continue  # already verbatim in the recent-window context
+            candidates[row["id"]] = {
+                "payload": payload,
+                "vector": row["vector"],
+                "distance": row["distance"],
+            }
+            ranked.append(row["id"])
+        exhausted = len(rows) < k or k >= limit
+        if len(ranked) >= fetch_k or exhausted:
+            return candidates, ranked[:fetch_k]
+        k = min(k * 2, limit)
+
+
 def _bm25_search(conn, fts_query, channel_id, exclude_id=None, cutoff_ts=None, limit=20):
     """BM25 keyword leg (FTS5, porter + unicode61). Returns message_history
     ids, best-first (most negative bm25 first). The JOIN carries the channel
@@ -285,29 +331,10 @@ def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None
     conn = get_db()
     try:
         if query_vector is not None:
-            sql = """
-                SELECT id, distance, payload, vector
-                FROM message_history_vec
-                WHERE channel_id = ? AND vector MATCH ? AND k = ?
-            """
-            params = [channel_id, json.dumps(query_vector), settings.fetch_k]
-            if exclude_id is not None:
-                sql += ' AND id != ?'
-                params.append(exclude_id)
-            sql += ' ORDER BY distance'
-            for row in conn.execute(sql, params).fetchall():
-                try:
-                    payload = json.loads(row["payload"]) if row["payload"] else {}
-                except (TypeError, ValueError):
-                    payload = {}
-                if cutoff_ts is not None and (payload.get("msg_ts") or 0) >= cutoff_ts:
-                    continue  # already verbatim in the recent-window context
-                semantic_candidates[row["id"]] = {
-                    "payload": payload,
-                    "vector": row["vector"],
-                    "distance": row["distance"],
-                }
-                semantic_ranked.append(row["id"])
+            semantic_candidates, semantic_ranked = _semantic_leg(
+                conn, channel_id, query_vector, settings.fetch_k,
+                exclude_id=exclude_id, cutoff_ts=cutoff_ts, max_k=vec_count,
+            )
 
         if fts_query is not None:
             try:
