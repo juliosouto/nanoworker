@@ -15,6 +15,7 @@ Design notes:
 import json
 import logging
 from dataclasses import dataclass
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,34 @@ def _payload_from_row(row) -> dict:
     }
 
 
+ALLOWED_CHANNELS_KEY = "HISTORY_RAG_ALLOWED_CHANNELS"
+
+
+def allowed_channels() -> List[str]:
+    """Chats (channel_id values) whose messages may be vectorized and retrieved.
+
+    Stored as a JSON list in app_config. Empty or unreadable means no chat is
+    allowed: vectorization is opt-in per chat.
+    """
+    from database import get_config
+
+    raw = get_config(ALLOWED_CHANNELS_KEY, None)
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item]
+
+
+def channel_allowed(channel_id) -> bool:
+    """True when the chat is on the allowed-sources list."""
+    return bool(channel_id) and channel_id in allowed_channels()
+
+
 def vectorize_message(row_id) -> bool:
     """
     Embeds one ``message_history`` row and stores its vector (with the payload
@@ -113,11 +142,6 @@ def vectorize_message(row_id) -> bool:
         return False
     try:
         if not get_settings().enabled:
-            return False
-
-        import agent.lc.embeddings as embeddings
-
-        if not embeddings.embeddings_available():
             return False
 
         from database import get_db
@@ -136,6 +160,15 @@ def vectorize_message(row_id) -> bool:
             conn.close()
 
         if row is None or not (row["content"] or "").strip():
+            return False
+        # Only chats the user allowed are embedded. Checked before the embeddings
+        # client is touched, so disallowed chats cost nothing.
+        if not channel_allowed(row["channel_id"]):
+            return False
+
+        import agent.lc.embeddings as embeddings
+
+        if not embeddings.embeddings_available():
             return False
 
         payload = _payload_from_row(row)
@@ -282,6 +315,8 @@ def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None
     """
     settings = settings or get_settings()
     if not settings.enabled or not channel_id or not (query or "").strip():
+        return []
+    if not channel_allowed(channel_id):
         return []
 
     from database import get_db

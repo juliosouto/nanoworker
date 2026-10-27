@@ -50,6 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateRagVisibility();
 
+    document.getElementById('ragSourcesSave')?.addEventListener('click', saveRagSources);
+
     const slider = document.getElementById('autonomousModeSlider');
     const sliderValue = document.getElementById('autonomousModeValue');
     const minusBtn = document.getElementById('autonomousModeMinus');
@@ -132,6 +134,23 @@ function updateRagVisibility() {
     const lambdaRow = document.getElementById('historyRagLambdaRow');
     if(thresholdRow) thresholdRow.style.display = (type === 'similarity_score_threshold') ? 'flex' : 'none';
     if(lambdaRow) lambdaRow.style.display = (type === 'mmr') ? 'flex' : 'none';
+}
+
+function saveRagSources() {
+    const channels = Array.from(document.querySelectorAll('.rag-source:checked')).map(cb => cb.value);
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history_rag_allowed_channels: channels })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error('save failed');
+        showToast(`Allowed sources saved (${channels.length} chat${channels.length === 1 ? '' : 's'}).`);
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('Error saving allowed sources.');
+    });
 }
 
 function autoSaveToggles() {

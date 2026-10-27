@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import subprocess
@@ -119,6 +120,14 @@ def save_settings():
         if json_key in data and data[json_key] is not None:
             set_config(db_key, data[json_key])
             saved_keys.append(db_key)
+
+    if 'history_rag_allowed_channels' in data:
+        sources = data['history_rag_allowed_channels']
+        if not isinstance(sources, list) or not all(isinstance(c, str) for c in sources):
+            return jsonify({"error": "history_rag_allowed_channels must be a list of strings"}), 400
+        allowed = sorted({c.strip() for c in sources if c.strip()})
+        set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps(allowed))
+        saved_keys.append('HISTORY_RAG_ALLOWED_CHANNELS')
             
     bool_mapping = {
         'require_at_prefix': 'REQUIRE_AT_PREFIX',

@@ -221,6 +221,27 @@ def agent_behavior_config_page():
     except (ValueError, TypeError):
         history_rag_lambda = 0.5
 
+    from agent.lc.history_rag import allowed_channels
+    from database import get_db
+
+    rag_allowed = allowed_channels()
+    conn = get_db()
+    try:
+        counts = {
+            r['channel_id']: r['n']
+            for r in conn.execute(
+                'SELECT channel_id, COUNT(*) AS n FROM message_history GROUP BY channel_id'
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    # Every recorded chat, plus allowed chats that have no messages anymore.
+    channel_ids = set(counts) | set(rag_allowed)
+    rag_source_options = sorted(
+        ({'channel_id': c, 'count': counts.get(c, 0)} for c in channel_ids),
+        key=lambda o: (-o['count'], o['channel_id']),
+    )
+
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
         require_at_prefix=get_config('REQUIRE_AT_PREFIX', 'true').lower() == 'true',
@@ -234,6 +255,8 @@ def agent_behavior_config_page():
         history_rag_fetch_k=history_rag_fetch_k,
         history_rag_score_threshold=history_rag_score_threshold,
         history_rag_lambda=history_rag_lambda,
+        rag_allowed_channels=rag_allowed,
+        rag_source_options=rag_source_options,
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')

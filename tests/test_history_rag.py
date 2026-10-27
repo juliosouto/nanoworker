@@ -27,6 +27,13 @@ CHANNEL_A = "wa_web:gA@g.us"
 CHANNEL_B = "wa_web:gB@g.us"
 
 
+@pytest.fixture(autouse=True)
+def _allow_test_channels(db):
+    """Vectorization is opt-in per chat: the existing tests use CHANNEL_A and
+    CHANNEL_B, so both are allowed by default. Individual tests override it."""
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps([CHANNEL_A, CHANNEL_B]))
+
+
 class ClusterEmbeddings:
     """Deterministic keyword -> cluster vectors (size 8). Orthogonal clusters
     make cosine distances exact: same keyword -> 0.0, different -> 1.0."""
@@ -634,3 +641,81 @@ def test_semantic_leg_keeps_fetch_budget_after_cutoff(db, cluster_embeddings):
     )
     assert len(results) == 2
     assert all(r['payload']['content'].startswith('relatorio antigo') for r in results)
+
+
+# ---------------------------------------------------------------------------
+# allowed sources (opt-in per chat)
+# ---------------------------------------------------------------------------
+
+def test_vectorize_skips_chats_not_in_allowed_sources(db, cluster_embeddings):
+    from agent.lc.history_rag import vectorize_message
+
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps([CHANNEL_A]))
+    rid_allowed = _add(CHANNEL_A, 'relatorio liberado', 1000)
+    rid_blocked = _add(CHANNEL_B, 'relatorio bloqueado', 1001)
+
+    assert vectorize_message(rid_allowed) is True
+    assert vectorize_message(rid_blocked) is False
+    conn = database.get_db()  # loads sqlite-vec so the vec0 table is readable
+    stored = {r[0] for r in conn.execute('SELECT id FROM message_history_vec').fetchall()}
+    conn.close()
+    assert rid_allowed in stored
+    assert rid_blocked not in stored
+    assert cluster_embeddings.embed_query_calls == 0  # no query embedding for storage
+
+
+def test_empty_allowlist_vectorizes_nothing(db, cluster_embeddings):
+    from agent.lc.history_rag import vectorize_message
+
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps([]))
+    rid = _add(CHANNEL_A, 'relatorio', 1000)
+    assert vectorize_message(rid) is False
+
+
+def test_retrieve_returns_nothing_for_disallowed_chat(db, cluster_embeddings):
+    _add(CHANNEL_A, 'relatorio antigo', 1000)
+    _vectorize_all()
+
+    from agent.lc.history_rag import HistoryRagSettings, retrieve_relevant_history
+
+    settings = HistoryRagSettings(enabled=True, search_type='similarity',
+                                  k=5, fetch_k=20, score_threshold=0.0,
+                                  lambda_mult=0.5)
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps([CHANNEL_B]))
+    assert retrieve_relevant_history('relatorio', CHANNEL_A, settings=settings) == []
+
+
+def test_allowed_channels_tolerates_bad_stored_value(db):
+    from agent.lc.history_rag import allowed_channels
+
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', 'nao-e-json')
+    assert allowed_channels() == []
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps({'a': 1}))
+    assert allowed_channels() == []
+
+
+def test_settings_api_saves_allowed_sources(client, db):
+    res = client.post('/api/settings', json={
+        'history_rag_allowed_channels': [' wa_web:x@g.us ', 'wa_web:x@g.us', 'wa_web:y@g.us', ''],
+    })
+    assert res.status_code == 200
+    from agent.lc.history_rag import allowed_channels
+
+    assert allowed_channels() == ['wa_web:x@g.us', 'wa_web:y@g.us']
+
+
+def test_settings_api_rejects_invalid_sources(client, db):
+    res = client.post('/api/settings', json={'history_rag_allowed_channels': 'wa_web:x@g.us'})
+    assert res.status_code == 400
+    res = client.post('/api/settings', json={'history_rag_allowed_channels': [1, 2]})
+    assert res.status_code == 400
+
+
+def test_agent_behavior_page_lists_sources(client, db):
+    _add(CHANNEL_A, 'mensagem qualquer', 1000)
+    set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps([CHANNEL_A]))
+    res = client.get('/settings/agent_behavior')
+    assert res.status_code == 200
+    html = res.data.decode()
+    assert 'Allowed sources' in html
+    assert f'value="{CHANNEL_A}" ' in html and 'checked' in html
