@@ -4,6 +4,7 @@ def register_routes(app):
     from .api_files import api_files_bp
     from .api_llm import api_llm_bp
     from .api_memory import api_memory_bp
+    from .api_messages import api_messages_bp
     from .api_permissions import api_permissions_bp
     from .api_settings import api_settings_bp
     from .api_whatsapp import api_whatsapp_bp
@@ -20,3 +21,4 @@ def register_routes(app):
     app.register_blueprint(api_llm_bp)
     app.register_blueprint(api_cron_bp)
     app.register_blueprint(api_memory_bp)
+    app.register_blueprint(api_messages_bp)

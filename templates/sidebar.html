@@ -47,6 +47,8 @@
                         target="_blank">IDE</a></li>
                 <li {% if request.endpoint=='cron_jobs_page' %}class="active" {% endif %}><a href="/cron">Cron Jobs</a>
                 </li>
+                <li {% if request.endpoint in ['messages_page', 'views.messages_page'] %}class="active" {% endif %}><a href="/messages">Messages</a>
+                </li>
                 <br>
                 <li {% if request.endpoint=='settings_page' %}class="active" {% endif %}><a
                         href="/settings">Settings</a></li>

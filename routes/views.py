@@ -497,6 +497,10 @@ def cron_jobs_page():
         cron_pref_5=cron_prefs[4],
     )
 
+@views_bp.route('/messages')
+def messages_page():
+    return render_template('messages.html')
+
 @views_bp.route('/dashboard')
 def dashboard_page():
     from standard_prompts import apply_standard_rules

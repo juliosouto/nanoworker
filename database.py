@@ -1432,5 +1432,273 @@ def get_history_window_cutoff(cursor, channel_id, limit=None):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Messages page: browse, duplicate/similar detection and deletion
+# ---------------------------------------------------------------------------
+
+# Most recent vectorized rows scanned for near-duplicates. Each scanned row
+# costs one KNN query, so the cap keeps the Messages page responsive.
+SIMILAR_SCAN_LIMIT = 1000
+SIMILAR_NEIGHBORS = 5
+MESSAGES_MAX_PER_PAGE = 200
+MESSAGE_LIST_MODES = ('all', 'duplicates', 'similar')
+_MESSAGE_COLUMNS = (
+    'h.id, h.message_id, h.channel_id, h.remote_jid, h.is_group, h.sender_name, '
+    'h.sender_id, h.from_me, h.is_bot, h.content, h.msg_timestamp, h.msg_date, '
+    'h.msg_hour, h.msg_minute, h.msg_second, h.was_processed, h.created_at'
+)
+
+
+def _messages_scope_sql(channel_id=None, query=None, alias='h'):
+    """WHERE clause (and params) shared by every Messages listing."""
+    clauses, params = [], []
+    if channel_id:
+        clauses.append(f'{alias}.channel_id = ?')
+        params.append(channel_id)
+    if query:
+        escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        clauses.append(f"{alias}.content LIKE ? ESCAPE '\\'")
+        params.append(f'%{escaped}%')
+    return (' AND '.join(clauses) or '1=1'), params
+
+
+def _message_row_to_dict(row, has_vector: bool, score=None, best_match_id=None) -> dict:
+    data = dict(row)
+    data['has_vector'] = bool(has_vector)
+    data['is_bot'] = bool(data.get('is_bot'))
+    data['from_me'] = bool(data.get('from_me'))
+    if score is not None:
+        data['similarity'] = round(score, 4)
+        data['best_match_id'] = best_match_id
+    return data
+
+
+def _fetch_messages_by_ids(cursor, ids, has_vec: bool) -> dict:
+    """Returns {id: row_dict} for the given message_history ids."""
+    if not ids:
+        return {}
+    select_vec = 'EXISTS (SELECT 1 FROM message_history_vec v WHERE v.id = h.id)' if has_vec else '0'
+    placeholders = ','.join('?' * len(ids))
+    cursor.execute(
+        f'SELECT {_MESSAGE_COLUMNS}, {select_vec} AS has_vector '
+        f'FROM message_history h WHERE h.id IN ({placeholders})',
+        list(ids),
+    )
+    return {row['id']: _message_row_to_dict(row, row['has_vector']) for row in cursor.fetchall()}
+
+
+def _find_similar_message_groups(cursor, channel_id, threshold):
+    """Connected components of messages whose embeddings are close enough.
+
+    Scans the most recent SIMILAR_SCAN_LIMIT vectorized rows and asks the
+    sqlite-vec index for each one's nearest neighbours inside its own channel
+    (the partition key keeps the search scoped per chat). Two rows are linked
+    when cosine similarity >= threshold.
+
+    Returns (groups, best): groups is a list of id lists (size >= 2), best maps
+    each linked id to (similarity, other_id) of its closest match.
+    """
+    max_distance = 1.0 - threshold
+    cursor.execute(
+        '''
+        SELECT v.id, v.channel_id, v.vector
+        FROM message_history_vec v
+        JOIN message_history h ON h.id = v.id
+        WHERE (? IS NULL OR v.channel_id = ?)
+        ORDER BY v.id DESC
+        LIMIT ?
+        ''',
+        (channel_id, channel_id, SIMILAR_SCAN_LIMIT),
+    )
+    rows = cursor.fetchall()
+
+    parent = {}
+
+    def find(node):
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    best = {}
+    for row in rows:
+        cursor.execute(
+            '''
+            SELECT id, distance FROM message_history_vec
+            WHERE channel_id = ? AND vector MATCH ? AND k = ?
+            ''',
+            (row['channel_id'], row['vector'], SIMILAR_NEIGHBORS + 1),
+        )
+        for neighbour in cursor.fetchall():
+            if neighbour['id'] == row['id'] or neighbour['distance'] > max_distance:
+                continue
+            score = 1.0 - neighbour['distance']
+            if score > best.get(row['id'], (-1.0, None))[0]:
+                best[row['id']] = (score, neighbour['id'])
+            root_a, root_b = find(row['id']), find(neighbour['id'])
+            if root_a != root_b:
+                parent[root_b] = root_a
+
+    components = {}
+    for node in best:
+        components.setdefault(find(node), []).append(node)
+    groups = [sorted(ids, reverse=True) for ids in components.values() if len(ids) >= 2]
+    return groups, best
+
+
+def list_messages_admin(channel_id=None, query=None, mode='all', threshold=0.9,
+                        page=1, per_page=50) -> dict:
+    """
+    Lists message_history rows for the Messages page.
+
+    mode:
+        'all'        -> paginated messages, newest first.
+        'duplicates' -> groups of messages with identical text (case and
+                        surrounding whitespace ignored).
+        'similar'    -> groups of messages whose embeddings have cosine
+                        similarity >= threshold (see _find_similar_message_groups).
+
+    Duplicate and similar listings are paginated by group.
+    """
+    if mode not in MESSAGE_LIST_MODES:
+        mode = 'all'
+    page = max(1, int(page))
+    per_page = min(max(1, int(per_page)), MESSAGES_MAX_PER_PAGE)
+    offset = (page - 1) * per_page
+    has_vec = sqlite_vec_available()
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT DISTINCT channel_id FROM message_history ORDER BY channel_id')
+        channels = [r['channel_id'] for r in cursor.fetchall()]
+        where, params = _messages_scope_sql(channel_id, query)
+
+        result = {
+            'mode': mode,
+            'threshold': threshold,
+            'page': page,
+            'per_page': per_page,
+            'channels': channels,
+            'groups': [],
+            'messages': [],
+        }
+
+        if mode == 'duplicates':
+            cursor.execute(
+                f'''
+                SELECT COUNT(*) FROM (
+                    SELECT 1 FROM message_history h WHERE {where}
+                    GROUP BY lower(trim(h.content)) HAVING COUNT(*) > 1
+                )
+                ''',
+                params,
+            )
+            result['total'] = cursor.fetchone()[0]
+            cursor.execute(
+                f'''
+                SELECT lower(trim(h.content)) AS norm, COUNT(*) AS n, MAX(h.id) AS newest
+                FROM message_history h WHERE {where}
+                GROUP BY norm HAVING COUNT(*) > 1
+                ORDER BY n DESC, newest DESC
+                LIMIT ? OFFSET ?
+                ''',
+                params + [per_page, offset],
+            )
+            for group in cursor.fetchall():
+                cursor.execute(
+                    f'''
+                    SELECT {_MESSAGE_COLUMNS},
+                           {'EXISTS (SELECT 1 FROM message_history_vec v WHERE v.id = h.id)' if has_vec else '0'} AS has_vector
+                    FROM message_history h
+                    WHERE {where} AND lower(trim(h.content)) = ?
+                    ORDER BY h.id DESC
+                    ''',
+                    params + [group['norm']],
+                )
+                members = [_message_row_to_dict(r, r['has_vector']) for r in cursor.fetchall()]
+                result['groups'].append({'key': group['norm'], 'count': group['n'], 'messages': members})
+
+        elif mode == 'similar':
+            if has_vec:
+                groups, best = _find_similar_message_groups(cursor, channel_id, threshold)
+            else:
+                groups, best = [], {}
+            if query and groups:
+                # Keyword filter for similar groups: keep groups with a matching member.
+                needle = query.lower()
+                texts = _fetch_messages_by_ids(cursor, [mid for ids in groups for mid in ids], False)
+                groups = [
+                    ids for ids in groups
+                    if any(needle in texts[mid]['content'].lower() for mid in ids if mid in texts)
+                ]
+            groups.sort(key=lambda ids: (-len(ids), -ids[0]))
+            result['total'] = len(groups)
+            result['scanned'] = SIMILAR_SCAN_LIMIT
+            for ids in groups[offset:offset + per_page]:
+                by_id = _fetch_messages_by_ids(cursor, ids, has_vec)
+                members = []
+                for mid in ids:
+                    if mid not in by_id:
+                        continue
+                    score, other = best.get(mid, (None, None))
+                    members.append(_message_row_to_dict(
+                        by_id[mid], by_id[mid]['has_vector'], score, other,
+                    ))
+                result['groups'].append({'key': f'similar-{ids[0]}', 'count': len(ids), 'messages': members})
+
+        else:
+            cursor.execute(f'SELECT COUNT(*) FROM message_history h WHERE {where}', params)
+            result['total'] = cursor.fetchone()[0]
+            select_vec = 'EXISTS (SELECT 1 FROM message_history_vec v WHERE v.id = h.id)' if has_vec else '0'
+            cursor.execute(
+                f'''
+                SELECT {_MESSAGE_COLUMNS}, {select_vec} AS has_vector
+                FROM message_history h WHERE {where}
+                ORDER BY h.msg_timestamp DESC, h.id DESC
+                LIMIT ? OFFSET ?
+                ''',
+                params + [per_page, offset],
+            )
+            result['messages'] = [_message_row_to_dict(r, r['has_vector']) for r in cursor.fetchall()]
+
+        return result
+    finally:
+        conn.close()
+
+
+def delete_message_history_rows(ids) -> dict:
+    """
+    Deletes messages together with everything derived from them:
+    the vector (message_history_vec), the BM25 keyword entry
+    (message_history_fts) and the row itself (message_history).
+
+    Returns {"deleted": <message rows>, "vectors_deleted": <vector rows>}.
+    """
+    clean = sorted({int(i) for i in ids})
+    if not clean:
+        return {'deleted': 0, 'vectors_deleted': 0}
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        vectors_deleted = 0
+        if sqlite_vec_available():
+            for mid in clean:
+                cursor.execute('DELETE FROM message_history_vec WHERE id = ?', (mid,))
+                vectors_deleted += cursor.rowcount
+        try:
+            cursor.executemany('DELETE FROM message_history_fts WHERE rowid = ?', [(mid,) for mid in clean])
+        except sqlite3.OperationalError:
+            pass  # FTS table missing on very old databases
+        cursor.executemany('DELETE FROM message_history WHERE id = ?', [(mid,) for mid in clean])
+        deleted = cursor.rowcount  # executemany reports the total across all ids
+        conn.commit()
+        return {'deleted': deleted, 'vectors_deleted': vectors_deleted}
+    finally:
+        conn.close()
+
+
 if __name__ == '__main__':
     init_db()
