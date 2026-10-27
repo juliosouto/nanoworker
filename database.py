@@ -1361,6 +1361,9 @@ def insert_message_vector(row_id, channel_id, payload, vector) -> bool:
     if row_id is None or not channel_id or vector is None:
         return False
     if not sqlite_vec_available():
+        logging.getLogger(__name__).warning(
+            "sqlite-vec is not loaded; message %s was embedded but its vector was not stored", row_id
+        )
         return False
     payload_json = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
     # vec0 accepts the vector as JSON text or a float32 blob; sqlite3 cannot

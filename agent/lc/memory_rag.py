@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 rebuild_lock = threading.RLock()
 
 INDEX_DIR = "files/lc_index/user_memory"
-_EMBEDDING_DIMS = {"gemini": 768, "openai": 1536}
+_EMBEDDING_DIMS = {"local": 384, "gemini": 768, "openai": 1536}
 
 
 def _dims_for_provider(provider: str) -> int:

@@ -206,7 +206,7 @@ def embeddings_provider() -> str:
         "LC_EMBEDDINGS_PROVIDER", "auto"
     )
     mode = str(raw).strip().lower()
-    if mode not in ("auto", "gemini", "openai"):
+    if mode not in ("auto", "local", "gemini", "openai"):
         if raw not in _warned_embeddings_values:
             _warned_embeddings_values.add(raw)
             logger.warning("Unknown LC_EMBEDDINGS_PROVIDER=%r; using 'auto'", raw)

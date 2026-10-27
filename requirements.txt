@@ -53,6 +53,10 @@ tiktoken>=0.14
 # by database._load_sqlite_vec; a missing/unusable package degrades gracefully.
 sqlite-vec
 
+# Local embeddings for the message/memory RAG (LangChain HuggingFaceEmbeddings,
+# all-MiniLM-L6-v2 on this machine). Nothing is sent to an embeddings API.
+sentence-transformers
+
 # Testing Dependencies
 pytest
 pytest-flask
