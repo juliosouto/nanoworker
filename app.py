@@ -151,6 +151,13 @@ if run_workers:
     # History vector backfill (background, bounded per boot; fail-open).
     def _history_vector_backfill():
         try:
+            # Load the local embedding models first, so the first message
+            # does not wait for their download.
+            from agent.lc.embeddings import warm_up
+            warm_up()
+        except Exception as exc:
+            logging.error("Embeddings warm-up failed: %s", exc)
+        try:
             from agent.lc.history_rag import backfill_missing_vectors
             count = backfill_missing_vectors(limit=200)
             if count:

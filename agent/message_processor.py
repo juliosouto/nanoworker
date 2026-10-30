@@ -214,6 +214,29 @@ def _build_history_from_message_history(cursor, channel_id: str, exclude_client_
     return history
 
 
+# A message this short ("sim", "pode mandar") says little about the tool it
+# needs; the tool filter also reads the bot's last reply in that case.
+_SHORT_TOOL_QUERY_WORDS = 6
+
+
+def _tool_query(history: list, message: str) -> str:
+    """Text the tool relevance filter matches tools against.
+
+    Normally the plain user message. When it is short, the bot's last reply
+    is prepended, so a confirmation like "sim" after "Quer que eu envie por
+    e-mail?" still selects the e-mail tool.
+    """
+    if len((message or "").split()) > _SHORT_TOOL_QUERY_WORDS:
+        return message
+    for turn in reversed(history or []):
+        if getattr(turn, "role", None) == "model":
+            text = " ".join(p.text for p in turn.parts if getattr(p, "text", None))
+            if text.strip():
+                return f"{text[-500:]}\n{message}"
+            break
+    return message
+
+
 def _attach_history_rag(cursor, channel_id: str, rag_query: str, content: str,
                         current_client_message_id=None) -> str:
     """
@@ -451,7 +474,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         ids = current_sender_id
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
-        content = f"[Message from: {sender_label} ({ids})]\n{content}"
+        # In groups the last history turn (other people's messages) is merged
+        # into this prompt below, so mark which message the reply is for.
+        content = (
+            f"[Message from: {sender_label} ({ids})] "
+            f"[Current message: reply to {sender_label}]\n{content}"
+        )
 
     # History RAG (WhatsApp channels): retrieve the most relevant vectorized
     # history of this channel and APPEND it to the user's prompt before the
@@ -498,7 +526,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         # natively (structured output) so the builder can omit the prose block.
         from agent.lc import outputs as lc_outputs
         _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
-        native_structured = lc_outputs.structured_output_enabled(
+        native_structured = lc_outputs.schema_enforced_by_api(
             _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
         )
         system_prompt = build_system_prompt(
@@ -519,7 +547,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             # user message (local embeddings); fail-open to the full set.
             from agent.lc.tools_lc import filter_tools_by_relevance
 
-            tools = filter_tools_by_relevance(tools, rag_query)
+            tools = filter_tools_by_relevance(tools, _tool_query(history, rag_query))
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
 
@@ -647,7 +675,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         # Fase 1: decide native-vs-prompt structured output from the first model.
         from agent.lc import outputs as lc_outputs
         _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
-        native_structured = lc_outputs.structured_output_enabled(
+        native_structured = lc_outputs.schema_enforced_by_api(
             _provider0, models_to_try[0] if models_to_try else "", has_tools=True
         )
         system_prompt = build_system_prompt(

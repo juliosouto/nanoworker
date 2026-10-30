@@ -306,6 +306,63 @@ class TestRunnerIterationLimit(unittest.TestCase):
         self.assertNotIn("max iterations", out)
 
 
+class TestRunnerMedia(unittest.TestCase):
+    """Images and files of the current message reach the model."""
+
+    IMG = gt.Part.from_bytes(data=b"\x89PNG", mime_type="image/png")
+    PDF = gt.Part.from_bytes(data=b"%PDF", mime_type="application/pdf")
+    URI = gt.Part.from_uri(file_uri="https://files/abc", mime_type="application/pdf")
+
+    def test_gemini_gets_every_attachment(self):
+        blocks, skipped = runner._media_blocks(
+            [self.IMG, self.PDF, self.URI, "text"], is_gemini=True, image_input=None
+        )
+        self.assertEqual([b["type"] for b in blocks], ["media"] * 3)
+        self.assertEqual(blocks[0]["data"], b"\x89PNG")
+        self.assertEqual(blocks[2]["file_uri"], "https://files/abc")
+        self.assertEqual(skipped, [])
+
+    def test_other_provider_gets_images_when_flagged(self):
+        blocks, skipped = runner._media_blocks(
+            [self.IMG, self.PDF, self.URI], is_gemini=False, image_input=True
+        )
+        self.assertEqual(len(blocks), 1)
+        self.assertTrue(blocks[0]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertEqual(skipped, ["application/pdf", "application/pdf"])
+
+    def test_other_provider_without_image_input_gets_a_note(self):
+        blocks, skipped = runner._media_blocks([self.IMG], is_gemini=False, image_input=False)
+        self.assertEqual(blocks, [])
+        self.assertEqual(skipped, ["image/png"])
+
+    def _run(self, content, provider, image_input=None):
+        from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+        seen = {}
+
+        class Spy(FakeListChatModel):
+            def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+                seen["messages"] = messages
+                return super()._generate(messages, stop, run_manager, **kwargs)
+
+        with _patch_model(Spy(responses=["OK"])), _patch_config():
+            runner.run_langchain_llm(
+                "m", [], {"system_instruction": "sys"}, content,
+                None, "sid", "mid", "messages_out",
+                provider=provider, api_key="k", image_input=image_input,
+            )
+        return seen["messages"]
+
+    def test_image_sent_after_the_text(self):
+        msgs = self._run([self.IMG, "what is this?"], "google")
+        self.assertEqual(msgs[-2].content, "what is this?")
+        self.assertEqual(msgs[-1].content[0]["type"], "media")
+
+    def test_skipped_attachment_is_noted_in_the_prompt(self):
+        msgs = self._run([self.IMG, "what is this?"], "openrouter", image_input=False)
+        self.assertIn("[Attachment (image/png) not sent", msgs[-1].content)
+
+
 class TestRunnerStop(unittest.TestCase):
     """/stop propagation: a StopRequestedError inside a tool bubbles out intact."""
 
@@ -476,6 +533,23 @@ class TestRunnerHelpers(unittest.TestCase):
             [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
         )
         self.assertEqual([m.type for m in msgs], ["human", "ai"])
+
+    def test_history_merged_group_messages_keep_labels_on_own_lines(self):
+        turn = gt.Content(role="user", parts=[
+            gt.Part.from_text(text="[Message from: Vitor (1)]\ncotação do dólar?"),
+            gt.Part.from_text(text="[Message from: Capivara (2)]\nprevisão do tempo"),
+        ])
+        msgs = runner._history_to_lc_messages([turn])
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("dólar?\n\n[Message from: Capivara (2)]", msgs[0].content)
+
+    def test_current_input_keeps_each_group_message_on_its_own_line(self):
+        content = [
+            gt.Part.from_text(text="[Message from: Vitor (1)]\ncotação do dólar?"),
+            "[Message from: Capivara (2)] [Current message: reply to Capivara]\nprevisão do tempo",
+        ]
+        text = runner._content_to_text(content, sep="\n\n")
+        self.assertIn("dólar?\n\n[Message from: Capivara (2)]", text)
 
     def test_history_empty(self):
         self.assertEqual(runner._history_to_lc_messages([]), [])

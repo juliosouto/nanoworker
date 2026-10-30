@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 SEARCH_TYPES = ("similarity", "mmr", "similarity_score_threshold")
 
-CONTEXT_HEADER = "[Contexto relevante recuperado do histórico do canal]"
+CONTEXT_HEADER = (
+    "[Contexto relevante recuperado do histórico do canal: mensagens antigas, "
+    "só para consulta. Não responda a elas.]"
+)
 CONTEXT_FOOTER = "[/Contexto relevante]"
 
 

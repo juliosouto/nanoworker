@@ -15,6 +15,7 @@ import (no heavy libraries loaded unless an embedding is actually requested).
 import logging
 import os
 import threading
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -28,9 +29,21 @@ TOOL_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 LOCAL_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models", "embeddings")
 
 
-# Serialises the cache so the model is loaded only once, even if
-# get_embeddings is called concurrently (e.g. from many worker threads).
-EMBEDDING_LOCK = threading.Lock()
+# One lock per model: each model is loaded only once even under concurrent
+# calls, and downloading one model (the tool model is ~470 MB) never blocks
+# callers of the other (e.g. history vectorization in the webhook).
+EMBEDDING_LOCK = threading.Lock()  # guards _MODEL_LOCKS
+_MODEL_LOCKS = {}
+
+# After a failed load, wait this long before trying again, so a missing
+# download (no network, full disk) does not stall every message.
+LOAD_RETRY_SECONDS = 300
+_FAILED_AT = {}
+
+
+def _model_lock(model: str) -> threading.Lock:
+    with EMBEDDING_LOCK:
+        return _MODEL_LOCKS.setdefault(model, threading.Lock())
 
 
 def _embedding_class():
@@ -50,22 +63,41 @@ def get_embeddings(model: str = LOCAL_MODEL) -> object:
     cached per model.
 
     Returns None when the model cannot be loaded; the caller then skips
-    embedding work. A failed load is retried on the next call.
+    embedding work. A failed load is retried after ``LOAD_RETRY_SECONDS``.
     """
     cache = get_embeddings.__dict__.setdefault("_cache", {})
-    with EMBEDDING_LOCK:
-        if model not in cache:
-            try:
-                cache[model] = _embedding_class()(
-                    model_name=model, cache_folder=LOCAL_CACHE_DIR
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to load local embeddings (%r); will retry next call: %s",
-                    model,
-                    exc,
-                )
+    if model in cache:
+        return cache[model]
+    with _model_lock(model):
+        if model in cache:
+            return cache[model]
+        failed_at = _FAILED_AT.get(model)
+        if failed_at is not None and time.monotonic() - failed_at < LOAD_RETRY_SECONDS:
+            return None
+        try:
+            cache[model] = _embedding_class()(
+                model_name=model, cache_folder=LOCAL_CACHE_DIR
+            )
+            _FAILED_AT.pop(model, None)
+        except Exception as exc:
+            _FAILED_AT[model] = time.monotonic()
+            logger.warning(
+                "Failed to load local embeddings (%r); retrying in %ds: %s",
+                model,
+                LOAD_RETRY_SECONDS,
+                exc,
+            )
     return cache.get(model)
+
+
+def warm_up() -> None:
+    """Loads the embedding models in use, so the first message does not wait
+    for a download. Meant for a background thread at boot."""
+    from agent.lc import settings as lc_settings
+
+    get_embeddings(LOCAL_MODEL)
+    if lc_settings.tool_relevance_filter():
+        get_embeddings(TOOL_MODEL)
 
 
 def embeddings_available() -> bool:

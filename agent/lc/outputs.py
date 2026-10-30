@@ -163,6 +163,19 @@ def structured_output_enabled(
     return supports_native_structured(provider, model_name, has_tools)
 
 
+def schema_enforced_by_api(
+    provider: Optional[str], model_name: str = "", has_tools: bool = False
+) -> bool:
+    """True when the prompt may omit the prose JSON contract.
+
+    Qwen and DeepSeek only get ``json_object`` (any valid JSON, no field
+    names), so the prompt must still describe the contract for them.
+    """
+    if (provider or "").lower() in _JSON_OBJECT_PROVIDERS:
+        return False
+    return structured_output_enabled(provider, model_name, has_tools)
+
+
 def resolve_provider_for_model(model_name: str) -> Optional[str]:
     """Resolves the provider for a model name, consulting llm_config first.
 

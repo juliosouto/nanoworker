@@ -210,7 +210,7 @@ def execute_openai_compatible_llm(
     for msg in history:
         role = "user" if msg.role == "user" else "assistant"
         text_parts = [p.text for p in msg.parts if getattr(p, "text", None)]
-        messages.append({"role": role, "content": " ".join(text_parts)})
+        messages.append({"role": role, "content": "\n\n".join(text_parts)})
 
     if isinstance(content, list):
         text_parts = []
@@ -221,7 +221,7 @@ def execute_openai_compatible_llm(
                 text_parts.append(p.text)
     else:
         text_parts = [content]
-    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
+    messages.append({"role": "user", "content": "\n\n".join([t for t in text_parts if t])})
 
     # 2. Convert raw python functions into OpenAI tool schemas
     permitted_tools = config_kwargs.get("tools", [])

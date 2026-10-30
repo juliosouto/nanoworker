@@ -48,3 +48,30 @@ class TestFriendlyLLMError(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestToolQuery:
+    """The tool filter reads the bot's last reply when the message is short."""
+
+    def _history(self):
+        from google.genai import types as gt
+
+        return [
+            gt.Content(role="user", parts=[gt.Part.from_text(text="[Message from: A]\nmanda o relatório")]),
+            gt.Content(role="model", parts=[gt.Part.from_text(text="Quer que eu envie por e-mail?")]),
+        ]
+
+    def test_short_message_gets_last_bot_reply(self):
+        from agent.message_processor import _tool_query
+
+        assert _tool_query(self._history(), "sim") == "Quer que eu envie por e-mail?\nsim"
+
+    def test_long_message_is_used_alone(self):
+        from agent.message_processor import _tool_query
+
+        msg = "qual é a previsão do tempo para amanhã em Campinas?"
+        assert _tool_query(self._history(), msg) == msg
+
+    def test_no_bot_reply_keeps_message(self):
+        from agent.message_processor import _tool_query
+
+        assert _tool_query([], "sim") == "sim"

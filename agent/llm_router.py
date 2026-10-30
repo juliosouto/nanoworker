@@ -184,7 +184,7 @@ def route_llm_call(
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT provider, api_key, thinking, context_window, max_output_tokens, image_output, text_output FROM llm_config WHERE model_name = ?",
+        "SELECT provider, api_key, thinking, context_window, max_output_tokens, image_output, text_output, image_input FROM llm_config WHERE model_name = ?",
         (model_name,),
     )
     row = c.fetchone()
@@ -197,6 +197,7 @@ def route_llm_call(
     max_output_tokens = None
     image_output = False
     text_output = False
+    image_input = None
     if row:
         try:
             provider = row["provider"].lower() if row["provider"] else None
@@ -227,6 +228,10 @@ def route_llm_call(
             text_output = bool(row["text_output"])
         except (KeyError, IndexError, TypeError):
             text_output = False
+        try:
+            image_input = bool(row["image_input"])
+        except (KeyError, IndexError, TypeError):
+            image_input = None
 
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
@@ -308,6 +313,7 @@ def route_llm_call(
             api_key=api_key,
             max_output_tokens=max_output_tokens,
             on_complete=on_complete,
+            image_input=image_input,
         )
 
     # NVIDIA is checked first (before the Qwen/OpenAI branches) because NIM hosts
