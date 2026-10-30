@@ -217,6 +217,22 @@ class TestRoutingPrefixStripped(unittest.TestCase):
         self.assertEqual(m.openai_api_base, "https://integrate.api.nvidia.com/v1")
 
 
+    def test_openai_prefix_stripped(self):
+        m = make_chat_model("openai/gpt-4o", provider="openai", api_key="k")
+        self.assertEqual(m.model_name, "gpt-4o")
+
+    def test_groq_model_name_kept(self):
+        m = make_chat_model("openai/gpt-oss-20b", provider="groq", api_key="k")
+        self.assertEqual(m.model_name, "openai/gpt-oss-20b")
+
+
+class TestDeepSeekModel(unittest.TestCase):
+    def test_base_url_and_prefix(self):
+        m = make_chat_model("deepseek/deepseek-chat", provider="deepseek", api_key="k")
+        self.assertEqual(m.model_name, "deepseek-chat")
+        self.assertEqual(m.openai_api_base, "https://api.deepseek.com")
+
+
 class TestCloudflareModel(unittest.TestCase):
     """cloudflare → ChatOpenAI with the dynamic Workers AI base URL."""
 

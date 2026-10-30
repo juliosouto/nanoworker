@@ -8,7 +8,7 @@ legacy loops:
 
     * temperature default: Gemini 2.0, every OpenAI-compatible provider 1.0;
     * Groq ``max_tokens`` default 1024 (parity with ``call_groq_llm``);
-    * fixed base URLs for Qwen (DashScope), OpenRouter and NVIDIA NIM;
+    * fixed base URLs for Qwen (DashScope), OpenRouter, NVIDIA NIM and DeepSeek;
     * Cloudflare Workers AI base URL built at call time from the
       ``CLOUDFLARE_ACCOUNT_ID`` app_config key (mirrors OLLAMA_BASE_URL);
     * Ollama via the OpenAI-compatible endpoint (``ChatOpenAI(base_url=...)``),
@@ -29,12 +29,17 @@ PROVIDER_BASE_URLS = {
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "nvidia": "https://integrate.api.nvidia.com/v1",
+    "deepseek": "https://api.deepseek.com",
 }
 
-# Routing prefixes removed from the model name before calling the API.
+# Routing prefixes removed from the model name before calling the API: none of
+# these providers has model IDs starting with its own name. Groq is absent on
+# purpose ("groq/compound" is a real Groq model ID).
 _STRIPPED_MODEL_PREFIXES = {
     "openrouter": "openrouter/",
     "nvidia": "nvidia/",
+    "openai": "openai/",
+    "deepseek": "deepseek/",
 }
 
 # Default temperature per provider family (parity with build_config_kwargs and
