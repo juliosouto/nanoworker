@@ -295,8 +295,8 @@ def run_langchain_llm(
         ChatPromptTemplate,
         HumanMessagePromptTemplate,
         MessagesPlaceholder,
-        SystemMessagePromptTemplate,
     )
+    from langchain_core.messages import SystemMessage
 
     lc_cache.maybe_init_cache()
 
@@ -326,12 +326,17 @@ def run_langchain_llm(
         else []
     )
 
+    # The system prompt is passed as a literal message, not a template: it may
+    # contain JSON (e.g. the AgentResponse contract) whose braces would
+    # otherwise be parsed as prompt variables.
+    system_message = SystemMessage(
+        content=system_instruction or "You are a helpful assistant."
+    )
+
     # Agent prompt (tool-calling path) includes the agent_scratchpad placeholder.
     agent_prompt = ChatPromptTemplate.from_messages(
         [
-            SystemMessagePromptTemplate.from_template(
-                system_instruction or "You are a helpful assistant."
-            ),
+            system_message,
             MessagesPlaceholder(variable_name="chat_history", optional=True),
             HumanMessagePromptTemplate.from_template("{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
@@ -366,9 +371,7 @@ def run_langchain_llm(
         # usable on this path.
         direct_prompt = ChatPromptTemplate.from_messages(
             [
-                SystemMessagePromptTemplate.from_template(
-                    system_instruction or "You are a helpful assistant."
-                ),
+                system_message,
                 MessagesPlaceholder(variable_name="chat_history", optional=True),
                 HumanMessagePromptTemplate.from_template("{input}"),
             ]

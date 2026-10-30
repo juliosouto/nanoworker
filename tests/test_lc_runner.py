@@ -130,6 +130,35 @@ class TestRunnerNoTools(unittest.TestCase):
             )
         self.assertEqual(out, '{"response": "oi"}')
 
+    def test_system_prompt_with_json_braces_is_literal(self):
+        # The prompt-based AgentResponse contract contains JSON braces; they
+        # must not be parsed as ChatPromptTemplate variables.
+        from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+        seen = {}
+
+        class Spy(FakeListChatModel):
+            def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+                seen["messages"] = messages
+                return super()._generate(messages, stop, run_manager, **kwargs)
+
+        system = 'Answer as JSON:\n{\n  "user_prompt": "...", "llm_response": "..."\n}'
+        with _patch_model(Spy(responses=["OK"])), _patch_config():
+            out = runner.run_langchain_llm(
+                "gemini-3-flash-preview",
+                _history([("user", "hi")]),
+                {"system_instruction": system},
+                "query {not a var}",
+                None,
+                "sid",
+                "mid",
+                "messages_out",
+                provider="google",
+                api_key="k",
+            )
+        self.assertEqual(out, "OK")
+        self.assertEqual(seen["messages"][0].content, system)
+
     def test_history_is_converted(self):
         # Verify the history → LangChain messages conversion directly (the chain
         # receives formatted prompt values, so inspect _history_to_lc_messages).
