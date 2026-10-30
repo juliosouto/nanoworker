@@ -158,7 +158,8 @@ def build_system_prompt(
                 if models_to_try else None
             )
             native_structured = lc_outputs.structured_output_enabled(
-                _provider0, models_to_try[0] if models_to_try else ""
+                _provider0, models_to_try[0] if models_to_try else "",
+                has_tools=bool(include_tool_rules),
             )
         return lc_prompts.build_system_prompt(
             cursor=cursor,

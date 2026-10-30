@@ -499,7 +499,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         from agent.lc import outputs as lc_outputs
         _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
         native_structured = lc_outputs.structured_output_enabled(
-            _provider0, models_to_try[0] if models_to_try else ""
+            _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
         )
         system_prompt = build_system_prompt(
             cursor=cursor,
@@ -651,7 +651,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         from agent.lc import outputs as lc_outputs
         _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
         native_structured = lc_outputs.structured_output_enabled(
-            _provider0, models_to_try[0] if models_to_try else ""
+            _provider0, models_to_try[0] if models_to_try else "", has_tools=True
         )
         system_prompt = build_system_prompt(
             cursor=cursor,

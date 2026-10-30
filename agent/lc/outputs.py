@@ -120,17 +120,22 @@ def parse_agent_response(raw_text) -> Optional[AgentResponse]:
         return None
 
 
-def supports_native_structured(provider: Optional[str], model_name: str = "") -> bool:
+def supports_native_structured(
+    provider: Optional[str], model_name: str = "", has_tools: bool = False
+) -> bool:
     """True when the provider/model reliably supports native structured output.
 
     A None/empty provider is treated as Gemini, mirroring the default branch
-    of route_llm_call.
+    of route_llm_call. Gemini rejects response_schema together with function
+    calling, so with tools only the JSON mime type would survive and the model
+    would invent its own JSON shape; in that case the prompt-based contract is
+    used instead.
     """
     p = (provider or "").lower()
     m = (model_name or "").lower()
 
     if p in _GEMINI_PROVIDERS or p == "":
-        return True
+        return not has_tools
     if p in _JSON_SCHEMA_PROVIDERS:
         if p == "openrouter":
             # OpenRouter forwards response_format only for OpenAI-family models.
@@ -143,13 +148,19 @@ def supports_native_structured(provider: Optional[str], model_name: str = "") ->
     return False
 
 
-def structured_output_enabled(provider: Optional[str], model_name: str = "") -> bool:
-    """Single gate: LangChain stack active + mode auto + provider supports it."""
+def structured_output_enabled(
+    provider: Optional[str], model_name: str = "", has_tools: bool = False
+) -> bool:
+    """Single gate: LangChain stack active + mode auto + provider supports it.
+
+    ``has_tools`` must match between the prompt builder and route_llm_call, so
+    the prose contract is omitted only when the API actually enforces it.
+    """
     if not settings.stack_enabled():
         return False
     if settings.structured_output_mode() != "auto":
         return False
-    return supports_native_structured(provider, model_name)
+    return supports_native_structured(provider, model_name, has_tools)
 
 
 def resolve_provider_for_model(model_name: str) -> Optional[str]:

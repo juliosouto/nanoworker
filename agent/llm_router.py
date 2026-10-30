@@ -241,7 +241,9 @@ def route_llm_call(
     # When route_llm_call is used as a summarizer backend (no contract), skip
     # the native structured-output patch that would otherwise break the call.
     if not summarize:
-        if lc_outputs.structured_output_enabled(provider, model_name):
+        if lc_outputs.structured_output_enabled(
+            provider, model_name, has_tools=bool(local_kwargs.get("tools"))
+        ):
             local_kwargs.update(lc_outputs.build_structured_kwargs(provider))
 
     # Trim old history to the model's context window configured in the LLM models UI.

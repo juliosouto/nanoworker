@@ -109,6 +109,13 @@ class TestProviderSupport:
         assert supports_native_structured("gemini", "gemini-2.5-flash") is True
         assert supports_native_structured(None, "gemini-2.5-flash") is True  # default branch
 
+    def test_gemini_with_tools_uses_prompt_contract(self):
+        # Gemini drops response_schema with function calling, so the prose
+        # contract must stay in the prompt.
+        assert supports_native_structured("google", "gemini-3-flash-preview", has_tools=True) is False
+        assert supports_native_structured(None, "gemini-2.5-flash", has_tools=True) is False
+        assert supports_native_structured("openai", "gpt-4o", has_tools=True) is True
+
     def test_qwen_deepseek_native(self):
         assert supports_native_structured("qwen", "qwen-plus") is True
         assert supports_native_structured("deepseek", "deepseek-chat") is True
