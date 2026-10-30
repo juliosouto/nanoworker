@@ -72,7 +72,12 @@ def resolve_provider(
         str | None: the resolved provider name.
     """
     if provider:
-        return str(provider).lower()
+        resolved = str(provider).lower()
+        # The UI/seed store Gemini models as provider "Google"; the legacy
+        # router sends any unmatched provider to call_gemini_llm, so treat
+        # "google" as "gemini" here (otherwise it falls into ChatOpenAI and
+        # the Google key is sent to api.openai.com).
+        return "gemini" if resolved == "google" else resolved
 
     lower = (model_name or "").lower()
     if lower.startswith("nvidia/"):

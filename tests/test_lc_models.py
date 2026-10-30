@@ -24,6 +24,8 @@ class TestResolveProvider(unittest.TestCase):
         # model name has a misleading prefix.
         self.assertEqual(resolve_provider("groq", "gemini-2.0"), "groq")
         self.assertEqual(resolve_provider("gemini", "openai/gpt"), "gemini")
+        # Seeded Gemini rows use provider "Google".
+        self.assertEqual(resolve_provider("google", "gemini-2.5-flash"), "gemini")
 
     def test_nvidia_prefix_before_others(self):
         # NIM hosts models whose last segment overlaps other providers.

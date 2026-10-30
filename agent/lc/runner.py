@@ -316,7 +316,10 @@ def run_langchain_llm(
     )
 
     lc_tools = (
-        build_lc_tools(tool_funcs, gemini_safe=(provider == "gemini"))
+        build_lc_tools(
+            tool_funcs,
+            gemini_safe=(lc_models.resolve_provider(provider, model_name) == "gemini"),
+        )
         if has_tools
         else []
     )
