@@ -8,6 +8,7 @@ services:
       - ./.env:/app/.env
       - ./nanoworker.db:/app/nanoworker.db
       - ./.store:/app/.store
+      - ./models:/app/models
       - ./temp:/app/temp
     environment:
       - HOST=0.0.0.0

@@ -5,6 +5,17 @@ function showToast(message) {
     toast.show();
 }
 
+function toggleSidebar() {
+    const sidebar = document.getElementById('appSidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (sidebar) {
+        sidebar.classList.toggle('open');
+    }
+    if (backdrop) {
+        backdrop.classList.toggle('active');
+    }
+}
+
 // Automatically inject CSRF token into all fetch requests
 (function() {
     const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');

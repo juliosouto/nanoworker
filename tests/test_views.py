@@ -132,7 +132,7 @@ def test_agent_behavior_config_page(mock_get_default_worker, client):
 @patch('routes.views.get_config')
 def test_agent_behavior_config_page_exceptions(mock_get_config, mock_get_default_worker, client):
     mock_get_default_worker.return_value = None
-    mock_get_config.side_effect = lambda k, d="": "invalid_int" if k in ["AUTONOMOUS_MODE", "MESSAGE_SLICE_SIZE_TOKENS"] else d
+    mock_get_config.side_effect = lambda k, d="": "invalid_int" if k in ["AUTONOMOUS_MODE", "MESSAGE_HISTORY_SIZE"] else d
     response = client.get('/settings/agent_behavior')
     assert response.status_code == 200
 
@@ -143,6 +143,34 @@ def test_permissions_config_page(client):
 def test_advanced_settings_page(client):
     response = client.get('/settings/advanced')
     assert response.status_code == 200
+
+def test_advanced_settings_tool_relevance_filter_defaults_on(client, monkeypatch):
+    # No env var and no SQLite row: the switch renders enabled.
+    monkeypatch.delenv('TOOL_RELEVANCE_FILTER', raising=False)
+    response = client.get('/settings/advanced')
+    assert response.status_code == 200
+    assert b'id="toolRelevanceToggle" checked' in response.data
+
+def test_advanced_settings_tool_relevance_filter_env_override(client, monkeypatch):
+    # The UI reads the same env > app_config source as the runtime
+    # (agent.lc.settings), so a TOOL_RELEVANCE_FILTER env var (e.g. pinned
+    # in a deployed .env that survives container recreations) also renders
+    # the switch as checked, even when the SQLite row was never written.
+    monkeypatch.setenv('TOOL_RELEVANCE_FILTER', 'true')
+    response = client.get('/settings/advanced')
+    assert response.status_code == 200
+    assert b'id="toolRelevanceToggle" checked' in response.data
+
+def test_advanced_settings_tool_relevance_filter_db_roundtrip(client, monkeypatch):
+    # Toggling the switch posts {"tool_relevance_filter": true} to
+    # /api/settings; the advanced settings page must then render the switch
+    # as checked (env unset, so app_config is the source of truth).
+    monkeypatch.delenv('TOOL_RELEVANCE_FILTER', raising=False)
+    response = client.post('/api/settings', json={'tool_relevance_filter': True})
+    assert response.status_code == 200
+    assert response.get_json()['saved'] == ['TOOL_RELEVANCE_FILTER']
+    page = client.get('/settings/advanced')
+    assert b'id="toolRelevanceToggle" checked' in page.data
 
 def test_tools_management_page(client):
     response = client.get('/settings/tools')

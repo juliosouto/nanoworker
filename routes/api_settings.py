@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import subprocess
 
@@ -6,19 +8,32 @@ from flask import Blueprint, jsonify, request
 from database import get_config, get_db, set_config, update_tool_config
 from security import limiter
 
+logger = logging.getLogger(__name__)
+
 api_settings_bp = Blueprint('api_settings', __name__)
 
 @api_settings_bp.route('/api/config/agent_name', methods=['GET'])
 def get_agent_name_api():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
-    config = cursor.fetchone()
+    try:
+        cursor.execute('SELECT allow_mentions, allow_audio_mentions FROM whatsapp_config WHERE id = 1')
+        config = cursor.fetchone()
+        
+        # Query all worker names
+        cursor.execute('SELECT worker_name FROM workers_config')
+        worker_names = [row['worker_name'].strip() for row in cursor.fetchall()]
+    finally:
+        conn.close()
     
-    # Query all worker names
-    cursor.execute('SELECT worker_name FROM workers_config')
-    worker_names = [row['worker_name'].strip() for row in cursor.fetchall()]
-    conn.close()
+    # A missing/renamed column must not break the whole endpoint: the Baileys
+    # worker relies on it to know the worker names, and a 500 would leave it
+    # using a stale worker list (new workers would then be ignored and their
+    # mentions silently dropped).
+    if config is None:
+        logger.warning("whatsapp_config row id=1 not found; falling back to default mention settings.")
+    if not worker_names:
+        logger.warning("No workers found in workers_config; the WhatsApp worker will not be able to match mentions.")
     
     try:
         allow_mentions = bool(config['allow_mentions']) if config else True
@@ -39,8 +54,7 @@ def get_agent_name_api():
         default_worker = get_default_worker()
         agent_name = default_worker['worker_name'] if default_worker else ''
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).exception("Failed to load default worker in /api/config/agent_name")
+        logger.exception("Failed to load default worker in /api/config/agent_name")
         agent_name = ''
     
     require_at_prefix = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
@@ -77,24 +91,43 @@ def save_settings():
         'anthropic_model': 'ANTHROPIC_MODEL',
         'openrouter_api_key': 'OPENROUTER_API_KEY',
         'openrouter_model': 'OPENROUTER_MODEL',
-        'llm_pref_1': 'LLM_PREF_1',
-        'llm_pref_2': 'LLM_PREF_2',
-        'llm_pref_3': 'LLM_PREF_3',
-        'llm_pref_4': 'LLM_PREF_4',
-        'llm_pref_5': 'LLM_PREF_5',
+        'cloudflare_account_id': 'CLOUDFLARE_ACCOUNT_ID',
+        'cron_pref_1': 'CRON_WORKER_PREF_1',
+        'cron_pref_2': 'CRON_WORKER_PREF_2',
+        'cron_pref_3': 'CRON_WORKER_PREF_3',
+        'cron_pref_4': 'CRON_WORKER_PREF_4',
+        'cron_pref_5': 'CRON_WORKER_PREF_5',
         'whatsapp_access_token': 'WHATSAPP_ACCESS_TOKEN',
         'whatsapp_phone_number_id': 'WHATSAPP_PHONE_NUMBER_ID',
         'whatsapp_verify_token': 'WHATSAPP_VERIFY_TOKEN',
         'ide_prompt': 'IDE_PROMPT',
+        'tts_model': 'TTS_MODEL',
         'whisper_model': 'WHISPER_MODEL',
         'autonomous_mode': 'AUTONOMOUS_MODE',
-        'message_slice_size_tokens': 'MESSAGE_SLICE_SIZE_TOKENS',
+        'history_size_messages': 'MESSAGE_HISTORY_SIZE',
+        'history_rag_enabled': 'HISTORY_RAG_ENABLED',
+        'history_rag_search_type': 'HISTORY_RAG_SEARCH_TYPE',
+        'history_rag_k': 'HISTORY_RAG_K',
+        'history_rag_fetch_k': 'HISTORY_RAG_FETCH_K',
+        'history_rag_score_threshold': 'HISTORY_RAG_SCORE_THRESHOLD',
+        'history_rag_lambda': 'HISTORY_RAG_LAMBDA',
         'max_download_size_mb': 'MAX_DOWNLOAD_SIZE_MB'
     }
     
+    saved_keys = []
+
     for json_key, db_key in mapping.items():
         if json_key in data and data[json_key] is not None:
             set_config(db_key, data[json_key])
+            saved_keys.append(db_key)
+
+    if 'history_rag_allowed_channels' in data:
+        sources = data['history_rag_allowed_channels']
+        if not isinstance(sources, list) or not all(isinstance(c, str) for c in sources):
+            return jsonify({"error": "history_rag_allowed_channels must be a list of strings"}), 400
+        allowed = sorted({c.strip() for c in sources if c.strip()})
+        set_config('HISTORY_RAG_ALLOWED_CHANNELS', json.dumps(allowed))
+        saved_keys.append('HISTORY_RAG_ALLOWED_CHANNELS')
             
     bool_mapping = {
         'require_at_prefix': 'REQUIRE_AT_PREFIX',
@@ -116,21 +149,41 @@ def save_settings():
         'perm_web_search': 'PERM_WEB_SEARCH',
         'perm_tool_creator': 'PERM_TOOL_CREATOR',
         'tool_creator_double_check': 'TOOL_CREATOR_DOUBLE_CHECK',
-        'plan_before_execution': 'PLAN_BEFORE_EXECUTION'
+        'tool_relevance_filter': 'TOOL_RELEVANCE_FILTER',
+        'plan_before_execution': 'PLAN_BEFORE_EXECUTION',
+        'block_ads': 'BLOCK_ADS'
     }
-    
+
+    known_keys = set(mapping) | set(bool_mapping)
+
     for json_key, db_key in bool_mapping.items():
         if json_key in data and data[json_key] is not None:
             val = 'true' if data[json_key] else 'false'
             set_config(db_key, val)
-            
-    return jsonify({"status": "success", "message": "Settings saved"}), 200
+            saved_keys.append(db_key)
+
+    # A key the running build does not know (e.g. the JS of a newer frontend
+    # posting to an older image) is silently ignored otherwise — surfacing it
+    # makes "toggle keeps resetting after deploy" diagnosable from the client.
+    unknown_keys = [k for k in data.keys() if k not in known_keys]
+    if unknown_keys:
+        logger.warning(
+            "POST /api/settings ignored unknown keys %s (stale backend image?)",
+            unknown_keys,
+        )
+
+    return jsonify({
+        "status": "success",
+        "message": "Settings saved",
+        "saved": saved_keys,
+        "ignored_unknown_keys": unknown_keys,
+    }), 200
 
 @api_settings_bp.route('/api/settings/tools', methods=['POST'])
 def save_tool_setting():
     data = request.json
     tool_name = data.get('tool_name')
-    
+
     if tool_name is not None:
         updates = {}
         if 'enabled' in data:
@@ -139,10 +192,14 @@ def save_tool_setting():
             updates['allow_others_from_direct_msgs'] = data['allow_others_from_direct_msgs']
         if 'allow_others_from_group_msgs' in data:
             updates['allow_others_from_group_msgs'] = data['allow_others_from_group_msgs']
-            
+        if 'settings' in data and data['settings'] is not None:
+            if not isinstance(data['settings'], dict):
+                return jsonify({"status": "error", "message": "'settings' must be a JSON object"}), 400
+            updates['config_data'] = data['settings']
+
         update_tool_config(tool_name, updates)
         return jsonify({"status": "success", "message": f"Tool {tool_name} saved"}), 200
-    
+
     return jsonify({"status": "error", "message": "Invalid payload"}), 400
 
 @api_settings_bp.route('/api/login/toggle', methods=['POST'])

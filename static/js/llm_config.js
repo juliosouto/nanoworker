@@ -1,48 +1,84 @@
 document.addEventListener('DOMContentLoaded', () => {
-    if(window.APP_STATE && window.APP_STATE.llmPref1) {
-        const p1 = document.getElementById('llmPref1');
-        const p2 = document.getElementById('llmPref2');
-        const p3 = document.getElementById('llmPref3');
-        const p4 = document.getElementById('llmPref4');
-        const p5 = document.getElementById('llmPref5');
-        
-        if (p1) p1.value = window.APP_STATE.llmPref1;
-        if (p2) p2.value = window.APP_STATE.llmPref2;
-        if (p3) p3.value = window.APP_STATE.llmPref3;
-        if (p4) p4.value = window.APP_STATE.llmPref4;
-        if (p5) p5.value = window.APP_STATE.llmPref5;
-    }
 });
 
-function saveSettings() {
-    const llmPref1 = document.getElementById('llmPref1')?.value;
-    const llmPref2 = document.getElementById('llmPref2')?.value;
-    const llmPref3 = document.getElementById('llmPref3')?.value;
-    const llmPref4 = document.getElementById('llmPref4')?.value;
-    const llmPref5 = document.getElementById('llmPref5')?.value;
+function toggleCloudflareField() {
+    const provider = (document.getElementById('new_provider')?.value || '').trim().toLowerCase();
+    const container = document.getElementById('cloudflareAccountIdContainer');
+    if (container) container.style.display = provider === 'cloudflare' ? '' : 'none';
+}
 
-    const payload = {};
-    if (llmPref1 !== undefined) payload.llm_pref_1 = llmPref1;
-    if (llmPref2 !== undefined) payload.llm_pref_2 = llmPref2;
-    if (llmPref3 !== undefined) payload.llm_pref_3 = llmPref3;
-    if (llmPref4 !== undefined) payload.llm_pref_4 = llmPref4;
-    if (llmPref5 !== undefined) payload.llm_pref_5 = llmPref5;
+// Model-name prefix per provider. Only prefixes the backend router
+// understands/strips are used, so the saved name still works when called.
+const PROVIDER_MODEL_PREFIXES = {
+    google: '',
+    openai: '',
+    groq: '',
+    openrouter: 'openrouter/',
+    nvidia: 'nvidia/',
+    cloudflare: '@cf/',
+    qwen: '',
+    deepseek: '',
+    ollama: 'ollama/',
+};
 
+function applyProviderPrefix(provider) {
+    const input = document.getElementById('new_model_name');
+    if (!input) return;
+    const prefix = PROVIDER_MODEL_PREFIXES[provider] || '';
+    let name = input.value.trim();
+    // Strip any known prefix left from a previous selection
+    const known = Object.values(PROVIDER_MODEL_PREFIXES).filter(Boolean).concat(['@hf/']);
+    for (const p of known) {
+        if (name.toLowerCase().startsWith(p)) { name = name.slice(p.length); break; }
+    }
+    input.value = prefix + name;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function onProviderChange() {
+    const provider = document.getElementById('new_provider').value;
+    toggleCloudflareField();
+    applyProviderPrefix(provider);
+}
+
+// Sets the dropdown value, adding an option if the stored provider is not in the list
+function setProviderValue(provider) {
+    const select = document.getElementById('new_provider');
+    const value = (provider || '').trim().toLowerCase();
+    if (value && !Array.from(select.options).some(o => o.value === value)) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = provider;
+        select.appendChild(opt);
+    }
+    select.value = value;
+    toggleCloudflareField();
+}
+
+function saveCloudflareAccountId() {
+    const input = document.getElementById('cloudflareAccountId');
+    if (!input) return;
+    const value = input.value.trim();
+    input.value = value;
     fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ cloudflare_account_id: value })
     }).then(res => res.json()).then(data => {
         if (data.status === 'success') {
-            showToast('Preference order updated successfully!');
+            // Keep the new value after form.reset()
+            input.defaultValue = value;
+            showToast('Cloudflare Account ID saved!');
         } else {
-            showToast('Error saving settings.');
+            showToast('Error saving Cloudflare Account ID.');
         }
     });
 }
 
 function openModelModal() {
     document.getElementById('addModelModal').style.display = 'flex';
+    toggleCloudflareField();
 }
 
 let currentDuplicateFromId = null;
@@ -197,7 +233,7 @@ function editModel(model) {
     document.querySelector('#addModelModal h3').innerText = 'Edit Model';
 
     document.getElementById('new_model_name').value = model.model_name || '';
-    document.getElementById('new_provider').value = model.provider || '';
+    setProviderValue(model.provider);
 
     const apiKeyInput = document.getElementById('new_api_key');
     if (model.has_key) {
@@ -246,7 +282,9 @@ function duplicateModel(model) {
     currentDuplicateFromId = model.id;
 
     document.getElementById('new_model_name').value = '';
-    document.getElementById('new_provider').value = model.provider || '';
+    setProviderValue(model.provider);
+    document.getElementById('new_model_name').value =
+        PROVIDER_MODEL_PREFIXES[(model.provider || '').toLowerCase()] || '';
 
     const apiKeyInput = document.getElementById('new_api_key');
     if (model.has_key) {

@@ -178,14 +178,20 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
         try:
             # Sessions are stored with the full JID suffix ('@g.us', '@lid',
             # '@s.whatsapp.net'), plus the legacy suffix-less form for sessions created
-            # before JIDs carried a suffix. Match all of them so a bare target still
-            # resolves to its canonical chat.
-            candidate_channels = [
-                f"wa_web:{clean_target}@g.us", f"whatsapp:{clean_target}@g.us",
-                f"wa_web:{clean_target}@lid", f"whatsapp:{clean_target}@lid",
-                f"wa_web:{clean_target}@s.whatsapp.net", f"whatsapp:{clean_target}@s.whatsapp.net",
-                f"wa_web:{clean_target}", f"whatsapp:{clean_target}",
-            ]
+            # before JIDs carried a suffix. Match all of them (preserving both clean digits
+            # and raw group JID identifiers with dashes like '5519991732206-1423590162')
+            # so any target form resolves to its canonical chat.
+            raw_target = str(phone_number).replace("wa_web:", "").replace("whatsapp:", "").split("@")[0].split(":")[0].replace("+", "").replace(" ", "")
+            full_jid = str(phone_number).replace("wa_web:", "").replace("whatsapp:", "").replace("+", "").replace(" ", "")
+
+            candidate_channels = set()
+            for prefix in ("wa_web:", "whatsapp:"):
+                candidate_channels.add(f"{prefix}{full_jid}")
+                for t in {clean_target, raw_target}:
+                    candidate_channels.add(f"{prefix}{t}")
+                    for suffix in ("@g.us", "@lid", "@s.whatsapp.net"):
+                        candidate_channels.add(f"{prefix}{t}{suffix}")
+
             placeholders = ",".join("?" for _ in candidate_channels)
             cursor.execute(
                 f"""
@@ -197,7 +203,7 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
                 ORDER BY m.id DESC
                 LIMIT 1
                 """,
-                candidate_channels,
+                list(candidate_channels),
             )
             row = cursor.fetchone()
             if row:
@@ -396,3 +402,83 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
                 os.remove(temp_file_path)
             except Exception as e:
                 logger.error(f"Failed to delete temp file {temp_file_path}: {e}")
+
+
+def send_whatsapp_poll(phone_number: str, question: str, options: list[str], multiple_choice: bool = False) -> str:
+    """
+    Sends a poll for voting to a phone number or group via WhatsApp.
+
+    Args:
+        phone_number: The recipient's phone number, group JID, or chat address.
+                      Use the EXACT phone_number given in your system prompt / channel context —
+                      it already contains the correct suffix for the originating chat
+                      (e.g. '120363...@g.us' for a group, or '5511999998888@lid' for private chat).
+                      If the request came from a group, pass the group id; if from a private chat,
+                      pass that user's number. You may also pass 'self'.
+        question: The title or question being voted on.
+        options: List of choices to vote on (at least 2 options, e.g. ["Opção A", "Opção B"]).
+        multiple_choice: If True, users can select multiple options. If False (default), single choice.
+
+    Returns:
+        A confirmation string indicating success or an error message.
+    """
+    phone_number = str(phone_number)
+    if not _is_allowed_to(phone_number, allow_mentions_override=True):
+        return (f"Error: Access Denied. Sending polls to {phone_number} is blocked. "
+                f"You MUST reply to the user EXACTLY with this English sentence: "
+                f"'You must add the number {phone_number} to the Allowed To list in the WhatsApp Settings page before I can send polls to it.'")
+
+    if not question or not str(question).strip():
+        return "Error: Poll question cannot be empty."
+
+    if isinstance(options, str):
+        import json
+        try:
+            parsed = json.loads(options)
+            if isinstance(parsed, (list, tuple)):
+                options = parsed
+        except Exception:
+            pass
+
+    if not isinstance(options, (list, tuple)):
+        return "Error: Poll options must be a list of strings."
+
+    clean_opts = [str(opt).strip() for opt in options if str(opt).strip()]
+    if len(clean_opts) < 2:
+        return "Error: A poll must have at least 2 non-empty options."
+
+    payload = {
+        "question": str(question).strip(),
+        "options": clean_opts,
+        "selectable_count": len(clean_opts) if multiple_choice else 1
+    }
+
+    jid = _format_jid(phone_number)
+    if jid:
+        payload["jid"] = jid
+
+    try:
+        send_poll_url = BAILEYS_URL.replace("/send", "/send_poll")
+        response = requests.post(send_poll_url, json=payload, timeout=20)
+
+        if response.status_code == 200:
+            data = response.json()
+            target = data.get("target", phone_number)
+            message_id = data.get("message_id")
+            if not message_id:
+                logger.error(f"send_whatsapp_poll: HTTP 200 but no message_id for {target} (not delivered)")
+                return (f"Error sending WhatsApp poll: Baileys returned success but no message_id - "
+                        f"the poll was NOT delivered to {target}.")
+            return f"Poll '{question}' sent successfully to {target}."
+        elif response.status_code == 503:
+            return "Error: WhatsApp client is not connected. Please check the connection in Settings."
+        else:
+            return f"Error sending WhatsApp poll: HTTP {response.status_code} - {response.text}"
+
+    except requests.exceptions.ConnectionError:
+        return "Error: Could not connect to WhatsApp service. Make sure the WhatsApp worker is running."
+    except requests.exceptions.Timeout:
+        return "Error: WhatsApp service timed out while sending poll. Please try again."
+    except Exception as e:
+        logger.error(f"Failed to send WhatsApp poll: {e}")
+        return f"Error sending WhatsApp poll: {str(e)}"

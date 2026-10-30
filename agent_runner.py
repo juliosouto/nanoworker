@@ -17,6 +17,7 @@ from agent import (
     call_groq_llm,
     call_openai_llm,
     call_nvidia_llm,
+    call_cloudflare_llm,
     convert_to_openai_tool,
     execute_openai_compatible_llm,
     execute_autonomous_loop,

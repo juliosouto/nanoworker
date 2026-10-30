@@ -200,9 +200,47 @@ def agent_behavior_config_page():
         am_val = 1
 
     try:
-        slice_tokens = int(get_config('MESSAGE_SLICE_SIZE_TOKENS', '2000'))
+        history_size = int(get_config('MESSAGE_HISTORY_SIZE', '10000'))
     except (ValueError, TypeError):
-        slice_tokens = 250
+        history_size = 10000
+
+    try:
+        history_rag_k = int(get_config('HISTORY_RAG_K', '3'))
+    except (ValueError, TypeError):
+        history_rag_k = 3
+    try:
+        history_rag_fetch_k = int(get_config('HISTORY_RAG_FETCH_K', '20'))
+    except (ValueError, TypeError):
+        history_rag_fetch_k = 20
+    try:
+        history_rag_score_threshold = float(get_config('HISTORY_RAG_SCORE_THRESHOLD', '0.3'))
+    except (ValueError, TypeError):
+        history_rag_score_threshold = 0.3
+    try:
+        history_rag_lambda = float(get_config('HISTORY_RAG_LAMBDA', '0.5'))
+    except (ValueError, TypeError):
+        history_rag_lambda = 0.5
+
+    from agent.lc.history_rag import allowed_channels
+    from database import get_db
+
+    rag_allowed = allowed_channels()
+    conn = get_db()
+    try:
+        counts = {
+            r['channel_id']: r['n']
+            for r in conn.execute(
+                'SELECT channel_id, COUNT(*) AS n FROM message_history GROUP BY channel_id'
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    # Every recorded chat, plus allowed chats that have no messages anymore.
+    channel_ids = set(counts) | set(rag_allowed)
+    rag_source_options = sorted(
+        ({'channel_id': c, 'count': counts.get(c, 0)} for c in channel_ids),
+        key=lambda o: (-o['count'], o['channel_id']),
+    )
 
     return render_template('agent_behavior_config.html',
         agent_name=agent_name,
@@ -210,7 +248,15 @@ def agent_behavior_config_page():
         use_recipes_as_tools=get_config('USE_RECIPES_AS_TOOLS', 'false').lower() == 'true',
         plan_before_execution=get_config('PLAN_BEFORE_EXECUTION', 'false').lower() == 'true',
         autonomous_mode=am_val,
-        message_slice_size_tokens=slice_tokens,
+        history_size_messages=history_size,
+        history_rag_enabled=get_config('HISTORY_RAG_ENABLED', 'true').lower() == 'true',
+        history_rag_search_type=get_config('HISTORY_RAG_SEARCH_TYPE', 'mmr'),
+        history_rag_k=history_rag_k,
+        history_rag_fetch_k=history_rag_fetch_k,
+        history_rag_score_threshold=history_rag_score_threshold,
+        history_rag_lambda=history_rag_lambda,
+        rag_allowed_channels=rag_allowed,
+        rag_source_options=rag_source_options,
         ide_prompt=get_config('IDE_PROMPT', ''))
 
 @views_bp.route('/settings/permissions')
@@ -239,8 +285,18 @@ def permissions_config_page():
 
 @views_bp.route('/settings/advanced')
 def advanced_settings_page():
+    # Single source of truth: the Tool Relevance Filter toggle reads the same
+    # env > app_config resolution the runtime uses (agent.lc.settings), so the
+    # UI can never disagree with the actual filter behaviour. Pinning the
+    # TOOL_RELEVANCE_FILTER env var (e.g. in a deployed .env, which survives
+    # container recreations) therefore also renders the switch as checked,
+    # even when the SQLite row was never written.
+    from agent.lc.settings import tool_relevance_filter as _tool_relevance_filter
     return render_template('advanced-settings.html',
         tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
+        tool_relevance_filter=_tool_relevance_filter(),
+        block_ads=get_config('BLOCK_ADS', 'true').lower() == 'true',
+        tts_model=get_config('TTS_MODEL', 'kokoro'),
         whisper_model=get_config('WHISPER_MODEL', 'small'),
         max_download_size_mb=get_config('MAX_DOWNLOAD_SIZE_MB', '100')
     )
@@ -268,6 +324,7 @@ def tools_management_page():
         if 'whatsapp' in name: return 'WhatsApp'
         if 'schedule' in name: return 'Scheduling'
         if 'search_web' in name: return 'Web Search'
+        if 'news' in name: return 'News'
         if 'screenshot' in name: return 'Screenshot'
         if name in ['read_file', 'write_file']: return 'File System'
         if 'command' in name: return 'Terminal'
@@ -276,7 +333,11 @@ def tools_management_page():
         return 'Other'
         
     sections = defaultdict(list)
-    
+    # Custom per-tool settings (e.g. the news tool's sources/topics/limits)
+    # rendered inside the gear-icon modal. Tools opt in by declaring a
+    # module-level TOOL_SETTINGS_SCHEMA.
+    tool_settings_map = {}
+
     for tool_func in list(AVAILABLE_TOOLS):
         # Verify self-developed tool file still exists
         mod_name = getattr(tool_func, '__module__', '')
@@ -292,7 +353,25 @@ def tools_management_page():
         tool_name = tool_func.__name__
         # Default is true if not set
         tool_config = get_tool_config(tool_name)
-        
+
+        # Export the tool's custom settings schema (if any) plus effective
+        # values so the gear-icon modal can render and prefill them.
+        try:
+            tool_mod = inspect.getmodule(tool_func)
+            settings_schema = getattr(tool_mod, "TOOL_SETTINGS_SCHEMA", None) if tool_mod else None
+        except Exception:
+            settings_schema = None
+        if settings_schema:
+            stored_settings = tool_config.get("settings") or {}
+            values = {}
+            for field in settings_schema:
+                values[field["key"]] = (
+                    stored_settings[field["key"]]
+                    if field["key"] in stored_settings
+                    else field.get("default")
+                )
+            tool_settings_map[tool_name] = {"schema": settings_schema, "values": values}
+
         doc = tool_func.__doc__ or "No description available."
         short_doc = doc.strip().split('\n')[0] # Get first line of docstring
         
@@ -329,7 +408,7 @@ def tools_management_page():
     if 'Self-Developed' in sections:
         sorted_sections['Self-Developed'] = sorted(sections['Self-Developed'], key=lambda x: x['name'])
     
-    return render_template('tools_management.html', sections=sorted_sections)
+    return render_template('tools_management.html', sections=sorted_sections, tool_settings_data=tool_settings_map)
 
 @views_bp.route('/settings/llm')
 def llm_config_page():
@@ -343,12 +422,7 @@ def llm_config_page():
     has_openai_key = bool(get_config('OPENAI_API_KEY'))
     anthropic_model = os.environ.get('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
     has_anthropic_key = bool(get_config('ANTHROPIC_API_KEY'))
-    
-    llm_pref_1 = get_config('LLM_PREF_1', '')
-    llm_pref_2 = get_config('LLM_PREF_2', '')
-    llm_pref_3 = get_config('LLM_PREF_3', '')
-    llm_pref_4 = get_config('LLM_PREF_4', '')
-    llm_pref_5 = get_config('LLM_PREF_5', '')
+    cloudflare_account_id = get_config('CLOUDFLARE_ACCOUNT_ID', '')
 
     conn = get_db()
     cursor = conn.cursor()
@@ -394,9 +468,7 @@ def llm_config_page():
         deepseek_model=deepseek_model, has_deepseek_key=has_deepseek_key,
         openai_model=openai_model, has_openai_key=has_openai_key,
         anthropic_model=anthropic_model, has_anthropic_key=has_anthropic_key,
-        llm_pref_1=llm_pref_1, llm_pref_2=llm_pref_2,
-        llm_pref_3=llm_pref_3, llm_pref_4=llm_pref_4,
-        llm_pref_5=llm_pref_5,
+        cloudflare_account_id=cloudflare_account_id,
         models=model_list)
 
 @views_bp.route('/llm-models')
@@ -420,6 +492,7 @@ def workers_page():
 
 @views_bp.route('/cron')
 def cron_jobs_page():
+    from database import get_config
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -429,8 +502,27 @@ def cron_jobs_page():
         ORDER BY c.next_run ASC
     ''')
     jobs = cursor.fetchall()
+
+    cursor.execute('SELECT id, worker_name, worker_model FROM workers_config ORDER BY worker_name ASC')
+    workers = cursor.fetchall()
     conn.close()
-    return render_template('cron_jobs.html', jobs=jobs)
+
+    cron_prefs = [get_config(f"CRON_WORKER_PREF_{i}", "") for i in range(1, 6)]
+
+    return render_template(
+        'cron_jobs.html',
+        jobs=jobs,
+        workers=[dict(w) for w in workers],
+        cron_pref_1=cron_prefs[0],
+        cron_pref_2=cron_prefs[1],
+        cron_pref_3=cron_prefs[2],
+        cron_pref_4=cron_prefs[3],
+        cron_pref_5=cron_prefs[4],
+    )
+
+@views_bp.route('/messages')
+def messages_page():
+    return render_template('messages.html')
 
 @views_bp.route('/dashboard')
 def dashboard_page():
@@ -461,7 +553,8 @@ def dashboard_page():
     default_name = default_worker['worker_name'] if default_worker else None
     full_system_prompt = apply_standard_rules(system_prompt, worker_name=default_name)
     full_system_prompt = f"{memory_block}\n{full_system_prompt}"
-    system_tokens = len(full_system_prompt) // 4
+    from agent.lc.tokens import count_tokens
+    system_tokens = count_tokens(full_system_prompt)
     
     permitted_tools = get_permitted_tools()
     tools_length_recipes = 0
@@ -527,6 +620,21 @@ def dashboard_page():
     
     login_enabled = get_config('LOGIN_ENABLED', 'false') == 'true'
     login_token = get_config('LOGIN_TOKEN', '') if login_enabled else ''
+    # Fase 6: LLM usage before/after (legacy vs langchain) for the dashboard
+    # card. days comes from ?days=N (default 14); the helpers clamp 1..90.
+    # Missing llm_usage table on pre-Fase-6 databases yields empty lists,
+    # which the template renders as a "no data yet" note.
+    from flask import request
+
+    from agent.llm_usage import get_usage_by_model, get_usage_summary
+
+    try:
+        usage_days = int(request.args.get('days', 14))
+    except (TypeError, ValueError):
+        usage_days = 14
+    usage_summary = get_usage_summary(usage_days)
+    usage_by_model = get_usage_by_model(usage_days)
+
     
     return render_template('dashboard.html', 
                            user_tokens=user_tokens,
@@ -543,4 +651,7 @@ def dashboard_page():
                            total_max=total_max,
                            double_check_tokens=double_check_tokens,
                            login_enabled=login_enabled,
-                           login_token=login_token)
+                           login_token=login_token,
+                           usage_days=usage_days,
+                           usage_summary=usage_summary,
+                           usage_by_model=usage_by_model)

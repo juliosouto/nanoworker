@@ -11,6 +11,7 @@ OS_PLATFORM = platform.system()
 # Start with tools from outside the tools/ directory
 AVAILABLE_TOOLS = [read_file, write_file]
 
+
 def _load_tools_from_directory(directory_path, package_prefix):
     if not os.path.isdir(directory_path):
         return
@@ -22,11 +23,14 @@ def _load_tools_from_directory(directory_path, package_prefix):
                 module = importlib.import_module(full_module_name)
                 for name, obj in inspect.getmembers(module, inspect.isfunction):
                     # Only append functions actually defined in that module and not private
-                    if getattr(obj, '__module__', None) == module.__name__ and not obj.__name__.startswith("_"):
+                    if getattr(
+                        obj, "__module__", None
+                    ) == module.__name__ and not obj.__name__.startswith("_"):
                         if obj not in AVAILABLE_TOOLS:
                             AVAILABLE_TOOLS.append(obj)
             except Exception as e:
                 print(f"Error loading tool {full_module_name}: {e}")
+
 
 current_dir = os.path.dirname(__file__)
 
@@ -46,47 +50,52 @@ _load_tools_from_directory(current_dir, "tools")
 # 3. Load self-developed OS-specific tools (if available)
 try:
     if OS_PLATFORM == "Windows":
-        mod = importlib.import_module('tools.self-developed.windows')
+        mod = importlib.import_module("tools.self-developed.windows")
     elif OS_PLATFORM == "Linux":
-        mod = importlib.import_module('tools.self-developed.linux')
+        mod = importlib.import_module("tools.self-developed.linux")
     else:
-        mod = importlib.import_module('tools.self-developed.macos')
-    
-    if hasattr(mod, 'AVAILABLE_SELF_DEVELOPED_TOOLS'):
+        mod = importlib.import_module("tools.self-developed.macos")
+
+    if hasattr(mod, "AVAILABLE_SELF_DEVELOPED_TOOLS"):
         for obj in mod.AVAILABLE_SELF_DEVELOPED_TOOLS:
             if obj not in AVAILABLE_TOOLS:
                 AVAILABLE_TOOLS.append(obj)
 except Exception:
     pass
 
+
 def get_permitted_tools(is_admin=False, is_group=False, is_direct=False):
     """Returns a list of tools filtered by the user's specific tool settings and context."""
     tools = []
-    
+
     for tool_func in list(AVAILABLE_TOOLS):
         # Verify self-developed tool file still exists
-        mod_name = getattr(tool_func, '__module__', '')
-        if 'self_developed' in mod_name or 'self-developed' in mod_name:
+        mod_name = getattr(tool_func, "__module__", "")
+        if "self_developed" in mod_name or "self-developed" in mod_name:
             if mod_name in sys.modules:
                 module = sys.modules[mod_name]
-                if hasattr(module, '__file__') and module.__file__:
+                if hasattr(module, "__file__") and module.__file__:
                     if not os.path.exists(module.__file__):
                         AVAILABLE_TOOLS.remove(tool_func)
                         continue
 
         tool_name = tool_func.__name__
         config = get_tool_config(tool_name)
-        if config.get('enabled', True):
+        if config.get("enabled", True):
             if is_admin:
                 tools.append(tool_func)
             elif is_group:
-                if config.get('allow_others_from_group_msgs'):
+                if config.get("allow_others_from_group_msgs"):
                     tools.append(tool_func)
             elif is_direct:
-                if config.get('allow_others_from_direct_msgs'):
+                if config.get("allow_others_from_direct_msgs"):
                     tools.append(tool_func)
             else:
                 # If it's not a WhatsApp context (e.g. IDE or web chat), we default to allowing if enabled
                 tools.append(tool_func)
-            
-    return tools
+
+    # Wrap permitted tools with result caps (imported here, not at module
+    # level, to avoid a circular import with agent.message_processor).
+    from agent.lc.tools_lc import cap_tools
+
+    return cap_tools(tools)

@@ -9,12 +9,25 @@ qrcode
 playwright
 croniter
 faster-whisper
+# PyAV is faster-whisper's audio decoder; old cached versions (<9.0) break it
+# with "TypeError: open() got an unexpected keyword argument 'metadata_errors'".
+av>=11.0.0
 kokoro-onnx
+# NOTE: The original `TTS` (Coqui) package is unmaintained and requires
+# Python <3.12, which breaks the build on python:3.13-bookworm with
+# "No matching distribution found for TTS". `coqui-tts` is the actively
+# maintained Idiap fork; it keeps the same `TTS` import namespace and
+# supports Python 3.10-3.14, so no code changes are needed.
+coqui-tts
+# coqui-tts (XTTS) imports transformers.pytorch_utils.isin_mps_friendly,
+# which was removed in transformers 5.x.
+transformers>=4.57,<5
 soundfile
 cryptography
 openai
 trafilatura
 curl_cffi
+pypdf
 ddgs
 langdetect
 groq
@@ -25,6 +38,23 @@ Flask-Limiter
 Flask-WTF
 Flask-Talisman
 free-proxy
+
+# LangChain stack (Fase 0+ do plano de migração)
+langchain>=1.4,<2
+langchain-core>=1.6,<2
+langchain-openai>=1.7,<2
+langchain-google-genai>=4.4,<5
+langchain-groq>=1.1,<2
+langchain-community>=0.4,<1
+tiktoken>=0.14
+
+# Vector search in SQLite (message_history_vec). Loaded as a runtime extension
+# by database._load_sqlite_vec; a missing/unusable package degrades gracefully.
+sqlite-vec
+
+# Local embeddings for the message/memory RAG (LangChain HuggingFaceEmbeddings,
+# all-MiniLM-L6-v2 on this machine). Nothing is sent to an embeddings API.
+sentence-transformers
 
 # Testing Dependencies
 pytest

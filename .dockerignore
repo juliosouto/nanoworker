@@ -8,3 +8,7 @@ nanoworker.db
 nanoworker.db-journal
 .env
 .store
+models
+files
+*.pth
+*.onnx

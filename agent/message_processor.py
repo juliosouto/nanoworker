@@ -16,9 +16,6 @@ from agent.stop_check import StopRequestedError
 from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.message_utils import (
-    truncate_message,
-    slice_conversation_to_budget,
-    process_tools_for_llm,
     resolve_worker_from_content,
     clean_mention,
     apply_plan_before_execution,
@@ -67,6 +64,19 @@ def _friendly_llm_error(error_str: str) -> str:
             "and resend your message."
         )
 
+    # An image-only model was called via chat/completions (the provider returns
+    # a 404 telling us to use its images endpoint). This means the model was
+    # registered without the "Image output" flag, so it took the text path.
+    if (
+        "is an image generation model" in lowered
+        and "chat/completions endpoint" in lowered
+    ):
+        return (
+            "🎨 This model only generates images and can't be used as a chat "
+            "model. In the model settings, mark 'Image output' ✓ and leave "
+            "'Text output' ✗ so NanoWorker routes it to the image endpoint."
+        )
+
     return f"Error calling LLM API: {error_str}"
 
 
@@ -113,43 +123,43 @@ def _detect_wa_channel_type(channel_id: str):
     return is_wa_group, is_wa_private
 
 
-def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_wa_group: bool) -> list:
+def _build_history_from_db(cursor, session_id: str, exclude_message_id: str) -> list:
     """
-    Fetches and builds the Gemini-format conversation history from the database.
+    Fetches and builds the Gemini-format conversation history from the database
+    (messages_in + messages_out), capped to the last MESSAGE_HISTORY_SIZE
+    messages (message count, not tokens) — the history-size limit configured in
+    the Agent Behavior settings.
     """
-    cursor.execute('''
-        SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name 
-        FROM messages_in 
-        WHERE session_id = ? AND id != ?
-        
-        UNION ALL
-        
-        SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_id_alt, NULL as sender_name 
-        FROM messages_out 
-        WHERE session_id = ?
-        
-        ORDER BY created_at ASC
-    ''', (session_id, exclude_message_id, session_id))
+    from database import get_message_history_size
+    limit = get_message_history_size()
+    cursor.execute(f'''
+        SELECT role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name FROM (
+            SELECT 'user' as role, content, image_base64, file_mime_type, file_name, created_at, gemini_file_uri, sender_id, sender_id_alt, sender_name 
+            FROM messages_in 
+            WHERE session_id = ? AND id != ?
+            
+            UNION ALL
+            
+            SELECT 'model' as role, content, NULL as image_base64, NULL as file_mime_type, NULL as file_name, created_at, NULL as gemini_file_uri, NULL as sender_id, NULL as sender_id_alt, NULL as sender_name 
+            FROM messages_out 
+            WHERE session_id = ?
+        )
+        ORDER BY created_at DESC
+        LIMIT ?
+    ''', (session_id, exclude_message_id, session_id, limit))
 
-    rows = cursor.fetchall()
+    rows = list(cursor.fetchall())
+    rows.reverse()  # oldest first
     history = []
     for row in rows:
         role = row['role']
         msg_content = row['content']
-        if role == 'user':
-            if is_wa_group:
-                msg_content = truncate_message(msg_content)
-            if row['sender_id']:
-                sender_label = row['sender_name'] or row['sender_id']
-                ids = row['sender_id']
-                if row['sender_id_alt']:
-                    ids = f"{row['sender_id']} / {row['sender_id_alt']}"
-                msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
-        elif role == 'model' and is_wa_group:
-            # Large tool-result feedbacks (⚙️ Executed tools: ...) pollute small
-            # contexts. Gate behind a config flag so it can be toggled per install.
-            if get_config("TRUNCATE_MODEL_HISTORY_IN_GROUPS", "true").lower() == "true":
-                msg_content = truncate_message(msg_content)
+        if role == 'user' and row['sender_id']:
+            sender_label = row['sender_name'] or row['sender_id']
+            ids = row['sender_id']
+            if row['sender_id_alt']:
+                ids = f"{row['sender_id']} / {row['sender_id_alt']}"
+            msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
         parts = [types.Part.from_text(text=msg_content)]
         if row['image_base64']:
             from utils.image_utils import build_gemini_part
@@ -167,6 +177,90 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str, is_
                 types.Content(role=role, parts=parts)
             )
     return history
+
+
+def _build_history_from_message_history(cursor, channel_id: str, exclude_client_message_id=None) -> list:
+    """
+    Builds the Gemini-format history for WhatsApp channels from the canonical
+    message_history timeline: the last PROMPT_HISTORY_SIZE rows of the channel
+    (mentioned or not — the continuity window reaches the model), oldest
+    first. Rows written by the BOT (is_bot=1) become 'model' turns; everything
+    else — including messages typed by the human owner on their own phone
+    (from_me=1, is_bot=0) — stays a 'user' turn with the "[Message from: ...]"
+    label.
+    """
+    from database import get_recent_message_history
+    rows = get_recent_message_history(
+        cursor, channel_id, exclude_message_id=exclude_client_message_id
+    )
+    history = []
+    for row in rows:
+        msg_content = row['content'] or ''
+        if row['is_bot']:
+            role = 'model'
+        else:
+            role = 'user'
+            if row['sender_id']:
+                sender_label = row['sender_name'] or row['sender_id']
+                ids = row['sender_id']
+                if row['sender_id_alt']:
+                    ids = f"{row['sender_id']} / {row['sender_id_alt']}"
+                msg_content = f"[Message from: {sender_label} ({ids})]\n{msg_content}"
+        parts = [types.Part.from_text(text=msg_content)]
+        if history and history[-1].role == role:
+            history[-1].parts.extend(parts)
+        else:
+            history.append(types.Content(role=role, parts=parts))
+    return history
+
+
+def _attach_history_rag(cursor, channel_id: str, rag_query: str, content: str,
+                        current_client_message_id=None) -> str:
+    """
+    Retrieves the most relevant vectorized history of the WhatsApp channel and
+    appends the context block to ``content`` (the labeled user prompt).
+
+    ``rag_query`` must be the mention-cleaned, label-free text so the query
+    embedding matches the vectorized corpus (stored as plain message text).
+    Fail-open: any failure returns ``content`` unchanged.
+    """
+    try:
+        from agent.lc.history_rag import (
+            CONTEXT_FOOTER,
+            CONTEXT_HEADER,
+            format_history_context,
+            get_settings as history_rag_settings,
+            retrieve_relevant_history,
+        )
+        from database import get_history_window_cutoff
+
+        rag = history_rag_settings()
+        if not rag.enabled:
+            return content
+
+        current_row_id = None
+        if current_client_message_id:
+            cursor.execute('SELECT id FROM message_history WHERE message_id = ?', (current_client_message_id,))
+            row = cursor.fetchone()
+            current_row_id = row['id'] if row else None
+        cutoff_ts = get_history_window_cutoff(cursor, channel_id)
+        retrieved = retrieve_relevant_history(
+            rag_query,
+            channel_id,
+            exclude_id=current_row_id,
+            cutoff_ts=cutoff_ts,
+            settings=rag,
+        )
+        if retrieved:
+            logger.info("History RAG: attached %d relevant messages to the prompt", len(retrieved))
+            return (
+                f"{content}\n\n{CONTEXT_HEADER}\n"
+                f"{format_history_context(retrieved)}\n{CONTEXT_FOOTER}"
+            )
+        return content
+    except Exception as exc:
+        logger.warning("History RAG retrieval failed (%s); continuing without context", exc)
+        return content
 
 
 def _check_is_admin(sender_id: str) -> bool:
@@ -190,9 +284,42 @@ def _check_is_admin(sender_id: str) -> bool:
     return False
 
 
+def _resolve_cron_worker_preferences():
+    """
+    Resolves the chain of workers and models from CRON_WORKER_PREF_1..5.
+    Returns (primary_worker, models_to_try).
+    If no preference is configured or matching, returns (None, []).
+    """
+    pref_names = [get_config(f"CRON_WORKER_PREF_{i}", "") for i in range(1, 6)]
+    pref_names = [p.strip() for p in pref_names if p and p.strip()]
+    if not pref_names:
+        return None, []
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature FROM workers_config')
+    workers = [dict(w) for w in cursor.fetchall()]
+    conn.close()
+
+    workers_by_name = { (w['worker_name'] or '').strip().lower(): w for w in workers }
+
+    matched_workers = []
+    models_to_try = []
+    for name in pref_names:
+        w = workers_by_name.get(name.lower())
+        if w:
+            matched_workers.append(w)
+            model = (w.get('worker_model') or '').strip()
+            if model and model not in models_to_try:
+                models_to_try.append(model)
+
+    primary_worker = matched_workers[0] if matched_workers else None
+    return primary_worker, models_to_try
+
+
 def _resolve_models(worker) -> list:
     """
-    Determines the ordered list of models to try, based on worker config or global preferences.
+    Determines the ordered list of models to try, based on worker config or fallback preferences.
     """
     if worker and worker.get('worker_model'):
         return [worker['worker_model']]
@@ -266,28 +393,58 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     channel_id = session_row['channel_id'] if session_row else None
     is_wa_group, is_wa_private = _detect_wa_channel_type(channel_id)
 
-    # Fetch history
-    history = _build_history_from_db(cursor, session_id, message_in_id, is_wa_group)
-
     # Get current message info
-    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_id_alt, sender_name FROM messages_in WHERE id = ?', (message_in_id,))
+    cursor.execute('SELECT image_base64, file_mime_type, file_name, gemini_file_uri, sender_id, sender_id_alt, sender_name, client_message_id FROM messages_in WHERE id = ?', (message_in_id,))
     current_msg = cursor.fetchone()
     current_image_base64 = current_msg['image_base64'] if current_msg else None
     current_gemini_uri = current_msg['gemini_file_uri'] if current_msg else None
     current_sender_id = current_msg['sender_id'] if current_msg else None
     current_sender_id_alt = current_msg['sender_id_alt'] if current_msg else None
     current_sender_name = current_msg['sender_name'] if current_msg else None
+    current_client_message_id = current_msg['client_message_id'] if current_msg else None
 
     # Ensure client is available for fallback handling
     client = None
 
+    # Fetch history. WhatsApp channels rebuild it from the message_history
+    # timeline (last PROMPT_HISTORY_SIZE rows of the channel, including group
+    # messages that never mentioned the worker). Other channels keep the
+    # messages_in/messages_out rebuild, capped by message count.
+    if channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):
+        history = _build_history_from_message_history(cursor, channel_id, current_client_message_id)
+    else:
+        history = _build_history_from_db(cursor, session_id, message_in_id)
+
     worker = resolve_worker_from_content(original_content)
+
+    # For scheduled jobs without explicit worker mention, honor cron worker preferences chain
+    cron_models = []
+    if current_sender_id == 'scheduler':
+        from utils.message_utils import _find_worker_mention
+        from database import get_config
+        require_at = get_config("REQUIRE_AT_PREFIX", "true").lower() == "true"
+        # Check if the content explicitly mentioned a worker
+        conn_chk = get_db()
+        cur_chk = conn_chk.cursor()
+        cur_chk.execute('SELECT worker_name FROM workers_config')
+        all_worker_names = [r['worker_name'] for r in cur_chk.fetchall()]
+        conn_chk.close()
+        
+        has_explicit_mention = _find_worker_mention(original_content, all_worker_names, require_at=require_at)
+        if not has_explicit_mention:
+            cron_worker, pref_models = _resolve_cron_worker_preferences()
+            if cron_worker:
+                worker = cron_worker
+            if pref_models:
+                cron_models = pref_models
 
     # Clean worker mention from content
     content = clean_mention(original_content)
 
-    if is_wa_group:
-        content = truncate_message(content)
+    # History RAG search query: mention-cleaned and WITHOUT the
+    # "[Message from: ...]" label, so the query embedding matches the
+    # vectorized corpus (stored as plain message text).
+    rag_query = content
 
     if current_sender_id:
         sender_label = current_sender_name or current_sender_id
@@ -295,12 +452,19 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
+
+    # History RAG (WhatsApp channels): retrieve the most relevant vectorized
+    # history of this channel and APPEND it to the user's prompt before the
+    # LLM call. Parameters come from the Agent Behavior page; any failure is
+    # fail-open (the reply is produced without the extra context).
+    if channel_id and channel_id.startswith(("wa_web:", "whatsapp:")):
+        content = _attach_history_rag(cursor, channel_id, rag_query, content, current_client_message_id)
+
     content = apply_plan_before_execution(content)
 
-    # Slice the WHOLE conversation (history + current message) to the combined
-    # MESSAGE_SLICE_SIZE_TOKENS budget: oldest history messages are dropped
-    # first; the current message is only truncated if it alone overflows.
-    history, content = slice_conversation_to_budget(history, content)
+    # The context size is bounded by message count (MESSAGE_HISTORY_SIZE) —
+    # token-based slicing was removed. The last N timeline messages are the
+    # only history limit.
     send_content = [content]
     if current_image_base64:
         from utils.image_utils import upload_and_build_gemini_part
@@ -318,7 +482,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         last_user = history.pop()
         send_content = last_user.parts + send_content
 
-    models_to_try = _resolve_models(worker)
+    if cron_models:
+        models_to_try = cron_models
+    else:
+        models_to_try = _resolve_models(worker)
 
     try:
         tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
@@ -327,6 +494,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
         # Build system prompt
         worker_name = worker['worker_name'] if worker else None
+        # Fase 1: decide whether the first model enforces the JSON contract
+        # natively (structured output) so the builder can omit the prose block.
+        from agent.lc import outputs as lc_outputs
+        _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
+        native_structured = lc_outputs.structured_output_enabled(
+            _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
+        )
         system_prompt = build_system_prompt(
             cursor=cursor,
             worker=worker,
@@ -334,10 +508,18 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             include_tool_rules=include_tool_rules,
             has_image=bool(current_image_base64),
             worker_name=worker_name,
+            native_structured=native_structured,
+            models_to_try=models_to_try,
         )
 
         # Build config kwargs
         tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
+        if tools:
+            # TOOL_RELEVANCE_FILTER: keep the tools most similar to the plain
+            # user message (local embeddings); fail-open to the full set.
+            from agent.lc.tools_lc import filter_tools_by_relevance
+
+            tools = filter_tools_by_relevance(tools, rag_query)
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
 
@@ -441,7 +623,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         
         SELECT 'model' as role, content, created_at 
         FROM ide_messages_out 
-        WHERE session_id = ?
+        WHERE session_id = ? AND in_reply_to != 'summarize-0'
         
         ORDER BY created_at ASC
     ''', (session_id, message_in_id, session_id))
@@ -462,15 +644,30 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         thinking_enabled = get_config("THINKING_ENABLED", "false").lower() == "true"
 
         # Build system prompt
+        # Fase 1: decide native-vs-prompt structured output from the first model.
+        from agent.lc import outputs as lc_outputs
+        _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
+        native_structured = lc_outputs.structured_output_enabled(
+            _provider0, models_to_try[0] if models_to_try else "", has_tools=True
+        )
         system_prompt = build_system_prompt(
             cursor=cursor,
             ide_prompt=ide_prompt,
+            native_structured=native_structured,
+            models_to_try=models_to_try,
         )
 
         # Build config kwargs
+        ide_tools = get_permitted_tools()
+        if ide_tools:
+            # TOOL_RELEVANCE_FILTER: keep the tools most similar to the user
+            # message (local embeddings); fail-open to the full set.
+            from agent.lc.tools_lc import filter_tools_by_relevance
+
+            ide_tools = filter_tools_by_relevance(ide_tools, content)
         config_kwargs = build_config_kwargs(
             system_prompt=system_prompt,
-            tools=get_permitted_tools(),
+            tools=ide_tools,
             thinking_enabled=thinking_enabled,
             show_tools_results=True,
         )

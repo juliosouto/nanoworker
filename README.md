@@ -218,6 +218,46 @@ When configuring the agent's **"IDE Behavior"** (System Prompt) in the settings,
 - I highly recommend enabling the **"Add current datetime"** option in the settings to provide the AI with real-time awareness.
 - I suggest disabling the **"Enable Thinking"** option for now, as it might interfere with the expected concise output format.
 
+## 🎨 Image Generation Models
+
+Some models registered in **LLM Models** are *text-to-image* models — they only generate images and cannot be called as chat models. OpenRouter's `inclusionai/ming-image-0.1-design` is an example: the provider rejects `chat/completions` with a `404` and points to its dedicated `/api/v1/images` endpoint instead.
+
+To use such a model as a worker's model:
+
+1. **Register the model** in **LLM Models** with **Provider = OpenRouter** and the exact model slug.
+2. Tick **"Image output" ✓** and leave **"Text output" ✗**. This is what tells NanoWorker to route the call to the dedicated image-generation endpoint instead of the chat endpoint.
+3. Point a worker at that model.
+
+When the worker receives a message, it sends the text to the images endpoint and replies with the generated image:
+
+- **Web chat / IDE:** the image renders inline (no extra setup).
+- **WhatsApp:** the image is delivered as a native media message via the Baileys worker.
+
+> **Note:** Image-only models have no conversation history, tools, or autonomous loop — the current message is used as the image prompt, and the textual reply is a short fixed caption. Dedicated image generation is currently implemented for **OpenRouter**; registering an image-only model on another provider will surface a clear error.
+
+## ☁️ Cloudflare Workers AI Models
+
+NanoWorker can call any [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/models/) text-generation model (e.g. `@cf/qwen/qwen3.8-27b`) through the official OpenAI-compatible endpoint.
+
+**One-time setup:**
+
+1. **API Token** — create one at *Cloudflare Dashboard → My Profile → API Tokens* with the **Workers AI** permission (*Account Resources → Workers AI → Edit*).
+2. **Account ID** — shown on the Cloudflare Dashboard overview page (or in the URL `dash.cloudflare.com/<account_id>`). Paste it into the **LLM Models** page → **Cloudflare Account ID** field and click away from the field to save.
+
+**Registering a model:**
+
+1. **LLM Models → + Add Model**:
+   - **Model Name**: the full Workers AI slug, including the prefix — e.g. `@cf/qwen/qwen3.8-27b` or `@cf/meta/llama-3.3-70b-instruct-fp8-fast`.
+   - **Provider**: `cloudflare`.
+   - **API Key**: the API token from step 1.
+   - Tick the capability flags the model supports (e.g. `@cf/qwen/qwen3.8-27b`: **Function Calling ✓**, Context Window `262144`).
+2. Point a worker (or a preference slot) at the model.
+
+> **Notes:**
+> - Models whose name starts with `@cf/` or `@hf/` are auto-detected as Cloudflare even when not registered in the LLM Models page.
+> - Usage is billed by Cloudflare per million tokens (e.g. `@cf/qwen/qwen3.8-27b`: $0.45/M input, $3.20/M output).
+> - Structured JSON output uses the prompt-based contract: Workers AI JSON Mode (`response_format`) is currently honored only by a small subset of Cloudflare models.
+
 ## ⚠️ Important Disclaimers
 
 By using NanoWorker, you acknowledge and agree to the following risks:

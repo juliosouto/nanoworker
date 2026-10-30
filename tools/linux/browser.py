@@ -1,5 +1,6 @@
 from browser.manager import BrowserManager, get_session_browser
 
+from utils.file_utils import get_temp_file_path
 from utils.security_utils import require_permission
 from utils.session import current_session_id
 
@@ -23,6 +24,27 @@ def browser_navigate(url: str) -> str:
     """
     bm = get_browser_manager()
     return bm.navigate(url)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_navigate_mobile(url: str, device_name: str = "iPhone 13") -> str:
+    """
+    Navigates to a URL emulating a MOBILE device (smartphone), using the built-in headless browser.
+    Use this tool whenever the user wants to browse a website as it appears on a cell phone / mobile
+    device (mobile layout, touch viewport, mobile user-agent). Ideal to check how a site renders on
+    phones or to reach mobile-only versions of pages.
+    After navigating, use browser_snapshot, browser_click, browser_fill, browser_scroll and
+    browser_screenshot — they all operate on the current (mobile) page.
+
+    Args:
+        url: The full URL to navigate to (e.g. 'https://example.com').
+        device_name: The mobile device to emulate. One of: 'iPhone 13', 'iPhone 15 Pro',
+            'Pixel 7', 'Galaxy S24'. Defaults to 'iPhone 13'.
+
+    Returns:
+        str: A success message including the emulated device and viewport, or an error message.
+    """
+    bm = get_browser_manager()
+    return bm.navigate_mobile(url, device_name=device_name)
 
 @require_permission('PERM_PLAYWRIGHT')
 def browser_snapshot(interactive_only: bool = True) -> str:
@@ -89,3 +111,75 @@ def browser_run_js(script: str) -> str:
     """
     bm = get_browser_manager()
     return bm.run_js(script)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_screenshot(full_page: bool = False) -> str:
+    """
+    Takes a screenshot of the current page using the built-in headless browser and saves it as a PNG file.
+    Use this tool whenever the user asks for a screenshot (or 'print') of a web page. It works on
+    servers without a graphical display (e.g. Docker/headless Linux) because it renders with the
+    internal headless Chromium — never use scrot or X11 tools for web page screenshots.
+    You must call browser_navigate first to load the page.
+    
+    Args:
+        full_page: If True, captures the entire scrollable page. If False (default), captures only the visible viewport.
+        
+    Returns:
+        str: A success message containing the ABSOLUTE path of the saved PNG, or an error message.
+             IMPORTANT: to share the image afterwards, you MUST pass the exact absolute path returned
+             here to the send_whatsapp_file tool — do not reconstruct it.
+    """
+    bm = get_browser_manager()
+    screenshot_path = get_temp_file_path("screenshot.png")
+    return bm.take_screenshot(screenshot_path)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_scroll(magnitude: float = 800) -> str:
+    """
+    Scrolls the current page by a number of pixels (positive down, negative up) and waits briefly for lazy-loaded content.
+    Use this tool before browser_screenshot or browser_snapshot when the page only loads content as you scroll.
+    
+    Args:
+        magnitude: Pixels to scroll. Positive scrolls down, negative scrolls up. Default 800.
+    """
+    bm = get_browser_manager()
+    return bm.scroll(magnitude)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_pdf(output_path: str = None) -> str:
+    """
+    Saves the current page as a PDF file using the headless browser and returns the ABSOLUTE path of the saved file.
+    Use this tool when the user asks to save/export a web page as PDF. You must call browser_navigate first.
+    
+    Args:
+        output_path: Optional ABSOLUTE path for the PDF. If omitted, a new temp file is created.
+    
+    Returns:
+        str: A success message containing the ABSOLUTE path of the PDF, or an error message.
+             IMPORTANT: to share the file afterwards, pass the exact path returned here to send_whatsapp_file.
+    """
+    bm = get_browser_manager()
+    pdf_path = output_path or get_temp_file_path("page.pdf")
+    return bm.save_as_pdf(pdf_path)
+
+@require_permission('PERM_PLAYWRIGHT')
+def browser_record_video(url: str, duration_seconds: int = 5, output_path: str = None) -> str:
+    """
+    Navigates to a URL and records a video of the browser interaction for the specified duration.
+    Saves the output as a video (.webm) file and returns its ABSOLUTE path.
+    Use this tool whenever the user asks for a video or screen recording of a website/page navigation.
+    
+    Args:
+        url: The full URL to navigate to and record (e.g. 'https://example.com').
+        duration_seconds: How many seconds to keep recording the page (1 to 60, default 5).
+        output_path: Optional ABSOLUTE path for the saved video file (.webm). If omitted, a temp file is created.
+        
+    Returns:
+        str: A success message containing the ABSOLUTE path of the saved video, or an error message.
+             IMPORTANT: to share the video afterwards, you MUST pass the exact absolute path returned
+             here to the send_whatsapp_file tool — do not reconstruct it.
+    """
+    bm = get_browser_manager()
+    video_path = output_path or get_temp_file_path("browser_recording.webm")
+    return bm.record_navigation(url=url, duration_seconds=duration_seconds, output_path=video_path)
+

@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupToggle('requireAtToggle', 'requireAtKnob');
     setupToggle('useRecipesToggle', 'useRecipesKnob');
     setupToggle('planBeforeExecutionToggle', 'planBeforeExecutionKnob');
+    setupToggle('historyRagToggle', 'historyRagKnob');
 
     const requireAtToggle = document.getElementById('requireAtToggle');
     if(requireAtToggle) requireAtToggle.addEventListener('change', autoSaveToggles);
@@ -33,13 +34,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const planBeforeExecutionToggle = document.getElementById('planBeforeExecutionToggle');
     if(planBeforeExecutionToggle) planBeforeExecutionToggle.addEventListener('change', autoSaveToggles);
 
+    const historyRagToggle = document.getElementById('historyRagToggle');
+    if(historyRagToggle) historyRagToggle.addEventListener('change', autoSaveToggles);
+
+    const historyRagSearchType = document.getElementById('historyRagSearchType');
+    if(historyRagSearchType) historyRagSearchType.addEventListener('change', () => {
+        updateRagVisibility();
+        autoSaveToggles();
+    });
+
+    ['historyRagK', 'historyRagFetchK', 'historyRagScoreThreshold', 'historyRagLambda'].forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.addEventListener('change', autoSaveToggles);
+    });
+
+    updateRagVisibility();
+
+    document.getElementById('ragSourcesSave')?.addEventListener('click', saveRagSources);
+
     const slider = document.getElementById('autonomousModeSlider');
     const sliderValue = document.getElementById('autonomousModeValue');
     const minusBtn = document.getElementById('autonomousModeMinus');
     const plusBtn = document.getElementById('autonomousModePlus');
 
-    const sliceSlider = document.getElementById('sliceSizeSlider');
-    const sliceSliderValue = document.getElementById('sliceSizeValue');
+    const historySizeInput = document.getElementById('historySizeInput');
     const sliceMinusBtn = document.getElementById('sliceSizeMinus');
     const slicePlusBtn = document.getElementById('sliceSizePlus');
 
@@ -50,11 +68,11 @@ document.addEventListener('DOMContentLoaded', () => {
         slider.addEventListener('change', autoSaveToggles);
     }
 
-    if(sliceSlider) {
-        sliceSlider.addEventListener('input', function() {
-            if(sliceSliderValue) sliceSliderValue.textContent = this.value;
+    if(historySizeInput) {
+        historySizeInput.addEventListener('change', () => {
+            sanitizeHistorySizeInput();
+            autoSaveToggles();
         });
-        sliceSlider.addEventListener('change', autoSaveToggles);
     }
 
     if(minusBtn) minusBtn.addEventListener('click', () => {
@@ -66,11 +84,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     if(sliceMinusBtn) sliceMinusBtn.addEventListener('click', () => {
-        if(sliceSlider) updateSliceSlider(parseInt(sliceSlider.value) - 50);
+        if(historySizeInput) updateHistorySize(parseInt(historySizeInput.value) - 10);
     });
 
     if(slicePlusBtn) slicePlusBtn.addEventListener('click', () => {
-        if(sliceSlider) updateSliceSlider(parseInt(sliceSlider.value) + 50);
+        if(historySizeInput) updateHistorySize(parseInt(historySizeInput.value) + 10);
     });
 
     loadUserMemories();
@@ -89,18 +107,50 @@ function updateSlider(val) {
     autoSaveToggles();
 }
 
-function updateSliceSlider(val) {
-    const sliceSlider = document.getElementById('sliceSizeSlider');
-    const sliceSliderValue = document.getElementById('sliceSizeValue');
-    if(!sliceSlider) return;
+function sanitizeHistorySizeInput() {
+    const historySizeInput = document.getElementById('historySizeInput');
+    if(!historySizeInput) return;
+    let newVal = parseInt(historySizeInput.value);
+    if (isNaN(newVal)) newVal = 10000;
+    if (newVal < 0) newVal = 0;
+    if (newVal > 1000000) newVal = 1000000;
+    historySizeInput.value = newVal;
+}
+
+function updateHistorySize(val) {
+    const historySizeInput = document.getElementById('historySizeInput');
+    if(!historySizeInput) return;
     let newVal = parseInt(val);
     if (isNaN(newVal)) return;
-    if (newVal < 200) newVal = 200;
-    if (newVal > 10000) newVal = 10000;
-    newVal = Math.round(newVal / 50) * 50;
-    sliceSlider.value = newVal;
-    if(sliceSliderValue) sliceSliderValue.textContent = newVal;
+    if (newVal < 0) newVal = 0;
+    if (newVal > 1000000) newVal = 1000000;
+    historySizeInput.value = newVal;
     autoSaveToggles();
+}
+
+function updateRagVisibility() {
+    const type = document.getElementById('historyRagSearchType')?.value;
+    const thresholdRow = document.getElementById('historyRagScoreThresholdRow');
+    const lambdaRow = document.getElementById('historyRagLambdaRow');
+    if(thresholdRow) thresholdRow.style.display = (type === 'similarity_score_threshold') ? 'flex' : 'none';
+    if(lambdaRow) lambdaRow.style.display = (type === 'mmr') ? 'flex' : 'none';
+}
+
+function saveRagSources() {
+    const channels = Array.from(document.querySelectorAll('.rag-source:checked')).map(cb => cb.value);
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history_rag_allowed_channels: channels })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error('save failed');
+        showToast(`Allowed sources saved (${channels.length} chat${channels.length === 1 ? '' : 's'}).`);
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('Error saving allowed sources.');
+    });
 }
 
 function autoSaveToggles() {
@@ -108,7 +158,13 @@ function autoSaveToggles() {
     const useRecipesAsTools = document.getElementById('useRecipesToggle')?.checked;
     const planBeforeExecution = document.getElementById('planBeforeExecutionToggle')?.checked;
     const autonomousMode = parseInt(document.getElementById('autonomousModeSlider')?.value) || 1;
-    const sliceSizeTokens = parseInt(document.getElementById('sliceSizeSlider')?.value) || 250;
+    const historySizeMessages = parseInt(document.getElementById('historySizeInput')?.value);
+    const historyRagEnabled = document.getElementById('historyRagToggle')?.checked;
+    const historyRagSearchType = document.getElementById('historyRagSearchType')?.value || 'mmr';
+    const historyRagK = parseInt(document.getElementById('historyRagK')?.value) || 3;
+    const historyRagFetchK = parseInt(document.getElementById('historyRagFetchK')?.value) || 20;
+    const historyRagScoreThreshold = parseFloat(document.getElementById('historyRagScoreThreshold')?.value);
+    const historyRagLambda = parseFloat(document.getElementById('historyRagLambda')?.value);
 
     fetch('/api/settings', {
         method: 'POST',
@@ -118,7 +174,13 @@ function autoSaveToggles() {
             use_recipes_as_tools: useRecipesAsTools,
             plan_before_execution: planBeforeExecution,
             autonomous_mode: autonomousMode,
-            message_slice_size_tokens: sliceSizeTokens
+            history_size_messages: isNaN(historySizeMessages) ? 10000 : historySizeMessages,
+            history_rag_enabled: historyRagEnabled,
+            history_rag_search_type: historyRagSearchType,
+            history_rag_k: historyRagK,
+            history_rag_fetch_k: historyRagFetchK,
+            history_rag_score_threshold: isNaN(historyRagScoreThreshold) ? 0.3 : historyRagScoreThreshold,
+            history_rag_lambda: isNaN(historyRagLambda) ? 0.5 : historyRagLambda
         })
     });
 }

@@ -1,3 +1,48 @@
+function switchIdeTab(tabName, btnElement) {
+    if (btnElement) {
+        document.querySelectorAll('.ide-tab-btn').forEach(btn => btn.classList.remove('active'));
+        btnElement.classList.add('active');
+    }
+    const explorerEl = document.getElementById('ide-explorer-view');
+    const editorEl = document.getElementById('editor-panel');
+    const agentEl = document.getElementById('ide-agent-view');
+
+    if (window.innerWidth <= 900) {
+        if (tabName === 'explorer') {
+            if (explorerEl) explorerEl.style.display = 'flex';
+            if (editorEl) editorEl.style.display = 'none';
+            if (agentEl) agentEl.style.display = 'none';
+        } else if (tabName === 'editor') {
+            if (explorerEl) explorerEl.style.display = 'none';
+            if (editorEl) editorEl.style.display = 'flex';
+            if (agentEl) agentEl.style.display = 'none';
+        } else if (tabName === 'agent') {
+            if (explorerEl) explorerEl.style.display = 'none';
+            if (editorEl) editorEl.style.display = 'none';
+            if (agentEl) agentEl.style.display = 'flex';
+        }
+    } else {
+        if (explorerEl) explorerEl.style.display = 'flex';
+        if (editorEl) editorEl.style.display = 'flex';
+        if (agentEl) agentEl.style.display = 'flex';
+    }
+}
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth > 900) {
+        const explorerEl = document.getElementById('ide-explorer-view');
+        const editorEl = document.getElementById('editor-panel');
+        const agentEl = document.getElementById('ide-agent-view');
+        if (explorerEl) explorerEl.style.display = 'flex';
+        if (editorEl) editorEl.style.display = 'flex';
+        if (agentEl) agentEl.style.display = 'flex';
+    } else {
+        const activeBtn = document.querySelector('.ide-tab-btn.active');
+        const activeTab = activeBtn ? activeBtn.textContent.trim().toLowerCase() : 'editor';
+        switchIdeTab(activeTab, activeBtn);
+    }
+});
+
 let currentFilePath = '';
 
 function startNewIdeChat() {
@@ -118,6 +163,11 @@ function openFile(path) {
             document.getElementById('editor-empty-state').style.display = 'none';
             document.getElementById('editor-container').style.display = 'flex';
             document.getElementById('save-file-btn').style.display = 'block';
+
+            if (window.innerWidth <= 900) {
+                const editorTabBtn = document.querySelectorAll('.ide-tab-btn')[0];
+                switchIdeTab('editor', editorTabBtn);
+            }
         })
         .catch(err => console.error('Error opening file:', err));
 }

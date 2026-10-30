@@ -11,7 +11,7 @@ function closeWorkerModal() {
     document.getElementById('is_default').checked = false;
     document.getElementById('thinking_enabled').checked = false;
     document.getElementById('tools_enabled').checked = true;
-    document.getElementById('show_tools_results').checked = true;
+    document.getElementById('show_tools_results').checked = false;
     document.getElementById('worker_temperature').value = '';
     document.getElementById('modalTitle').innerText = 'Add New Worker';
     currentEditWorkerId = null;

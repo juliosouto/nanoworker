@@ -59,7 +59,10 @@ async function getAgentName() {
                 requireAtPrefix = res.data.require_at_prefix !== false;
             }
         } catch (e) {
-            // ignore
+            // Never swallow this silently: a failed fetch keeps the OLD worker
+            // list in memory for up to 60s, so newly added workers (e.g. Mini,
+            // Flint) would be ignored and their mentions silently dropped.
+            console.error(`[Baileys Config] Failed to fetch agent/worker config from ${FLASK_PORT}: ${e.message}. Keeping cached config; retrying in 60s.`);
         }
         lastAgentNameFetch = now;
     }
@@ -85,6 +88,7 @@ function getMessageType(msgContent) {
     if (msgContent.videoMessage) return 'video';
     if (msgContent.documentMessage) return 'document';
     if (msgContent.conversation || (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text)) return 'text';
+    if (msgContent.pollCreationMessage || msgContent.pollCreationMessageV2 || msgContent.pollCreationMessageV3) return 'text';
     return 'other';
 }
 
@@ -95,6 +99,12 @@ function extractTextContent(msgContent) {
     if (msgContent.imageMessage?.caption) return msgContent.imageMessage.caption;
     if (msgContent.videoMessage?.caption) return msgContent.videoMessage.caption;
     if (msgContent.documentMessage?.caption) return msgContent.documentMessage.caption;
+    const poll = msgContent.pollCreationMessage || msgContent.pollCreationMessageV2 || msgContent.pollCreationMessageV3;
+    if (poll) {
+        const title = poll.name || '';
+        const opts = (poll.options || []).map(o => o.optionName || '').filter(Boolean);
+        return `[Enquete: ${title} | Opções: ${opts.join(', ')}]`;
+    }
     return '';
 }
 
@@ -109,6 +119,47 @@ function extractQuotedInfo(msgContent) {
     return contextInfo;
 }
 
+// Extracts the JIDs explicitly mentioned in the message (contextInfo.mentionedJid).
+// WhatsApp's native "@" picker does NOT keep the worker name in the text: the
+// text becomes "@<phone-number>" and the real target only exists here. Ignoring
+// this field made every native mention in a group silently dropped.
+function extractMentionedJids(msgContent) {
+    if (!msgContent) return [];
+    const contextInfo = msgContent.extendedTextMessage?.contextInfo ||
+                        msgContent.imageMessage?.contextInfo ||
+                        msgContent.videoMessage?.contextInfo ||
+                        msgContent.audioMessage?.contextInfo ||
+                        msgContent.documentMessage?.contextInfo ||
+                        msgContent.contactMessage?.contextInfo;
+    if (!contextInfo || !Array.isArray(contextInfo.mentionedJid)) return [];
+    return contextInfo.mentionedJid.filter(jid => typeof jid === 'string' && jid);
+}
+
+// True when the message natively mentions OUR OWN account (PN or LID).
+// The same account can be referenced in several ways: the full JID
+// ("5511999999999@s.whatsapp.net"), the LID ("111222333@lid"), the bare
+// number, or with a device suffix ("5511999999999:12@s.whatsapp.net").
+// Normalize all of them so the comparison is reliable.
+function mentionIdentityKeys(value) {
+    if (!value || typeof value !== 'string') return [];
+    const withoutDevice = value.split(':')[0];
+    return [withoutDevice, withoutDevice.split('@')[0]];
+}
+
+function mentionsOwnAccount(mentionedJids) {
+    if (!mentionedJids || mentionedJids.length === 0) return false;
+    const ownIds = new Set();
+    for (const own of [ownJid, ownLid]) {
+        for (const key of mentionIdentityKeys(own)) {
+            if (key) ownIds.add(key);
+        }
+    }
+    if (ownIds.size === 0) return false;
+    return mentionedJids.some(jid =>
+        mentionIdentityKeys(jid).some(key => ownIds.has(key))
+    );
+}
+
 function isGroupChat(remoteJid) {
     if (!remoteJid) return false;
     // Canonical group JIDs always carry the '@g.us' suffix. Keep this check
@@ -121,19 +172,56 @@ function isNoteToSelf(remoteJid, ownJid, ownLid) {
     return remoteJid === ownJid || remoteJid === ownLid;
 }
 
-function checkMentions(text, agentConfig) {
-    if (!text || !agentConfig.allowMentions || !agentConfig.workerNames || agentConfig.workerNames.length === 0) {
+// Builds a matcher for a worker name. The "@" form is matched anywhere in the
+// text but with a word boundary, so "@Mini" matches "Oi @Mini, tudo bem?" while
+// NOT matching "@Miniflores". The bare (no "@") form stays anchored at the
+// beginning, as before, to avoid matching common words mid-sentence.
+function buildMentionRegex(name, requireAt) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (requireAt) {
+        // The "@" is also excluded from the preceding character class, so a
+        // doubled "@" (e.g. "@@Mini") is NOT treated as a mention. This keeps
+        // the Node matcher aligned with the Python matcher.
+        return new RegExp(`(?:^|[^\\p{L}\\p{N}_@])@${escaped}(?![\\p{L}\\p{N}_])`, 'iu');
+    }
+    // The bare form is anchored at the start of the message; leading
+    // whitespace is tolerated (same as the Python matcher).
+    return new RegExp(`^\\s*${escaped}(?![\\p{L}\\p{N}_])`, 'iu');
+}
+
+function checkMentions(text, agentConfig, options = {}) {
+    if (!agentConfig.allowMentions || !agentConfig.workerNames || agentConfig.workerNames.length === 0) {
+        return false;
+    }
+    // A native WhatsApp mention (the "@" picker) does not carry the worker name
+    // in the text at all — it is "@<phone>". The mention is proven by
+    // contextInfo.mentionedJid instead, so accept it as a mention here.
+    // The "allowMentions" switch still governs it, so the admin can turn
+    // group responses off entirely.
+    if (options.nativeMention) {
+        return true;
+    }
+    if (!text) {
         return false;
     }
     const textLower = text.toLowerCase().trim();
     for (const name of agentConfig.workerNames) {
         const nameClean = name.trim();
         const nameNoSpaces = nameClean.replace(/\s+/g, '');
-        if (textLower.startsWith(`@${nameClean}`) || textLower.startsWith(`@${nameNoSpaces}`)) {
+        if (!nameClean) continue;
+
+        // The "@" mention always applies (anywhere in the text).
+        if (buildMentionRegex(nameClean, true).test(textLower)) {
+            return true;
+        }
+        if (nameNoSpaces !== nameClean && buildMentionRegex(nameNoSpaces, true).test(textLower)) {
             return true;
         }
         if (!agentConfig.requireAtPrefix) {
-            if (textLower.startsWith(nameClean) || textLower.startsWith(nameNoSpaces)) {
+            if (buildMentionRegex(nameClean, false).test(textLower)) {
+                return true;
+            }
+            if (nameNoSpaces !== nameClean && buildMentionRegex(nameNoSpaces, false).test(textLower)) {
                 return true;
             }
         }
@@ -141,21 +229,35 @@ function checkMentions(text, agentConfig) {
     return false;
 }
 
-function shouldForwardMessage(context, agentConfig) {
+// Decides how a message flows to the Flask backend:
+//   'process'      -> full pipeline (mention / note-to-self / allowed audio)
+//   'history_only' -> recorded into message_history with metadata, never
+//                     processed by the LLM (the worker keeps answering only
+//                     when mentioned). No media is downloaded on this path.
+//   false          -> dropped entirely (media without mention, audio without
+//                     mention when allow_audio_mentions=false, etc.)
+function messageFlow(context, agentConfig) {
     // A única exceção: chat com si mesmo
     if (context.isSelf) {
-        return true;
+        return 'process';
     }
     
     // Se possui menção, passa (texto já tem a menção)
     if (context.hasMention) {
-        return true;
+        return 'process';
     }
     
     // Se for áudio, permitimos o envio para o backend caso configurado,
     // para que a transcrição avalie a menção do lado de lá.
     if (context.isAudio && agentConfig.allowAudioMentions) {
-        return true;
+        return 'process';
+    }
+
+    // Texto sem menção: vai apenas para o histórico (message_history). Em vez
+    // de descartar mensagens de grupo que não mencionam o worker, elas são
+    // salvas com metadados; o processamento continua apenas com menção.
+    if (context.isText) {
+        return 'history_only';
     }
     
     return false;
@@ -253,19 +355,30 @@ async function connectToWhatsApp() {
             const agentConfig = await getAgentName();
             const textContent = extractTextContent(msgContent);
             const msgType = getMessageType(msgContent);
-            
+
+            const mentionedJids = extractMentionedJids(msgContent);
+            const nativeMention = mentionsOwnAccount(mentionedJids);
+
             const context = {
                 isGroup: isGroupChat(remoteJid),
                 isSelf: isNoteToSelf(remoteJid, ownJid, ownLid),
                 isAudio: msgType === 'audio',
-                hasMention: checkMentions(textContent, agentConfig)
+                isText: msgType === 'text',
+                hasMention: checkMentions(textContent, agentConfig, { nativeMention })
             };
 
-            if (!shouldForwardMessage(context, agentConfig)) {
-                // Log dropped messages explicitly so silent filtering by the audio gate
-                // (allowAudioMentions=false) is observable instead of disappearing without a trace.
+            const flow = messageFlow(context, agentConfig);
+            if (!flow) {
+                // Log dropped messages explicitly so silent filtering is observable
+                // instead of disappearing without a trace. Text drops used to be
+                // completely silent, which made "works in note-to-self but not in
+                // the group" impossible to diagnose. Plain text is no longer
+                // dropped: it flows as 'history_only' below.
                 if (context.isAudio) {
                     console.error(`[Baileys Inbound] 🔊 Dropped audio from ${remoteJid} (not self, no text mention). Set allow_audio_mentions=true in WhatsApp settings to process received audios.`);
+                } else {
+                    const preview = (textContent || '').slice(0, 80).replace(/\n/g, ' ');
+                    console.error(`[Baileys Inbound] 📎 Dropped media message from ${remoteJid} (not self, no worker mention; only text is kept in history). text="${preview}" nativeMention=${nativeMention} knownWorkers=[${agentConfig.workerNames.join(', ')}]`);
                 }
                 continue;
             }
@@ -364,6 +477,11 @@ async function connectToWhatsApp() {
                         console.log(`[Baileys Inbound] Quoted audio downloaded, size: ${buffer.length} bytes`);
                     } catch (err) {
                         console.error('Failed to download quoted audio:', err.message);
+                        // Explicit marker so the backend/model knows the quoted media is
+                        // unavailable instead of silently forwarding an empty quoted
+                        // message (which made small models hallucinate an open() call
+                        // trying to "read" the audio they could not see).
+                        quotedText = '[Quoted audio - transcription unavailable: media download failed]';
                     }
                 } else if (qMsg.imageMessage) {
                     quotedMimeType = qMsg.imageMessage.mimetype || 'image/jpeg';
@@ -445,8 +563,24 @@ async function connectToWhatsApp() {
                     sender_jid_alt: altSenderJid,
                     remote_jid: remoteJid,
                     content: text,
-                    message_id: msg.key.id
+                    message_id: msg.key.id,
+                    // Original WhatsApp epoch (falls back to now) so the backend
+                    // can store real date/hour/minute/second metadata.
+                    msg_timestamp: msgTimestamp || Math.floor(Date.now() / 1000),
+                    from_me: msg.key.fromMe === true
                 };
+                // Text without a worker mention: the backend only records it
+                // into message_history and must NOT run the agent pipeline.
+                if (flow === 'history_only') {
+                    payload.history_only = true;
+                }
+                // Forward the native mention info so the backend can also decide
+                // that a worker was mentioned (the text alone does not contain
+                // the worker name when the user picks it from the "@" list).
+                if (mentionedJids.length > 0) {
+                    payload.mentioned_jid = mentionedJids;
+                    payload.native_mention = nativeMention;
+                }
                 if (audioBase64) {
                     payload.audio_base64 = audioBase64;
                     payload.mimetype = mimeType;
@@ -567,6 +701,34 @@ app.post('/send', async (req, res) => {
     }
 });
 
+app.post('/delete', async (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+
+    const { message_id, jid } = req.body;
+    if (!message_id) {
+        return res.status(400).json({ error: 'Missing message_id parameter' });
+    }
+
+    const targetJid = ensureJidSuffix(jid || ownJid);
+
+    try {
+        console.log(`[Baileys Outbound] Deleting message ${message_id} in ${targetJid}`);
+        await sock.sendMessage(targetJid, {
+            delete: {
+                remoteJid: targetJid,
+                id: message_id,
+                fromMe: true
+            }
+        });
+        res.json({ status: 'deleted', target: targetJid, message_id });
+    } catch (err) {
+        console.error(`Failed to delete message ${message_id} via Baileys:`, err);
+        res.status(500).json({ error: 'Failed to delete message', details: err.message || err.toString() });
+    }
+});
+
 app.post('/send_file', async (req, res) => {
     if (!sock || !ownJid) {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
@@ -671,6 +833,58 @@ app.post('/send_audio', async (req, res) => {
     } catch (err) {
         console.error('Failed to send audio via Baileys:', err);
         res.status(500).json({ error: 'Failed to send audio' });
+    }
+});
+
+app.post('/send_poll', async (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+
+    const { question, options, selectable_count, jid } = req.body;
+    if (!question || typeof question !== 'string' || !question.trim()) {
+        return res.status(400).json({ error: 'Missing or invalid question parameter' });
+    }
+
+    if (!Array.isArray(options) || options.length < 2) {
+        return res.status(400).json({ error: 'options must be an array with at least 2 items' });
+    }
+
+    const cleanedOptions = options.map(opt => String(opt).trim()).filter(Boolean);
+    if (cleanedOptions.length < 2) {
+        return res.status(400).json({ error: 'options must contain at least 2 non-empty choices' });
+    }
+
+    const targetJid = ensureJidSuffix(jid || ownJid);
+    clearTyping(targetJid);
+
+    try {
+        console.log(`[Baileys Outbound Poll] to ${targetJid}: "${question}" with ${cleanedOptions.length} options`);
+        const pollPayload = {
+            poll: {
+                name: question.trim(),
+                values: cleanedOptions,
+                selectableCount: Number(selectable_count) || 1
+            }
+        };
+
+        const sentMsg = await sock.sendMessage(targetJid, pollPayload);
+        const msgKey = sentMsg && sentMsg.key ? sentMsg.key.id : null;
+        if (msgKey) {
+            botSentMsgIds.add(msgKey);
+            if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
+        }
+
+        if (!msgKey) {
+            console.error(`[Baileys Outbound Poll] No message id returned for ${targetJid} -> delivery NOT confirmed`);
+            return res.status(502).json({ error: 'Message not accepted by WhatsApp (no message id returned)', target: targetJid });
+        }
+
+        console.log(`[Baileys Outbound Poll] Delivered to ${targetJid} msgId=${msgKey}`);
+        res.json({ status: 'sent', target: targetJid, message_id: msgKey });
+    } catch (err) {
+        console.error('Failed to send poll via Baileys:', err);
+        res.status(500).json({ error: 'Failed to send poll', details: err.message || err.toString() });
     }
 });
 

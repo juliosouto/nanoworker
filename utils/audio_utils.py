@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import uuid
 
+import numpy as np
 import requests
 import soundfile as sf
 from kokoro_onnx import Kokoro
@@ -23,6 +24,7 @@ except ImportError:
 
 _whisper_model = None
 _kokoro_model = None
+_xtts_synthesizer = None
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', '.store', 'models')
 KOKORO_MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
@@ -48,10 +50,13 @@ def extract_and_generate_audio(message: str) -> tuple[str, str | None]:
             text_without_audio = message.replace(match.group(0), '').strip()
             
             audio_path = generate_audio(audio_text)
+            if not audio_path:
+                logger.error("generate_audio returned empty path")
+                return text_without_audio, None
             return text_without_audio, audio_path
             
     except Exception as e:
-        logger.error(f"Failed to extract and generate audio: {e}")
+        logger.exception(f"Failed to extract and generate audio: {e}")
         
     return message.strip(), None
 
@@ -77,76 +82,436 @@ def get_kokoro_model():
     _kokoro_model = Kokoro(model_path, voices_path)
     return _kokoro_model
 
+
+def _find_xtts_finetuned_checkpoint():
+    """
+    Looks for fine-tuned checkpoints in .store/models/finetuned or models/finetuned.
+    """
+    candidate_dirs = [
+        os.path.join(MODELS_DIR, "finetuned"),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'finetuned'),
+    ]
+    for finetuned_root in candidate_dirs:
+        if not os.path.exists(finetuned_root):
+            continue
+        subdirs = [os.path.join(finetuned_root, d) for d in os.listdir(finetuned_root) if os.path.isdir(os.path.join(finetuned_root, d))]
+        subdirs.append(finetuned_root)
+        for sdir in sorted(subdirs, key=lambda p: os.path.getmtime(p), reverse=True):
+            files = os.listdir(sdir)
+            ckpts = [os.path.join(sdir, f) for f in files if f.startswith("checkpoint_") and f.endswith(".pth") or f == "model.pth"]
+            cfg = os.path.join(sdir, "config.json")
+            if ckpts and os.path.exists(cfg):
+                ckpts.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                return ckpts[0], cfg
+    return None, None
+
+
+def get_xtts_synthesizer():
+    """
+    Loads Coqui XTTS-v2 for inference (supporting base and fine-tuned checkpoints).
+    """
+    global _xtts_synthesizer
+    if _xtts_synthesizer is not None:
+        return _xtts_synthesizer
+
+    os.environ["COQUI_TOS_AGREED"] = "1"
+    import torch
+    import torchaudio
+
+    # Compatibilidade com PyTorch 2.6+
+    _orig_torch_load = torch.load
+    def _safe_torch_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _safe_torch_load
+
+    # Fallback seguro para torchaudio.load via soundfile
+    def _safe_torchaudio_load(filepath, *args, **kwargs):
+        data, sr = sf.read(str(filepath))
+        tensor = torch.from_numpy(data).float()
+        if tensor.ndim == 1:
+            tensor = tensor.unsqueeze(0)
+        else:
+            tensor = tensor.t()
+        return tensor, sr
+    torchaudio.load = _safe_torchaudio_load
+
+    from TTS.tts.models.xtts import Xtts
+    from TTS.tts.configs.xtts_config import XttsConfig
+    from TTS.utils.manage import ModelManager
+
+    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    logger.info(f"Initializing Coqui XTTS-v2 on {device}...")
+
+    manager = ModelManager()
+    base_model_path, _, _ = manager.download_model("tts_models/multilingual/multi-dataset/xtts_v2")
+
+    finetuned_checkpoint, finetuned_config = _find_xtts_finetuned_checkpoint()
+
+    if finetuned_checkpoint and finetuned_config:
+        logger.info(f"✨ Loading fine-tuned XTTS-v2 checkpoint: {finetuned_checkpoint}")
+        config_xtts = XttsConfig()
+        config_xtts.load_json(finetuned_config)
+        model = Xtts.init_from_config(config_xtts)
+        model.load_checkpoint(
+            config_xtts,
+            checkpoint_dir=base_model_path,
+            checkpoint_path=finetuned_checkpoint,
+            vocab_path=os.path.join(base_model_path, "vocab.json"),
+            speaker_file_path=os.path.join(base_model_path, "speakers_xtts.pth"),
+            eval=True,
+            use_deepspeed=False
+        )
+        model.to(device)
+        _xtts_synthesizer = {"type": "finetuned", "model": model, "device": device, "base_dir": base_model_path}
+    else:
+        logger.info("Loading base Coqui XTTS-v2 model...")
+        from TTS.api import TTS
+        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        _xtts_synthesizer = {"type": "base", "tts": tts, "device": device, "base_dir": base_model_path}
+
+    return _xtts_synthesizer
+
+
+def _normalize_text_for_tts(text: str, lang: str = "pt-br") -> str:
+    """
+    Normalizes text for TTS synthesis: expands common abbreviations, currencies,
+    and cleans punctuation to ensure natural prosody and rhythm.
+    """
+    import re
+    if not text:
+        return text
+
+    # Basic cleanup
+    t = text.strip()
+
+    if lang == "pt-br":
+        # Currency: R$ 50 ou R$50 -> 50 reais, R$ 50,20 -> 50 reais e 20 centavos
+        def _replace_brl(m):
+            inteiro = m.group(1).replace(".", "")
+            centavos = m.group(2)
+            if centavos and int(centavos) > 0:
+                return f"{inteiro} reais e {centavos} centavos"
+            return f"{inteiro} reais"
+        t = re.sub(r'R\$\s*(\d+(?:\.\d+)?)(?:,(\d{1,2}))?', _replace_brl, t)
+
+        # Percentual
+        t = re.sub(r'(\d+)%', r'\1 por cento', t)
+
+        # Common abbreviations
+        abbrevs = {
+            r'\bvc\b': 'você',
+            r'\bvcs\b': 'vocês',
+            r'\btbm\b': 'também',
+            r'\btb\b': 'também',
+            r'\bpq\b': 'porque',
+            r'\bobg\b': 'obrigado',
+            r'\bblz\b': 'beleza',
+            r'\bpfv\b': 'por favor',
+            r'\bmsg\b': 'mensagem',
+            r'\bmsgs\b': 'mensagens',
+            r'\bwhats\b': 'WhatsApp',
+            r'\bzap\b': 'WhatsApp',
+            r'\bapp\b': 'aplicativo',
+            r'\bDr\.\b': 'Doutor',
+            r'\bSr\.\b': 'Senhor',
+            r'\bSra\.\b': 'Senhora',
+        }
+        for pat, repl in abbrevs.items():
+            t = re.sub(pat, repl, t, flags=re.IGNORECASE)
+
+    elif lang == "en-us":
+        t = re.sub(r'\$(\d+)(?:\.(\d{2}))?', lambda m: f"{m.group(1)} dollars" + (f" and {m.group(2)} cents" if m.group(2) else ""), t)
+        t = re.sub(r'(\d+)%', r'\1 percent', t)
+
+    # Normalize multiple whitespaces and excessive punctuation
+    t = re.sub(r'[!]{2,}', '!', t)
+    t = re.sub(r'[\?]{2,}', '?', t)
+    t = re.sub(r'\.{4,}', '...', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def _split_into_sentences(text: str) -> list[str]:
+    """Splits text into cohesive sentences for natural pause generation."""
+    import re
+    # Split on sentence ending punctuations followed by space or end
+    sentences = re.split(r'(?<=[.!?…])\s+', text)
+    cleaned = [s.strip() for s in sentences if s.strip()]
+    return cleaned if cleaned else [text]
+
+
+def _generate_audio_kokoro(text: str, voice: str = "af_heart", quality: str = "fast") -> str:
+    model = get_kokoro_model()
+    
+    # Detect language dynamically
+    try:
+        detected_lang = detect(text)
+    except LangDetectException:
+        detected_lang = "pt"
+        
+    # Map detected language to Kokoro format. en -> en-us, pt -> pt-br
+    lang_mapping = {
+        'pt': 'pt-br',
+        'en': 'en-us',
+        'es': 'es',
+        'fr': 'fr-fr',
+        'ja': 'ja',
+        'ko': 'ko',
+        'zh-cn': 'cmn',
+        'zh-tw': 'cmn',
+        'it': 'it',
+        'hi': 'hi'
+    }
+    
+    kokoro_lang = lang_mapping.get(detected_lang, 'en-us')
+    
+    # Map languages to best default voices
+    default_voices_fast = {
+        'pt-br': 'pm_alex',
+        'en-us': 'am_echo',
+        'es': 'ef_dora',
+        'fr-fr': 'ff_siwis',
+        'ja': 'jf_alpha',
+        'ko': 'kf_alpha',
+        'cmn': 'zf_xiaoxiao',
+        'it': 'if_sara',
+        'hi': 'hf_alpha'
+    }
+
+    # Higher fidelity / cleaner voices for Medium and High presets (strictly male)
+    default_voices_medium = {
+        'pt-br': 'pm_alex',
+        'en-us': 'am_michael',
+        'es': 'em_alex',
+        'fr-fr': 'fm_bernard',
+        'ja': 'jm_kumo',
+        'ko': 'km_kumo',
+        'cmn': 'zm_yunjian',
+        'it': 'im_nicola',
+        'hi': 'hm_omega'
+    }
+    
+    default_voices = default_voices_medium if quality in ("medium", "high") else default_voices_fast
+
+    # Only override the voice if it is the default "af_heart"
+    selected_voice = voice
+    if voice == "af_heart" and kokoro_lang in default_voices:
+        selected_voice = default_voices[kokoro_lang]
+    
+    # In medium and high modes, blend male voices to smooth harmonics and reduce robotic artifacts
+    if quality in ("medium", "high") and hasattr(model, 'get_voice_style') and isinstance(selected_voice, str):
+        try:
+            if kokoro_lang == 'pt-br' and selected_voice == 'pm_alex':
+                v1 = model.get_voice_style('pm_alex')
+                v2 = model.get_voice_style('pm_santa')
+                # 80/20 blend provides warmer harmonics with optimal clarity
+                selected_voice = (v1 * 0.8) + (v2 * 0.2)
+            elif kokoro_lang == 'en-us' and selected_voice in ('am_michael', 'am_echo'):
+                v1 = model.get_voice_style('am_michael')
+                v2 = model.get_voice_style('am_adam')
+                selected_voice = (v1 * 0.6) + (v2 * 0.4)
+        except Exception as e:
+            logger.debug(f"Voice style blending fallback: {e}")
+
+    logger.info(f"Synthesizing Kokoro audio ({quality}): {text[:50]}... (Lang: {kokoro_lang}, Voice: {selected_voice if isinstance(selected_voice, str) else 'blended'})")
+
+    if quality == "high":
+        # High quality: normalized text + sentence-by-sentence synthesis with natural pauses
+        normalized_text = _normalize_text_for_tts(text, lang=kokoro_lang)
+        sentences = _split_into_sentences(normalized_text)
+        
+        all_samples = []
+        sample_rate = 24000
+        # 120ms pause between sentences for breathing rhythm
+        pause_samples = np.zeros(int(sample_rate * 0.12), dtype=np.float32)
+
+        for idx, sent in enumerate(sentences):
+            if not sent.strip():
+                continue
+            s_samples, sr = model.create(sent, voice=selected_voice, speed=1.0, lang=kokoro_lang)
+            sample_rate = sr
+            all_samples.append(np.array(s_samples, dtype=np.float32))
+            if idx < len(sentences) - 1:
+                all_samples.append(pause_samples)
+
+        if all_samples:
+            samples = np.concatenate(all_samples)
+        else:
+            samples, sample_rate = model.create(text, voice=selected_voice, speed=1.0, lang=kokoro_lang)
+    else:
+        samples, sample_rate = model.create(text, voice=selected_voice, speed=1.0, lang=kokoro_lang)
+    
+    temp_wav = get_temp_file_path(".wav")
+    sf.write(temp_wav, samples, sample_rate)
+    return temp_wav
+
+
+def _get_speaker_wav_references() -> list[str]:
+    """Finds speaker reference wavs for voice cloning."""
+    candidate_paths = [
+        os.path.join(MODELS_DIR, 'voices'),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'voices'),
+        os.path.join(MODELS_DIR, 'finetuned'),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'finetuned'),
+    ]
+    ref_wavs = []
+    for cdir in candidate_paths:
+        if os.path.exists(cdir):
+            for root, _, files in os.walk(cdir):
+                for f in files:
+                    if f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac')) and not f.startswith('.'):
+                        ref_wavs.append(os.path.join(root, f))
+    return ref_wavs[:3]
+
+
+_cached_latents = None
+
+def _get_or_create_cached_latents(model, speaker_wavs):
+    """Caches speaker latents in memory/disk to accelerate inference."""
+    global _cached_latents
+    if _cached_latents is not None:
+        return _cached_latents
+
+    candidate_cache_paths = [
+        os.path.join(MODELS_DIR, "speaker_latents.pth"),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'speaker_latents.pth'),
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'finetuned', 'speaker_latents.pth'),
+        os.path.join(MODELS_DIR, "finetuned", "speaker_latents.pth"),
+    ]
+    for cache_path in candidate_cache_paths:
+        if os.path.exists(cache_path):
+            import torch
+            try:
+                cached = torch.load(cache_path, weights_only=False)
+                device = next(model.parameters()).device
+                _cached_latents = (cached["gpt_cond_latent"].to(device), cached["speaker_embedding"].to(device))
+                logger.info(f"Loaded cached speaker latents from {cache_path}")
+                return _cached_latents
+            except Exception as e:
+                logger.warning(f"Could not load cached latents from {cache_path}: {e}")
+
+    if speaker_wavs:
+        import torch
+        gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
+            audio_path=speaker_wavs,
+            gpt_cond_len=6,
+            max_ref_length=30
+        )
+        try:
+            torch.save({
+                "gpt_cond_latent": gpt_cond_latent.cpu(),
+                "speaker_embedding": speaker_embedding.cpu()
+            }, cache_path)
+        except Exception:
+            pass
+        _cached_latents = (gpt_cond_latent, speaker_embedding)
+        return _cached_latents
+
+    return None, None
+
+
+def _generate_audio_xtts(text: str) -> str:
+    synth_obj = get_xtts_synthesizer()
+    
+    try:
+        detected_lang = detect(text)
+    except LangDetectException:
+        detected_lang = "pt"
+        
+    supported_langs = {'en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh-cn', 'ja', 'ko', 'hu', 'hi'}
+    xtts_lang = detected_lang if detected_lang in supported_langs else 'pt'
+    
+    temp_wav = get_temp_file_path(".wav")
+    speaker_wavs = _get_speaker_wav_references()
+
+    logger.info(f"Synthesizing XTTS-v2 audio: {text[:50]}... (Lang: {xtts_lang}, Finetuned: {synth_obj.get('type') == 'finetuned'})")
+    
+    if synth_obj.get("type") == "finetuned":
+        model = synth_obj["model"]
+        gpt_cond_latent, speaker_embedding = _get_or_create_cached_latents(model, speaker_wavs)
+        if gpt_cond_latent is not None and speaker_embedding is not None:
+            out = model.inference(
+                text=text,
+                language=xtts_lang,
+                gpt_cond_latent=gpt_cond_latent,
+                speaker_embedding=speaker_embedding,
+                temperature=0.7,
+                length_penalty=1.0,
+                repetition_penalty=2.0,
+                top_k=50,
+                top_p=0.85,
+                enable_text_splitting=True
+            )
+        else:
+            out = model.inference(
+                text=text,
+                language=xtts_lang,
+                temperature=0.7,
+                enable_text_splitting=True
+            )
+        sf.write(temp_wav, out["wav"], 24000, subtype='PCM_16')
+    else:
+        tts = synth_obj["tts"]
+        if speaker_wavs:
+            tts.tts_to_file(text=text, speaker_wav=speaker_wavs[0], language=xtts_lang, file_path=temp_wav, split_sentences=True)
+        elif hasattr(tts, 'speakers') and tts.speakers:
+            speaker_name = tts.speakers[0]
+            tts.tts_to_file(text=text, speaker=speaker_name, language=xtts_lang, file_path=temp_wav, split_sentences=True)
+        else:
+            tts.tts_to_file(text=text, language=xtts_lang, file_path=temp_wav, split_sentences=True)
+        
+    return temp_wav
+
+
 def generate_audio(text: str, voice: str = "af_heart") -> str:
     """
-    Generates audio from text using Kokoro-ONNX and returns the path to the .ogg file.
+    Generates audio from text using the configured TTS model (Kokoro ONNX or Coqui XTTS-v2)
+    and returns the path to the .ogg file.
     """
     try:
-        model = get_kokoro_model()
-        
-        # Detect language dynamically
-        try:
-            detected_lang = detect(text)
-        except LangDetectException:
-            detected_lang = "pt"
+        from database import get_config
+        tts_engine = get_config("TTS_MODEL", "kokoro").lower()
+    except Exception:
+        tts_engine = "kokoro"
+
+    try:
+        is_high_quality = tts_engine in ("kokoro-high", "high")
+        if tts_engine in ("xtts", "xtts-v2", "coqui-xtts-v2", "coqui"):
+            temp_wav = _generate_audio_xtts(text)
+        elif tts_engine in ("kokoro-medium", "medium"):
+            temp_wav = _generate_audio_kokoro(text, voice=voice, quality="medium")
+        elif is_high_quality:
+            temp_wav = _generate_audio_kokoro(text, voice=voice, quality="high")
+        else:
+            temp_wav = _generate_audio_kokoro(text, voice=voice, quality="fast")
             
-        # Map detected language to Kokoro format. en -> en-us, pt -> pt-br
-        lang_mapping = {
-            'pt': 'pt-br',
-            'en': 'en-us',
-            'es': 'es',
-            'fr': 'fr-fr',
-            'ja': 'ja',
-            'ko': 'ko',
-            'zh-cn': 'cmn',
-            'zh-tw': 'cmn',
-            'it': 'it',
-            'hi': 'hi'
-        }
-        
-        kokoro_lang = lang_mapping.get(detected_lang, 'en-us')
-        
-        # Map languages to best default voices
-        default_voices = {
-            'pt-br': 'pm_alex',  # Mantido a sua escolha (Português Masculino)
-            'en-us': 'am_echo',  # Corrigido para voz masculina em inglês
-            'es': 'ef_dora',
-            'fr-fr': 'ff_siwis',
-            'ja': 'jf_alpha',
-            'ko': 'kf_alpha',
-            'cmn': 'zf_xiaoxiao',
-            'it': 'if_sara',     # Italiano
-            'hi': 'hf_alpha'     # Hindi
-        }
-        
-        # Only override the voice if it is the default "af_heart"
-        if voice == "af_heart" and kokoro_lang in default_voices:
-            voice = default_voices[kokoro_lang]
-        
-        # generate audio
-        logger.info(f"Synthesizing audio for text: {text[:50]}... (Detected Lang: {detected_lang}, Using Lang: {kokoro_lang}, Voice: {voice})")
-        samples, sample_rate = model.create(text, voice=voice, speed=1.0, lang=kokoro_lang)
-        
-        # Save to temp wav
-        temp_wav = get_temp_file_path(".wav")
-        sf.write(temp_wav, samples, sample_rate)
-        
         # Convert to ogg for WhatsApp using ffmpeg
         temp_ogg = get_temp_file_path("audio.ogg")
-        subprocess.run([
-            "ffmpeg", "-y", "-i", temp_wav,
-            "-c:a", "libopus", "-b:a", "64k", "-strict", "-2", temp_ogg
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Audio filter: for high quality, apply de-esser lowpass + vocal loudness normalization
+        if is_high_quality:
+            ffmpeg_cmd = [
+                "ffmpeg", "-y", "-i", temp_wav,
+                "-af", "lowpass=f=9500,highpass=f=75,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-c:a", "libopus", "-b:a", "96k", "-strict", "-2", temp_ogg
+            ]
+        else:
+            ffmpeg_cmd = [
+                "ffmpeg", "-y", "-i", temp_wav,
+                "-c:a", "libopus", "-b:a", "64k", "-strict", "-2", temp_ogg
+            ]
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
         # Clean up wav
         try:
             os.remove(temp_wav)
-        except:
+        except Exception:
             pass
             
         return os.path.abspath(temp_ogg)
     except Exception as e:
-        logger.error(f"Error generating audio: {e}")
+        logger.exception(f"Error generating audio: {e}")
         return ""
 
 def get_whisper_model():
@@ -161,6 +526,46 @@ def get_whisper_model():
             _whisper_model = WhisperModel(model_name, device="cpu", compute_type="int8")
             _current_whisper_model_name = model_name
     return _whisper_model
+
+def _decode_audio_with_ffmpeg(file_path):
+    """
+    Fallback decoder used when faster-whisper's native PyAV decode fails
+    (e.g. old/incompatible `av` versions raising "TypeError: open() got an
+    unexpected keyword argument 'metadata_errors'").
+
+    Converts the input to 16 kHz mono WAV with the system ffmpeg binary
+    (installed in the Docker image) and loads it as float32 numpy samples,
+    which model.transcribe() accepts directly — bypassing PyAV entirely.
+
+    Returns a float32 numpy array, or None when ffmpeg is unavailable or the
+    conversion fails.
+    """
+    try:
+        import numpy as np
+
+        wav_path = get_temp_file_path("whisper_fallback.wav")
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", file_path, "-ac", "1", "-ar", "16000", wav_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+        if proc.returncode != 0 or not os.path.exists(wav_path):
+            logger.warning(f"ffmpeg fallback decode failed (exit {proc.returncode})")
+            return None
+        audio, _sample_rate = sf.read(wav_path, dtype="float32", always_2d=True)
+        try:
+            os.unlink(wav_path)
+        except OSError:
+            pass
+        return audio.mean(axis=1).astype(np.float32)
+    except FileNotFoundError:
+        logger.warning("ffmpeg binary not found; fallback decode unavailable")
+        return None
+    except Exception as e:
+        logger.warning(f"ffmpeg fallback decode failed: {e}")
+        return None
+
 
 def transcribe_audio(file_path):
     """Transcribe audio file using faster-whisper."""
@@ -190,7 +595,18 @@ def transcribe_audio(file_path):
         except Exception:
             prompt = None
 
-        segments, info = model.transcribe(file_path, beam_size=5, initial_prompt=prompt)
+        try:
+            segments, info = model.transcribe(file_path, beam_size=5, initial_prompt=prompt)
+        except Exception as decode_err:
+            # Old/incompatible PyAV versions fail inside faster-whisper's
+            # decode_audio ("TypeError: open() got an unexpected keyword
+            # argument 'metadata_errors'"). Retry with a system-ffmpeg decoded
+            # numpy array, which bypasses PyAV completely.
+            logger.warning(f"faster-whisper native decode failed ({decode_err}); trying ffmpeg fallback")
+            audio_array = _decode_audio_with_ffmpeg(file_path)
+            if audio_array is None:
+                raise
+            segments, info = model.transcribe(audio_array, beam_size=5, initial_prompt=prompt)
         text = " ".join([segment.text for segment in segments]).strip()
         return f"{text}" if text else "[Audio received, but no text detected]"
     except Exception as e:

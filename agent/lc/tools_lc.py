@@ -1,0 +1,393 @@
+"""LangChain-native tool adapter for phase 4 (slim tool schemas + result caps).
+
+This module is the source of truth for how tools are presented to the LLM:
+
+  * ``lc_tool`` turns a Python tool into a ``StructuredTool`` whose description
+    is only the FIRST LINE of the docstring, leaving the full docstring (and
+    therefore the ``/settings/tools`` UI and any full-text indexing) untouched.
+
+  * ``@cap_tool_result`` caps execution results to ``LC_TOOL_RESULT_MAX_CHARS``
+    characters, so a single giant tool output can never flood the context window
+    (it benefits the legacy OpenAI loop, the Gemini loop and the future langchain
+    stack alike).
+
+  * ``gemini_tool_declarations`` builds explicit ``FunctionDeclaration`` schemas
+    for the Google genai SDK, replacing the SDK's implicit conversion that
+    otherwise consumes the full docstring as description.
+
+The schema changes are gated behind ``LC_TOOL_COMPACT_SCHEMA`` (default 'on'),
+so they can be flipped off without any code revert. The ``@cap_tool_result``
+decorator is not gated: it is controlled by ``LC_TOOL_RESULT_MAX_CHARS``
+(0 disables it; otherwise the default is 6000).
+"""
+
+import functools
+import inspect
+import logging
+import re
+import threading
+from typing import Any, Callable, Dict, List, get_args, get_origin
+
+from google.genai import types
+from langchain_core.tools import StructuredTool
+
+from agent.lc import settings as lc_settings
+
+logger = logging.getLogger(__name__)
+
+# Marker appended to truncated tool results so the model knows to narrow the query.
+TRUNCATION_MARKER = "[truncated — narrow your query for full data]"
+
+# Matches the legacy schema-building behaviour in ``openai_tools.py``:
+#   param_desc = "Parameter {name}"  unless a docstring line defines it.
+_TYPE_MAP = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+}
+
+_PYDANTIC_TYPE_MAP = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    # Parameterized generics, NOT bare list/dict: langchain-google-genai emits
+    # ARRAY-without-items / OBJECT-without-properties for bare types, which the
+    # Gemini API rejects with 400 INVALID_ARGUMENT ("items/properties: missing
+    # field").
+    "array": List[str],
+    "object": Dict[str, str],
+}
+
+
+def first_line_description(func: Callable) -> str:
+    """Short description: first non-empty line of the docstring.
+
+    Falls back to a generic sentence when the function has no docstring.
+    The full docstring is left intact on the function itself.
+    """
+    doc = getattr(func, "__doc__", "") or ""
+    for line in doc.splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return f"Executes {func.__name__}"
+
+
+def tool_param_schema(func: Callable) -> Dict[str, Any]:
+    """JSON schema properties for the parameters of ``func`` (legacy parity).
+
+    Rebuilds exactly what ``openai_tools.convert_to_openai_tool`` builds:
+    python-type -> json-schema-type, first docstring line that names the param
+    as description, and ``enum`` for ``Must be one of: ...`` hints.
+    """
+    doc = getattr(func, "__doc__", "") or ""
+    sig = inspect.signature(func)
+    properties: Dict[str, Any] = {}
+    required: List[str] = []
+
+    for name, param in sig.parameters.items():
+        if name in ("self", "args", "kwargs"):
+            continue
+
+        py_type = param.annotation
+        json_type = _TYPE_MAP.get(py_type, "string")
+        if json_type == "string" and py_type not in _TYPE_MAP:
+            # Unknown annotation: do not lie about the type.
+            json_type = "string"
+
+        param_desc = f"Parameter {name}"
+        if doc:
+            for line in doc.splitlines():
+                if f"{name}:" in line or f"{name} " in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        param_desc = parts[1].strip()
+                        break
+
+        prop: Dict[str, Any] = {"type": json_type, "description": param_desc}
+
+        # Gemini API hard requirements for function declarations (otherwise the
+        # request 400s with INVALID_ARGUMENT "...items/properties: missing
+        # field"): ARRAY properties MUST carry `items` and OBJECT properties
+        # MUST carry `properties`. Fill conservative placeholders — inferred
+        # inner type for arrays when annotated (e.g. ``list[str]``), string
+        # otherwise; empty properties for objects. The python tool still
+        # receives the real JSON values the model sends.
+        if json_type == "array":
+            inner = "string"
+            if get_origin(py_type) is not None and get_args(py_type):
+                inner = _TYPE_MAP.get(get_args(py_type)[0], "string")
+            prop["items"] = {"type": inner}
+        elif json_type == "object":
+            prop["properties"] = {}
+
+        one_of = re.search(r"Must be one of[:\s]*([^.]+)", param_desc)
+        if one_of:
+            choices = [
+                v.strip().strip("'\"")
+                for v in re.split(r"[,]\s*|\bor\b", one_of.group(1))
+                if v.strip()
+            ]
+            if len(choices) >= 2:
+                prop["enum"] = choices
+
+        properties[name] = prop
+        if param.default is inspect.Parameter.empty:
+            required.append(name)
+
+    return {"type": "object", "properties": properties, "required": required}
+
+
+def _build_args_schema(func: Callable, gemini_safe: bool = False) -> Any:
+    """Pydantic args_schema built manually (deterministic, no docstring parser).
+
+    ``gemini_safe=True`` (LangChain stack + Gemini provider only): dict params
+    are declared as ``str`` — langchain-google-genai emits OBJECT-without-
+    properties for ANY dict field, which the Gemini API rejects with 400
+    INVALID_ARGUMENT ("properties: missing field"). The description tells the
+    model to send a JSON object encoded as a string; the tool functions accept
+    both shapes.
+    """
+    try:
+        from pydantic import create_model, Field
+    except ImportError:  # pragma: no cover - pydantic is a langchain hard dep
+        from pydantic_v1 import create_model, Field  # type: ignore
+
+    schema = tool_param_schema(func)
+    sig = inspect.signature(func)
+    fields: Dict[str, Any] = {}
+    for pname, pdef in schema["properties"].items():
+        param = sig.parameters.get(pname)
+        field_type = _PYDANTIC_TYPE_MAP.get(pdef["type"], str)
+        description = pdef.get("description", "")
+        if gemini_safe and pdef["type"] == "object":
+            field_type = str
+            description = f"{description} (JSON object encoded as a string)".strip()
+        if param is not None and param.default is not inspect.Parameter.empty:
+            fields[pname] = (field_type, Field(default=param.default, description=description))
+        else:
+            fields[pname] = (field_type, Field(description=description))
+    return create_model(f"{func.__name__}Args", **fields)
+
+
+def cap_tool_result(func: Callable) -> Callable:
+    """Decorator that caps the tool's execution result to LC_TOOL_RESULT_MAX_CHARS.
+
+    The wrapper keeps the function's name, docstring and signature intact
+    (``functools.wraps``), so schemas, permission checks and the
+    ``/settings/tools`` UI all continue to work unchanged.
+    """
+    marker = TRUNCATION_MARKER
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        result = func(*args, **kwargs)
+        text = str(result)
+        max_chars = lc_settings.tool_result_max_chars()
+        if max_chars > 0 and len(text) > max_chars:
+            keep = max_chars - len(marker)
+            text = text[:keep] + marker if keep > 0 else text[:max_chars]
+        return text
+
+    wrapper.__lc_capped__ = True  # marker so cap_tools stays idempotent
+    return wrapper
+
+
+def cap_tools(funcs: List[Callable]) -> List[Callable]:
+    """Apply ``@cap_tool_result`` to every tool, skipping already-capped ones."""
+    return [
+        cap_tool_result(f) if not getattr(f, "__lc_capped__", False) else f
+        for f in funcs
+    ]
+
+
+def lc_tool(func: Callable, gemini_safe: bool = False) -> StructuredTool:
+    """Build a ``StructuredTool`` for a single Python tool.
+
+    Description = first line of the docstring (slim schema). The args schema is
+    built from the signature + the same parameter-description heuristics used by
+    the legacy OpenAI converter, so enums and per-param hints stay intact.
+    ``gemini_safe`` rewrites dict params to JSON strings (see
+    ``_build_args_schema``).
+    """
+    args_schema = _build_args_schema(func, gemini_safe=gemini_safe)
+    return StructuredTool.from_function(
+        func=func,
+        name=func.__name__,
+        description=first_line_description(func),
+        args_schema=args_schema,
+    )
+
+
+def build_lc_tools(
+    funcs: List[Callable], gemini_safe: bool = False
+) -> List[StructuredTool]:
+    """Convert a list of Python tool functions into ``StructuredTool`` objects.
+
+    A single tool whose schema cannot be built (e.g. a user-authored tool from
+    ``tool_creator`` with a docstring that breaks the parser) is skipped with a
+    warning instead of crashing the whole LLM call — same resilience as the
+    legacy OpenAI converter in ``agent/openai_tools.py``.
+    """
+    tools: List[StructuredTool] = []
+    for f in funcs:
+        try:
+            tools.append(lc_tool(f, gemini_safe=gemini_safe))
+        except Exception as conv_err:
+            logger.warning(
+                "Skipping tool '%s': LangChain schema build failed (%s)",
+                getattr(f, "__name__", "?"),
+                conv_err,
+            )
+    return tools
+
+
+def gemini_tool_declarations(funcs: List[Callable]) -> List[types.Tool]:
+    """Build explicit genai ``types.Tool`` / ``FunctionDeclaration`` schemas.
+
+    Used by the Gemini loop so the SDK does not pull the full docstring as the
+    description; instead only the short first-line description + the legacy-parity
+    parameter schema are used. A tool that cannot be converted is skipped with a
+    warning instead of crashing the whole Gemini call.
+    """
+    result: List[types.Tool] = []
+    for func in funcs:
+        try:
+            func_decl = types.FunctionDeclaration(
+                name=func.__name__,
+                description=first_line_description(func),
+                parameters=types.Schema(**tool_param_schema(func)),
+            )
+            result.append(types.Tool(function_declarations=[func_decl]))
+        except Exception as conv_err:
+            logger.warning(
+                "Skipping tool '%s': Gemini declaration build failed (%s)",
+                getattr(func, "__name__", "?"),
+                conv_err,
+            )
+    return result
+
+
+def _message_text(content) -> str:
+    """Flattens multimodal message content into plain text for the selector."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                t = p.get("text") or p.get("content") or ""
+                if t:
+                    parts.append(str(t))
+            else:
+                t = getattr(p, "text", None)
+                if t:
+                    parts.append(str(t))
+        return " ".join(parts)
+    return str(content or "")
+
+
+# Tool-description vectors (TOOL_MODEL), keyed by the embedded text so an edited docstring
+# is re-embedded automatically. Process-local; tools are few and the local
+# model is cheap, so no persistence is needed.
+_TOOL_VECTOR_CACHE: Dict[str, Any] = {}
+_TOOL_VECTOR_LOCK = threading.Lock()
+
+
+def _tool_embedding_text(func: Callable) -> str:
+    """Text embedded for a tool: readable name plus its short description."""
+    return f"{func.__name__.replace('_', ' ')}: {first_line_description(func)}"
+
+
+def _tool_vectors(funcs: List[Callable], embeddings):
+    """L2-normalised vectors for ``funcs`` (cached by embedded text)."""
+    import numpy as np
+
+    texts = [_tool_embedding_text(f) for f in funcs]
+    with _TOOL_VECTOR_LOCK:
+        missing = [t for t in dict.fromkeys(texts) if t not in _TOOL_VECTOR_CACHE]
+        if missing:
+            for text, vec in zip(missing, embeddings.embed_documents(missing)):
+                _TOOL_VECTOR_CACHE[text] = vec
+        matrix = np.array([_TOOL_VECTOR_CACHE[t] for t in texts], dtype="float32")
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return matrix / norms
+
+
+def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
+    """Narrow ``funcs`` to the tools relevant to the user's message (RAG).
+
+    Gated behind ``TOOL_RELEVANCE_FILTER`` (Advanced Settings toggle). When on,
+    each tool's name + short description is embedded with the local
+    multilingual model (``agent.lc.embeddings.TOOL_MODEL``, so Portuguese
+    messages match the English descriptions) and the
+    ``TOOL_RELEVANCE_TOP_K`` tools most similar (cosine) to ``content`` are
+    kept. Every other tool from the same module as a kept tool is added back,
+    so related tools travel together (e.g. browser_navigate with
+    browser_snapshot / browser_click). When off, all tools are sent.
+
+    ``content`` should be the plain user message (no sender label, no history
+    context), so it matches the tool descriptions.
+
+    Fail-open contract: ANY problem (flag off, empty message, embeddings
+    unavailable, embedding error) returns the ORIGINAL list unchanged.
+    """
+    if not funcs:
+        return funcs
+    if not lc_settings.tool_relevance_filter():
+        return funcs
+
+    try:
+        message_text = _message_text(content).strip()
+        if not message_text:
+            return funcs
+        top_k = lc_settings.tool_relevance_top_k()
+        if len(funcs) <= top_k:
+            return funcs
+
+        import numpy as np
+
+        from agent.lc.embeddings import TOOL_MODEL, get_embeddings
+
+        embeddings = get_embeddings(TOOL_MODEL)
+        if embeddings is None:
+            logger.warning(
+                "Tool relevance filter: local embeddings unavailable; keeping all %d tools",
+                len(funcs),
+            )
+            return funcs
+
+        matrix = _tool_vectors(funcs, embeddings)
+        query = np.array(embeddings.embed_query(message_text[:4000]), dtype="float32")
+        norm = np.linalg.norm(query)
+        if norm:
+            query = query / norm
+        scores = matrix @ query
+        best = [int(i) for i in np.argsort(-scores)[:top_k]]
+
+        modules = {funcs[i].__module__ for i in best}
+        keep = set(best) | {
+            i for i, f in enumerate(funcs) if f.__module__ in modules
+        }
+        filtered = [f for i, f in enumerate(funcs) if i in keep]
+        logger.info(
+            "Tool relevance filter: %d/%d tools selected (top: %s)",
+            len(filtered),
+            len(funcs),
+            ", ".join(funcs[i].__name__ for i in best[:8]),
+        )
+        return filtered
+    except Exception as e:
+        logger.warning(
+            "Tool relevance filter failed (%s); keeping all %d tools",
+            e,
+            len(funcs),
+        )
+        return funcs

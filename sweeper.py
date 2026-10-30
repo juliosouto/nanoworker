@@ -47,6 +47,18 @@ def make_baileys_callback(jid: str):
                 )
             )
 
+            # If this is a final successful response and we previously posted
+            # a progress / retry error message, delete that progress message first.
+            if not is_progress_msg and last_progress_msg_id:
+                try:
+                    del_payload = {"message_id": last_progress_msg_id, "jid": jid}
+                    del_resp = req.post('http://127.0.0.1:3000/delete', json=del_payload, timeout=5)
+                    logger.info(f"Progress message deletion response code: {del_resp.status_code}")
+                except Exception as del_err:
+                    logger.warning(f"Failed to delete progress message {last_progress_msg_id}: {del_err}")
+                finally:
+                    last_progress_msg_id = None
+
             if text_to_send:
                 payload = {"text": text_to_send, "jid": jid}
                 if is_progress_msg and last_progress_msg_id:

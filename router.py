@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 import threading
 import uuid
 
@@ -7,6 +8,9 @@ from database import get_config, get_db
 from utils.message_utils import clean_mention
 
 logger = logging.getLogger(__name__)
+
+# The '/new' chat command (deletes the channel's history) is disabled.
+ENABLE_NEW_COMMAND = False
 
 def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=None, sender_name=None, image_base64=None, file_mime_type=None, file_name=None, on_complete=None, client_message_id=None):
     """
@@ -69,9 +73,36 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
     agent_name = default_worker['worker_name'] if default_worker else ''
     cleaned_content = clean_mention(content, agent_name)
 
-    if cleaned_content == "/new":
+    # '/new' (wipes the channel history) is disabled: the message is treated
+    # as regular input. Flip ENABLE_NEW_COMMAND to restore it.
+    if ENABLE_NEW_COMMAND and cleaned_content == "/new":
+        # Phase-3 cleanup: a fresh conversation must not inherit a stale summary
+        # from the old one.
+        from database import clear_session_summary
+
+        clear_session_summary(session_id)
         cursor.execute('DELETE FROM messages_in WHERE session_id = ?', (session_id,))
         cursor.execute('DELETE FROM messages_out WHERE session_id = ?', (session_id,))
+        # The channel timeline (message_history) is reset too, so the LLM
+        # history rebuilt from it starts from zero. The vector table, when the
+        # sqlite-vec extension is available, is cleaned of orphan rows.
+        try:
+            cursor.execute('DELETE FROM message_history WHERE channel_id = ?', (channel_id,))
+            from database import sqlite_vec_available
+            if sqlite_vec_available():
+                try:
+                    cursor.execute('DELETE FROM message_history_vec WHERE channel_id = ? AND id NOT IN (SELECT id FROM message_history WHERE channel_id = ?)', (channel_id, channel_id))
+                except sqlite3.OperationalError:
+                    pass
+            # FTS5 é nativo do SQLite (não depende da extensão vec): o cleanup
+            # roda incondicionalmente para que '/new' nunca deixe órfãos no
+            # índice de keywords.
+            try:
+                cursor.execute('DELETE FROM message_history_fts WHERE channel_id = ? AND rowid NOT IN (SELECT id FROM message_history WHERE channel_id = ?)', (channel_id, channel_id))
+            except sqlite3.OperationalError:
+                pass
+        except sqlite3.OperationalError:
+            pass  # table missing on databases not yet migrated
         conn.commit()
         conn.close()
         

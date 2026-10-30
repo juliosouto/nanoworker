@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 import time
 from playwright.sync_api import sync_playwright
@@ -7,6 +8,195 @@ logger = logging.getLogger(__name__)
 
 import queue
 import concurrent.futures
+
+# Domains of known Consent Management Platforms (CMPs) / cookie banners.
+# Blocking them at the network layer prevents the consent popups (Sourcepoint,
+# OneTrust, Cookiebot, ...) from ever loading, which keeps headless browsing
+# and screenshots clean on servers without a display.
+_CMP_BLOCK_RE = re.compile(
+    r"https?://([^/?#]+\.)?(?:"
+    r"privacy-mgmt\.com|sp-prod\.net|sourcepoint\.com|"
+    r"onetrust\.com|cookielaw\.org|cookiepro\.com|cookiebot\.com|"
+    r"quantcast\.mgr\.consensu\.org|consensu\.org|"
+    r"usercentrics\.(?:eu|io)|didomi\.io|iubenda\.com|termly\.io|"
+    r"trustarc\.com|truste\.com|osano\.com|klaro\.org|"
+    r"civiccomputing\.com|cookiehub\.(?:com|net)|cookiescript\.info"
+    r")(/|$|\?|#)",
+    re.IGNORECASE,
+)
+
+# Domains of known Ad networks, trackers, and telemetry services.
+# Blocking them at the network layer is 100% invisible to the page JS/DOM,
+# saves bandwidth/tokens, prevents anti-adblock detection, and keeps screenshots clean.
+_ADS_BLOCK_RE = re.compile(
+    r"https?://([^/?#]+\.)?(?:"
+    r"doubleclick\.net|googlesyndication\.com|googleadservices\.com|"
+    r"adservice\.google\.|pagead2\.googlesyndication\.com|"
+    r"adnxs\.com|criteo\.(?:com|net)|outbrain\.com|taboola\.com|"
+    r"amazon-adsystem\.com|scorecardresearch\.com|rubiconproject\.com|"
+    r"openx\.net|pubmatic\.com|casalemedia\.com|smartadserver\.com|"
+    r"bidswitch\.net|moatads\.com|adsafeprotected\.com|adroll\.com|"
+    r"chartbeat\.com|hotjar\.com|clarity\.ms|segment\.io|mixpanel\.com|"
+    r"popads\.net|popcash\.net|adcolony\.com|applovin\.com|unityads\.unity3d\.com"
+    r")(/|$|\?|#)",
+    re.IGNORECASE,
+)
+
+# Second line of defense: runs in every frame before page scripts. Removes any
+# consent/cookie overlay that still renders (vendor-specific ids/classes are
+# removed outright; generic cookie/consent words only when the node behaves
+# like an overlay) and restores the page scroll the banners usually lock.
+_CONSENT_SWEEP_JS = """
+(() => {
+  const VENDOR_RE = /(onetrust|cookielaw|cookiebot|cookiepro|cybotcookiebot|sourcepoint|privacy-mgmt|sp_message|sp_iframe|sp_veil|sp-prod|didomi|iubenda|klaro|osano|truste|termly|usercentrics|cmpbox|cookiehub|cookiescript|qc-cmp|quantcast-cmp)/i;
+  const GENERIC_RE = /(cookie|consent|gdpr)/i;
+  const CMP_SRC_RE = /(sourcepoint|privacy-mgmt|sp-prod|onetrust|cookielaw|cookiebot|quantcast\\.mgr|consensu\\.org|usercentrics|didomi|osano|trustarc|termly|iubenda|klaro)/i;
+
+  function sweep() {
+    try {
+      const nodes = document.querySelectorAll('div, iframe, section, aside, dialog, ins, form');
+      nodes.forEach((el) => {
+        let hit = false;
+        const id = el.id || '';
+        const cls = (typeof el.className === 'string') ? el.className : ((el.getAttribute && el.getAttribute('class')) || '');
+        const hay = id + ' ' + cls;
+        if (VENDOR_RE.test(hay)) {
+          hit = true;
+        } else if (GENERIC_RE.test(hay)) {
+          try {
+            const s = window.getComputedStyle(el);
+            const z = parseFloat(s.zIndex) || 0;
+            if (s.position === 'fixed' || s.position === 'sticky' || z >= 1000) hit = true;
+          } catch (e) {}
+        }
+        if (!hit && el.tagName === 'IFRAME') {
+          const src = (el.getAttribute && el.getAttribute('src')) || '';
+          if (CMP_SRC_RE.test(src)) hit = true;
+        }
+        if (hit) { try { el.remove(); } catch (e) {} }
+      });
+      [document.documentElement, document.body].forEach((el) => {
+        if (!el || !el.style) return;
+        if (el.style.overflow === 'hidden') el.style.overflow = '';
+        if (el.style.position === 'fixed') el.style.position = '';
+      });
+    } catch (e) {}
+  }
+  window.__nwSweepConsent = sweep;
+  let last = 0;
+  try {
+    const mo = new MutationObserver(() => {
+      const now = Date.now();
+      if (now - last > 300) { last = now; sweep(); }
+    });
+    const startObserving = () => mo.observe(document.documentElement || document, { childList: true, subtree: true });
+    if (document.documentElement) startObserving();
+    else document.addEventListener('DOMContentLoaded', startObserving, { once: true });
+  } catch (e) {}
+  sweep();
+  document.addEventListener('DOMContentLoaded', sweep);
+  window.addEventListener('load', () => { sweep(); setTimeout(sweep, 400); setTimeout(sweep, 1500); });
+})();
+"""
+
+
+def _harden_context(context):
+    """
+    Installs cookie-banner/CMP blocking and ad/tracker blocking on a freshly created Playwright context
+    (gated by BLOCK_COOKIE_BANNERS and BLOCK_ADS configs, default: enabled).
+    """
+    try:
+        from database import get_config
+        block_banners = get_config("BLOCK_COOKIE_BANNERS", "true").lower() == "true"
+        block_ads = get_config("BLOCK_ADS", "true").lower() == "true"
+    except Exception:
+        block_banners = True
+        block_ads = True
+
+    if block_ads:
+        try:
+            # Network route interception is invisible to the website DOM/JS
+            context.route(_ADS_BLOCK_RE, lambda route: route.abort("blockedbyclient"))
+        except Exception as e:
+            logger.warning(f"Failed to install Ads network blocking: {e}")
+
+    if block_banners:
+        try:
+            context.route(_CMP_BLOCK_RE, lambda route: route.abort("blockedbyclient"))
+        except Exception as e:
+            logger.warning(f"Failed to install CMP network blocking: {e}")
+        try:
+            context.add_init_script(_CONSENT_SWEEP_JS)
+        except Exception as e:
+            logger.warning(f"Failed to install consent sweep script: {e}")
+
+# Curated mobile (smartphone) device presets used by the mobile-browsing tools.
+# These mirror Playwright's own device descriptors but are kept in-repo so the
+# feature is deterministic and testable without reaching into the live device
+# catalog at runtime (which may differ across Playwright versions). Any name not
+# present here is still resolved against the live catalog by
+# _resolve_mobile_device() as a best-effort fallback.
+_MOBILE_DEVICES = {
+    "iPhone 13": {
+        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Mobile/15E148 Safari/604.1",
+        "viewport": {"width": 390, "height": 664},
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "iPhone 15 Pro": {
+        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Mobile/15E148 Safari/604.1",
+        "viewport": {"width": 393, "height": 659},
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "Pixel 7": {
+        "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Mobile Safari/537.36",
+        "viewport": {"width": 412, "height": 839},
+        "device_scale_factor": 2.625,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "Galaxy S24": {
+        "user_agent": "Mozilla/5.0 (Linux; Android 14; SM-S921U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Mobile Safari/537.36",
+        "viewport": {"width": 360, "height": 780},
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+}
+
+
+def _resolve_mobile_device(device_name: str):
+    """Resolve a mobile device name to a Playwright context-options dict.
+
+    Looks up the curated presets first, then falls back to the live Playwright
+    device catalog. Returns a dict with snake_case keys ready to be splatted
+    into ``browser.new_context(**options)`` or ``None`` when the device is
+    unknown.
+    """
+    preset = _MOBILE_DEVICES.get(device_name)
+    if preset is not None:
+        return dict(preset)
+
+    # Best-effort fallback to the live catalog for any other device name.
+    try:
+        live = getattr(GlobalBrowser.get_instance().playwright, "devices", None)
+        candidate = live.get(device_name) if isinstance(live, dict) else None
+        if isinstance(candidate, dict) and candidate.get("user_agent"):
+            return {
+                "user_agent": candidate.get("user_agent"),
+                "viewport": candidate.get("viewport"),
+                "device_scale_factor": candidate.get("device_scale_factor", 2),
+                "is_mobile": candidate.get("is_mobile", True),
+                "has_touch": candidate.get("has_touch", True),
+            }
+    except Exception:
+        pass
+
+    return None
+
 
 class GlobalBrowser:
     """Singleton for the Playwright Chromium instance, running in a dedicated thread"""
@@ -123,6 +313,8 @@ class BrowserManager:
                 
             self.context = global_browser.new_context(**context_options)
             self.page = self.context.new_page()
+            # Block cookie-consent popups/CMP overlays (keeps screenshots clean)
+            _harden_context(self.context)
 
         global_browser.submit_task(_task).result()
 
@@ -141,10 +333,85 @@ class BrowserManager:
                     self.page.wait_for_load_state("networkidle", timeout=5000)
                 except Exception:
                     pass
+                # Explicit consent sweep: the init script also fires on load,
+                # but running it here makes banner removal deterministic before
+                # the caller (snapshot/screenshot) proceeds.
+                try:
+                    self.page.evaluate("window.__nwSweepConsent && window.__nwSweepConsent()")
+                except Exception:
+                    pass
                 return f"Navigated to {url}"
             except Exception as e:
                 return f"Error navigating to {url}: {e}"
         return GlobalBrowser.get_instance().submit_task(_task).result()
+
+    def navigate_mobile(self, url, device_name="iPhone 13"):
+        """Navega até uma URL emulando um dispositivo móvel (smartphone).
+
+        Recria o contexto/página com viewport, user-agent, touch e device-scale
+        de um celular antes de navegar. Faz o replay das proteções de CMP/ads
+        (_harden_context) e do consent sweep, igual ao fluxo de navegação normal.
+
+        Este método NÃO reutiliza start_browser() porque roda dentro da própria
+        thread dedicada do Playwright (não é seguro re-submeter uma task a partir
+        de uma task), mesmo padrão usado por record_navigation().
+        """
+        self.update_activity()
+        global_browser = GlobalBrowser.get_instance()
+
+        def _task():
+            device_options = _resolve_mobile_device(device_name)
+            if not device_options:
+                available = ", ".join(sorted(_MOBILE_DEVICES.keys()))
+                return (
+                    f"Error: unknown mobile device '{device_name}'. "
+                    f"Available devices: {available}."
+                )
+
+            # Fecha qualquer contexto/página anterior antes de reconfigurar.
+            if self.context:
+                try:
+                    if self.page:
+                        self.page.close()
+                    self.context.close()
+                except Exception:
+                    pass
+
+            context_options = dict(device_options)
+            # Respeita o proxy global, se habilitado.
+            try:
+                from utils.proxy_manager import get_playwright_proxy_config
+                proxy_config = get_playwright_proxy_config()
+                if proxy_config:
+                    context_options["proxy"] = proxy_config
+            except Exception:
+                pass
+
+            try:
+                self.context = global_browser.new_context(**context_options)
+                self.page = self.context.new_page()
+                # Reaplica o bloqueio de cookie banners/ads no novo contexto.
+                _harden_context(self.context)
+
+                self.page.goto(url, wait_until="domcontentloaded", timeout=10000)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                try:
+                    self.page.evaluate("window.__nwSweepConsent && window.__nwSweepConsent()")
+                except Exception:
+                    pass
+                vw = device_options.get("viewport", {}).get("width")
+                vh = device_options.get("viewport", {}).get("height")
+                return (
+                    f"Navigated to {url} in mobile mode "
+                    f"(device: {device_name}, viewport: {vw}x{vh})."
+                )
+            except Exception as e:
+                return f"Error navigating to {url} in mobile mode: {e}"
+
+        return global_browser.submit_task(_task).result()
 
     def get_snapshot(self, interactive_only=True):
         self.update_activity()
@@ -245,6 +512,109 @@ class BrowserManager:
             except Exception as e:
                 return f"Error taking screenshot: {e}"
         return GlobalBrowser.get_instance().submit_task(_task).result()
+
+    def scroll(self, magnitude):
+        self.update_activity()
+        def _task():
+            try:
+                self.page.evaluate(f"window.scrollBy(0, {float(magnitude)})")
+                self.page.wait_for_timeout(600)
+                return f"Scrolled by {magnitude} pixels"
+            except Exception as e:
+                return f"Error scrolling: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
+
+    def save_as_pdf(self, path):
+        self.update_activity()
+        def _task():
+            try:
+                self.page.pdf(path=path, format="A4", print_background=True)
+                return f"PDF saved to {path}"
+            except Exception as e:
+                return f"Error saving PDF: {e}"
+        return GlobalBrowser.get_instance().submit_task(_task).result()
+
+    def record_navigation(self, url: str, duration_seconds: int = 5, output_path: str = None) -> str:
+        """
+        Navigates to a URL, records the browser session to a video file for a specified duration,
+        and saves it to output_path.
+        """
+        import os
+        import shutil
+        import tempfile
+        from utils.file_utils import get_temp_file_path
+
+        self.update_activity()
+        global_browser = GlobalBrowser.get_instance()
+        final_video_path = output_path or get_temp_file_path("browser_recording.webm")
+
+        def _task():
+            rec_dir = tempfile.mkdtemp(prefix="pw_video_")
+            rec_context = None
+            rec_page = None
+            try:
+                rec_context = global_browser.browser.new_context(
+                    record_video_dir=rec_dir,
+                    record_video_size={"width": 1280, "height": 720},
+                    viewport={"width": 1280, "height": 720}
+                )
+                _harden_context(rec_context)
+                rec_page = rec_context.new_page()
+
+                rec_page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                try:
+                    rec_page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+
+                try:
+                    rec_page.evaluate("window.__nwSweepConsent && window.__nwSweepConsent()")
+                except Exception:
+                    pass
+
+                # Keep recording for the given duration
+                wait_time = max(1, min(int(duration_seconds), 60))
+                rec_page.wait_for_timeout(wait_time * 1000)
+
+                # Get the video object reference before closing
+                video = rec_page.video
+
+                # Closing page & context ensures video is flushed to disk
+                rec_page.close()
+                rec_page = None
+                rec_context.close()
+                rec_context = None
+
+                if video:
+                    try:
+                        video.save_as(final_video_path)
+                    except Exception:
+                        saved_path = video.path()
+                        if saved_path and os.path.exists(saved_path):
+                            shutil.copy2(saved_path, final_video_path)
+                        else:
+                            raise RuntimeError("Video file was not generated.")
+                else:
+                    raise RuntimeError("No video object found on page.")
+
+                return f"Browser video recorded and saved to {final_video_path}"
+            except Exception as e:
+                return f"Error recording browser video: {e}"
+            finally:
+                if rec_page:
+                    try:
+                        rec_page.close()
+                    except Exception:
+                        pass
+                if rec_context:
+                    try:
+                        rec_context.close()
+                    except Exception:
+                        pass
+                if os.path.exists(rec_dir):
+                    shutil.rmtree(rec_dir, ignore_errors=True)
+
+        return global_browser.submit_task(_task).result()
 
     def get_cookies(self):
         self.update_activity()

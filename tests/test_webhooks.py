@@ -198,3 +198,30 @@ def test_webhook_wa_success(mock_save, mock_route, mock_presence, mock_resolve, 
     assert response.status_code == 202
     assert mock_presence.called
     assert mock_route.called
+
+@patch('routes.webhooks.get_config', return_value="secret")
+@patch('routes.webhooks.route_inbound_message', return_value=("in_1", "s1", False))
+def test_webhook_transcription_gets_anti_open_note(mock_route, mock_get, client):
+    # Regression: transcribed audio content must carry an explicit internal note
+    # telling the model the audio is already text. Small models otherwise
+    # hallucinated a call to the nonexistent open() tool to "read the audio".
+    response = client.post('/api/webhook', headers={'X-Webhook-Secret': 'secret'}, json={
+        "content": "@Nano resuma\n[Transcription]: ola mundo",
+        "channel_id": "test_channel"
+    })
+    assert response.status_code == 202
+    routed_content = mock_route.call_args.kwargs['content']
+    assert '[Transcription]: ola mundo' in routed_content
+    assert 'already transcribed as text' in routed_content
+
+@patch('routes.webhooks.get_config', return_value="secret")
+@patch('routes.webhooks.route_inbound_message', return_value=("in_1", "s1", False))
+def test_webhook_plain_text_no_anti_open_note(mock_route, mock_get, client):
+    # Content without any transcription must NOT get the internal audio note.
+    response = client.post('/api/webhook', headers={'X-Webhook-Secret': 'secret'}, json={
+        "content": "plain text message",
+        "channel_id": "test_channel"
+    })
+    assert response.status_code == 202
+    routed_content = mock_route.call_args.kwargs['content']
+    assert 'already transcribed as text' not in routed_content
