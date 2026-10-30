@@ -182,8 +182,8 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str) -> 
 def _build_history_from_message_history(cursor, channel_id: str, exclude_client_message_id=None) -> list:
     """
     Builds the Gemini-format history for WhatsApp channels from the canonical
-    message_history timeline: the last MESSAGE_HISTORY_SIZE rows of the channel
-    (mentioned or not — the full group context now reaches the model), oldest
+    message_history timeline: the last PROMPT_HISTORY_SIZE rows of the channel
+    (mentioned or not — the continuity window reaches the model), oldest
     first. Rows written by the BOT (is_bot=1) become 'model' turns; everything
     else — including messages typed by the human owner on their own phone
     (from_me=1, is_bot=0) — stays a 'user' turn with the "[Message from: ...]"
@@ -407,7 +407,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     client = None
 
     # Fetch history. WhatsApp channels rebuild it from the message_history
-    # timeline (last MESSAGE_HISTORY_SIZE rows of the channel, including group
+    # timeline (last PROMPT_HISTORY_SIZE rows of the channel, including group
     # messages that never mentioned the worker). Other channels keep the
     # messages_in/messages_out rebuild, capped by message count.
     if channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):

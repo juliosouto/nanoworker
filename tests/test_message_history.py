@@ -183,6 +183,24 @@ def test_get_recent_message_history_order_and_exclude(db):
     assert [r['content'] for r in rows] == ['msg 0', 'msg 1', 'msg 2']
 
 
+def test_prompt_window_is_independent_of_retention(db):
+    """The prompt sends only the last PROMPT_HISTORY_SIZE rows (default 20),
+    while the raw timeline keeps MESSAGE_HISTORY_SIZE rows."""
+    from database import get_prompt_history_size, set_config
+
+    assert get_prompt_history_size() == 20  # production default
+    set_config('MESSAGE_HISTORY_SIZE', '100')
+    set_config('PROMPT_HISTORY_SIZE', '2')
+    for i in range(5):
+        insert_message_history(
+            message_id=f'WA-{i}', channel_id=CHANNEL,
+            content=f'msg {i}', msg_timestamp=1700000000 + i,
+        )
+    assert _count(db) == 5  # retention keeps everything
+    rows = get_recent_message_history(db.cursor(), CHANNEL)
+    assert [r['content'] for r in rows] == ['msg 3', 'msg 4']
+
+
 def test_history_roles_distinguish_bot_from_owner(db):
     """Regression: from_me=1 alone used to map to 'model'. The human owner
     typing on their own phone (from_me=1, is_bot=0) must stay a 'user' turn;

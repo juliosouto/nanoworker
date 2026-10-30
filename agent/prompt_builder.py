@@ -204,8 +204,10 @@ def build_system_prompt(
     else:
         system_prompt = schema_prompt
 
-    # 7. User memory
-    memory_block = _fetch_user_memory(cursor)
+    # 7. User memory: top-k relevant to the message (LC_MEMORY_TOP_K), with
+    # the full list as fallback when embeddings or the index are unavailable.
+    from agent.lc import memory_rag
+    memory_block = memory_rag.get_memory_block(cursor, query=message_query)
     if memory_block:
         if system_prompt:
             system_prompt = f"{system_prompt}\n\n{memory_block}"

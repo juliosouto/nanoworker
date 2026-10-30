@@ -554,7 +554,7 @@ def init_db():
     cursor.execute("SELECT value FROM app_config WHERE key = 'LLM_STACK'")
     row = cursor.fetchone()
     if not row:
-        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LLM_STACK', 'legacy')")
+        cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LLM_STACK', 'langchain')")
 
     cursor.execute("SELECT value FROM app_config WHERE key = 'LC_TOKEN_COUNTER'")
     row = cursor.fetchone()
@@ -1107,6 +1107,20 @@ def get_message_history_size(default: int = 10000) -> int:
     return max(0, n)
 
 
+def get_prompt_history_size(default: int = 20) -> int:
+    """Número de mensagens do canal enviadas verbatim ao LLM (PROMPT_HISTORY_SIZE).
+
+    É a janela de continuidade do prompt. Independe da retenção do banco
+    (MESSAGE_HISTORY_SIZE), que continua guardando o histórico cru e vetorizado.
+    O History RAG busca apenas o que ficou fora desta janela.
+    """
+    try:
+        n = int(get_config("PROMPT_HISTORY_SIZE", str(default)))
+    except (TypeError, ValueError):
+        n = default
+    return max(0, n)
+
+
 def insert_message_history(message_id=None, channel_id=None, remote_jid=None,
                            is_group=0, sender_id=None, sender_id_alt=None,
                            sender_name=None, from_me=0, is_bot=0, content='',
@@ -1290,7 +1304,7 @@ def get_recent_message_history(cursor, channel_id, limit=None, exclude_message_i
     `exclude_message_id` pula a mensagem que está sendo processada agora.
     """
     if limit is None:
-        limit = get_message_history_size()
+        limit = get_prompt_history_size()
     query = '''
         SELECT id, message_id, channel_id, remote_jid, is_group, sender_id,
                sender_id_alt, sender_name, from_me, is_bot, content,
@@ -1416,10 +1430,10 @@ def get_history_window_cutoff(cursor, channel_id, limit=None):
     """msg_timestamp mais antigo dentro da janela N do canal (None se vazia).
 
     Usado pelo retriever para não devolver mensagens que já entram verbatim
-    no contexto (janela de N mensagens).
+    no contexto (janela de N mensagens do prompt).
     """
     if limit is None:
-        limit = get_message_history_size()
+        limit = get_prompt_history_size()
     try:
         cursor.execute('''
             SELECT MIN(msg_timestamp) FROM (
