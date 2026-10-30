@@ -510,7 +510,6 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             worker_name=worker_name,
             native_structured=native_structured,
             models_to_try=models_to_try,
-            message_query=content,
         )
 
         # Build config kwargs
@@ -658,7 +657,6 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
             ide_prompt=ide_prompt,
             native_structured=native_structured,
             models_to_try=models_to_try,
-            message_query=content,
         )
 
         # Build config kwargs

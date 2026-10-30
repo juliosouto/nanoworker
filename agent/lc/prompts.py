@@ -62,7 +62,6 @@ def build_system_prompt(
     ide_prompt=None,
     native_structured=False,
     models_to_try=None,
-    message_query: str = "",
 ) -> str:
     """Builds the complete system prompt (same signature/semantics as
     agent.prompt_builder.build_system_prompt, plus native_structured).
@@ -73,11 +72,11 @@ def build_system_prompt(
     from agent.prompt_builder import (
         JSON_SCHEMA_PROMPT,
         JSON_SCHEMA_PROMPT_WITH_PLAN,
+        _fetch_user_memory,
         _inject_channel_rules,
         _inject_project_path,
         get_config,  # same symbol the legacy path uses (patchable in tests)
     )
-    from agent.lc import memory_rag
 
     # 1. Base prompt
     if ide_prompt is not None:
@@ -113,8 +112,9 @@ def build_system_prompt(
         else:
             system_prompt = schema_prompt
 
-    # 7. User memory (Fase 2: semantic top-k via RAG; falls back to legacy injection).
-    memory_block = memory_rag.get_memory_block(cursor, query=message_query)
+    # 7. User memory: every entry, always. These are fixed, mandatory
+    # instructions (like worker_instructions), so no RAG selection applies.
+    memory_block = _fetch_user_memory(cursor)
     if memory_block:
         if system_prompt:
             system_prompt = f"{system_prompt}\n\n{memory_block}"

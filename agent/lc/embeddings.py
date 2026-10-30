@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # running on this machine. Weights are cached under models/embeddings.
 LOCAL_PROVIDER = "local"
 LOCAL_MODEL = "all-MiniLM-L6-v2"
+LOCAL_DIMS = 384
 LOCAL_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models", "embeddings")
 
 

@@ -5,7 +5,7 @@ the LLM call (the worker only triggers this when it is mentioned).
 
 Design notes:
 - ``database.py`` stays pure SQL; embeddings orchestration lives here,
-  mirroring ``agent.lc.memory_rag``.
+  as in the rest of ``agent.lc``.
 - The vec0 table is partitioned by ``channel_id`` so KNN never crosses chats.
 - Embeddings: the same local model used by the user-memory RAG
   (``agent.lc.embeddings`` — HuggingFaceEmbeddings all-MiniLM-L6-v2).

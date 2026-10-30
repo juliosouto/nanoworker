@@ -121,7 +121,6 @@ def build_system_prompt(
     ide_prompt=None,
     native_structured=None,
     models_to_try=None,
-    message_query: str = "",
 ) -> str:
     """
     Builds the complete system prompt with all rules, memory, and JSON schema.
@@ -140,8 +139,6 @@ def build_system_prompt(
         models_to_try (list, optional): Ordered list of model names to try. Used by the
             auto-detect of `native_structured` to resolve the real provider instead of
             assuming the gemini default.
-        message_query (str, optional): The current user message text, used as the
-            retrieval query for the RAG memory retriever (Fase 2).
 
     Returns:
         str: The fully assembled system prompt.
@@ -171,7 +168,6 @@ def build_system_prompt(
             ide_prompt=ide_prompt,
             native_structured=bool(native_structured),
             models_to_try=models_to_try,
-            message_query=message_query,
         )
 
     # 1. Base prompt
@@ -205,10 +201,8 @@ def build_system_prompt(
     else:
         system_prompt = schema_prompt
 
-    # 7. User memory: top-k relevant to the message (LC_MEMORY_TOP_K), with
-    # the full list as fallback when embeddings or the index are unavailable.
-    from agent.lc import memory_rag
-    memory_block = memory_rag.get_memory_block(cursor, query=message_query)
+    # 7. User memory: every entry, always (fixed, mandatory instructions).
+    memory_block = _fetch_user_memory(cursor)
     if memory_block:
         if system_prompt:
             system_prompt = f"{system_prompt}\n\n{memory_block}"

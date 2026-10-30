@@ -82,14 +82,32 @@ class TestBuildSystemPrompt:
     def test_memory_appended(self, mocker):
         mocker.patch("agent.prompt_builder.get_config", return_value="false")
         mocker.patch("agent.prompt_builder.get_ide_config", return_value=None)
-        # Fase 2: the legacy _fetch_user_memory was replaced by the RAG
-        # retriever, so patch the new entry point instead.
+        # User memories are mandatory: every entry is injected, no RAG.
         mocker.patch(
-            "agent.lc.memory_rag.get_memory_block",
+            "agent.prompt_builder._fetch_user_memory",
             return_value="User Memory / Persistent Instructions:\n[ID: 1] Always reply in PT-BR.",
         )
         out = build_system_prompt(cursor=mocker.MagicMock(), native_structured=True)
         assert "Always reply in PT-BR." in out
+
+    def test_all_user_memories_are_always_injected(self, mocker):
+        # User memories are fixed, mandatory instructions: every entry goes
+        # into every prompt, however many there are.
+        import database
+
+        mocker.patch("agent.prompt_builder.get_config", return_value="false")
+        mocker.patch("agent.prompt_builder.get_ide_config", return_value=None)
+        database.init_db()
+        instructions = [f"Mandatory rule number {i}" for i in range(12)]
+        for text in instructions:
+            database.add_user_memory(text)
+        conn = database.get_db()
+        try:
+            out = build_system_prompt(cursor=conn.cursor(), native_structured=True)
+        finally:
+            conn.close()
+        for text in instructions:
+            assert text in out
 
     def test_image_rules_applied(self, mocker):
         self._patch(mocker)

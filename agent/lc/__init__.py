@@ -3,8 +3,7 @@
 Módulos desta fase:
     - settings: flags centralizadas da integração (LLM_STACK, LC_*)
     - tokens: contagem real de tokens (tiktoken) com fallback legado
-    - embeddings: resolvedor de embeddings (Gemini/OpenAI)
-    - memory_rag: retriever semântico de user_memory (FAISS)
+    - embeddings: embeddings locais (HuggingFace all-MiniLM-L6-v2)
     - tools_lc / outputs / prompts: suporte de tools, structured output, prompts
     - models / runner / cache: stack de execução LangChain (Fase 5)
 
@@ -20,7 +19,6 @@ from agent.lc.settings import (
     cache_enabled,
     cache_path,
     keep_recent_messages,
-    memory_top_k,
     stack_enabled,
     structured_output_mode,
     summarizer_model,
@@ -50,7 +48,6 @@ _LAZY_EXPORTS = {
 __all__ = [
     "stack_enabled",
     "token_counter_mode",
-    "memory_top_k",
     "tool_result_max_chars",
     "tool_compact_schema",
     "keep_recent_messages",

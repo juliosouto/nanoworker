@@ -11,7 +11,6 @@ Keys:
                            for one release).
     LC_TOKEN_COUNTER       'tiktoken' (default, real BPE counting) | 'heuristic'
                            'heuristic' restores the legacy 1 token ~= 4 chars math.
-    LC_MEMORY_TOP_K        int (default 5)      - phase 2: RAG memories injected.
     LC_TOOL_RESULT_MAX_CHARS int (default 6000) - phase 4: tool result cap.
     LC_TOOL_COMPACT_SCHEMA 'on' (default) | 'off' - phase 4: use compact tool
                            schemas (first-line descriptions; biggest win in the
@@ -155,11 +154,6 @@ def tool_relevance_filter() -> bool:
         "TOOL_RELEVANCE_FILTER", "true"
     )
     return str(raw).strip().lower() == "true"
-
-
-def memory_top_k() -> int:
-    """How many user memories are injected via RAG (phase 2)."""
-    return _cfg_int("LC_MEMORY_TOP_K", 5, 1)
 
 
 def tool_result_max_chars() -> int:

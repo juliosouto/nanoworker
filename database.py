@@ -273,14 +273,6 @@ def add_user_memory(instruction: str) -> int:
     inserted_id = cursor.lastrowid
     conn.close()
 
-    try:
-        from agent.lc import memory_rag
-
-        retriever = memory_rag.MemoryRetriever()
-        retriever.upsert(inserted_id, instruction)
-    except Exception:
-        pass  # index failure must never break the DB write
-
     return inserted_id
 
 def get_all_user_memories() -> list:
@@ -342,14 +334,6 @@ def delete_user_memory(memory_id: int) -> bool:
     success = cursor.rowcount > 0
     conn.close()
 
-    try:
-        from agent.lc import memory_rag
-
-        retriever = memory_rag.MemoryRetriever()
-        retriever.remove(memory_id)
-    except Exception:
-        pass  # index failure must never break the DB write
-
     return success
 
 def update_user_memory(memory_id: int, instruction: str) -> bool:
@@ -369,14 +353,6 @@ def update_user_memory(memory_id: int, instruction: str) -> bool:
     conn.commit()
     success = cursor.rowcount > 0
     conn.close()
-
-    try:
-        from agent.lc import memory_rag
-
-        retriever = memory_rag.MemoryRetriever()
-        retriever.upsert(memory_id, instruction)
-    except Exception:
-        pass  # index failure must never break the DB write
 
     return success
 
@@ -1333,7 +1309,7 @@ def get_history_vec_dims(default: int = 768) -> int:
     """Dimensão dos vetores de message_history_vec.
 
     Resolução: env NW_HISTORY_VEC_DIMS (testes/deploys) > mapa do provider de
-    embeddings (local all-MiniLM-L6-v2 = 384 — mesmo mapa de agent.lc.memory_rag).
+    embeddings local (all-MiniLM-L6-v2 = 384, agent.lc.embeddings.LOCAL_DIMS).
     """
     env = os.environ.get('NW_HISTORY_VEC_DIMS')
     if env:
@@ -1342,9 +1318,8 @@ def get_history_vec_dims(default: int = 768) -> int:
         except (TypeError, ValueError):
             pass
     try:
-        from agent.lc.memory_rag import _EMBEDDING_DIMS
-        from agent.lc.embeddings import get_embeddings_provider
-        return _EMBEDDING_DIMS.get(get_embeddings_provider(), default)
+        from agent.lc.embeddings import LOCAL_DIMS
+        return LOCAL_DIMS
     except Exception:
         return default
 

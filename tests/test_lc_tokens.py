@@ -166,7 +166,7 @@ class TestSettings:
     def test_cfg_returns_default_when_db_unavailable(self, mocker):
         mocker.patch("database.get_config", side_effect=RuntimeError("no db"))
         assert lc_settings._cfg("ANY_KEY", "fallback") == "fallback"
-        assert lc_settings.memory_top_k() == 5  # still degrades safely
+        assert lc_settings.tool_result_max_chars() == 6000  # still degrades safely
 
     def test_token_counter_mode_env_override(self, monkeypatch):
         monkeypatch.setenv("LC_TOKEN_COUNTER", "heuristic")
@@ -181,39 +181,32 @@ class TestSettings:
         assert lc_settings.token_counter_mode() == "tiktoken"
 
     def test_numeric_settings_defaults(self, monkeypatch):
-        monkeypatch.delenv("LC_MEMORY_TOP_K", raising=False)
         monkeypatch.delenv("LC_TOOL_RESULT_MAX_CHARS", raising=False)
         monkeypatch.delenv("LC_KEEP_RECENT_MSGS", raising=False)
-        assert lc_settings.memory_top_k() == 5
         assert lc_settings.tool_result_max_chars() == 6000
         assert lc_settings.keep_recent_messages() == 8
 
     def test_numeric_settings_from_db(self, mocker):
         values = {
-            "LC_MEMORY_TOP_K": "3",
             "LC_TOOL_RESULT_MAX_CHARS": "1000",
             "LC_KEEP_RECENT_MSGS": "12",
         }
         mocker.patch("database.get_config", side_effect=lambda k, d=None: values.get(k, d))
-        assert lc_settings.memory_top_k() == 3
         assert lc_settings.tool_result_max_chars() == 1000
         assert lc_settings.keep_recent_messages() == 12
 
     def test_numeric_settings_invalid_fall_back_to_default(self, mocker):
         mocker.patch("database.get_config", return_value="not-a-number")
-        assert lc_settings.memory_top_k() == 5
         assert lc_settings.tool_result_max_chars() == 6000
         assert lc_settings.keep_recent_messages() == 8
 
     def test_numeric_settings_env_override_wins(self, monkeypatch, mocker):
-        monkeypatch.setenv("LC_MEMORY_TOP_K", "9")
+        monkeypatch.setenv("LC_TOOL_RESULT_MAX_CHARS", "9")
         mocker.patch("database.get_config", return_value="2")
-        assert lc_settings.memory_top_k() == 9
+        assert lc_settings.tool_result_max_chars() == 9
 
     def test_numeric_settings_below_minimum_clamped(self, monkeypatch):
-        monkeypatch.setenv("LC_MEMORY_TOP_K", "0")
         monkeypatch.setenv("LC_TOOL_RESULT_MAX_CHARS", "-5")
-        assert lc_settings.memory_top_k() == 1
         assert lc_settings.tool_result_max_chars() == 0
 
 

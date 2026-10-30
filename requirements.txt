@@ -46,7 +46,6 @@ langchain-openai>=1.7,<2
 langchain-google-genai>=4.4,<5
 langchain-groq>=1.1,<2
 langchain-community>=0.4,<1
-faiss-cpu
 tiktoken>=0.14
 
 # Vector search in SQLite (message_history_vec). Loaded as a runtime extension

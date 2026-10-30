@@ -42,15 +42,12 @@ def _embeddings_isolation(monkeypatch):
     """
     from langchain_core.embeddings import FakeEmbeddings
 
-    import agent.lc.memory_rag as m
     import agent.lc.embeddings as e
 
     def fn():
         return FakeEmbeddings(size=8, seed=42)
 
-    monkeypatch.setattr(m, "get_embeddings", fn)
     monkeypatch.setattr(e, "get_embeddings", fn)
-    monkeypatch.setattr(m, "embeddings_available", lambda: True)
     monkeypatch.setattr(e, "embeddings_available", lambda: True)
 
 @pytest.fixture(autouse=True)
