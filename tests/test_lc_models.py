@@ -197,6 +197,26 @@ class TestOllamaModel(unittest.TestCase):
         self.assertEqual(m.model_name, "phi")
 
 
+class TestRoutingPrefixStripped(unittest.TestCase):
+    """openrouter/ and nvidia/ are routing prefixes the APIs reject."""
+
+    def test_openrouter_prefix_stripped(self):
+        m = make_chat_model(
+            "openrouter/nvidia/nemotron-3.5-super-vl:free", provider="openrouter", api_key="k"
+        )
+        self.assertEqual(m.model_name, "nvidia/nemotron-3.5-super-vl:free")
+        self.assertEqual(m.openai_api_base, "https://openrouter.ai/api/v1")
+
+    def test_openrouter_unprefixed_name_kept(self):
+        m = make_chat_model("meta-llama/llama-3.3-70b:free", provider="openrouter", api_key="k")
+        self.assertEqual(m.model_name, "meta-llama/llama-3.3-70b:free")
+
+    def test_nvidia_prefix_stripped(self):
+        m = make_chat_model("nvidia/qwen/qwen3-coder", provider=None, api_key="k")
+        self.assertEqual(m.model_name, "qwen/qwen3-coder")
+        self.assertEqual(m.openai_api_base, "https://integrate.api.nvidia.com/v1")
+
+
 class TestCloudflareModel(unittest.TestCase):
     """cloudflare → ChatOpenAI with the dynamic Workers AI base URL."""
 

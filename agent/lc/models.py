@@ -31,6 +31,12 @@ PROVIDER_BASE_URLS = {
     "nvidia": "https://integrate.api.nvidia.com/v1",
 }
 
+# Routing prefixes removed from the model name before calling the API.
+_STRIPPED_MODEL_PREFIXES = {
+    "openrouter": "openrouter/",
+    "nvidia": "nvidia/",
+}
+
 # Default temperature per provider family (parity with build_config_kwargs and
 # the call_*_llm providers: Gemini keeps 2.0, OpenAI-compatible uses 1.0).
 _GEMINI_DEFAULT_TEMPERATURE = 2.0
@@ -217,6 +223,13 @@ def _make_openai_compat(
         raise ValueError(f"API Key for {provider} model is not set.")
 
     from langchain_openai import ChatOpenAI
+
+    # Strip the routing prefix the API does not know (parity with
+    # call_openrouter_llm / call_nvidia_llm), e.g.
+    # "openrouter/nvidia/nemotron-..." -> "nvidia/nemotron-...".
+    prefix = _STRIPPED_MODEL_PREFIXES.get(provider)
+    if prefix and model_name.lower().startswith(prefix):
+        model_name = model_name[len(prefix):]
 
     kwargs = {
         "model": model_name,
