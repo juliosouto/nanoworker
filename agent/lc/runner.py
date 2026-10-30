@@ -25,6 +25,7 @@ from typing import Optional
 
 from agent.lc import cache as lc_cache
 from agent.lc import models as lc_models
+from agent.lc import settings as lc_settings
 from agent.lc.tools_lc import build_lc_tools
 from agent.stop_check import StopRequestedError, is_stop_requested, sleep_interruptible
 from langchain_core.callbacks import BaseCallbackHandler
@@ -56,6 +57,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         self.usage_input_tokens = 0
         self.usage_output_tokens = 0
         self.usage_calls = 0
+        self.tool_calls = 0
 
     # -- helpers ---------------------------------------------------------
     def _feedback(self, text: str) -> None:
@@ -72,10 +74,13 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         # the whole agent loop to finish.
         if is_stop_requested():
             raise StopRequestedError()
+        self.tool_calls += 1
+        logger.info("LangChain agent tool call: %s(%s)", name, str(input_str)[:300])
         self._feedback(f"⚙️ Executing local tool: {name}...")
 
     def on_tool_end(self, output, **kwargs) -> None:
         name = kwargs.get("name") or "tool"
+        logger.info("LangChain agent tool result: %s -> %s", name, str(output)[:300])
         msg = f"⚙️ Executed tools: {name}\nResults:\n- {output}"
         self._feedback(msg)
         if self._on_complete and self._show_tools_results:
@@ -89,6 +94,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         # inside a tool must keep propagating (never swallow it here).
         if isinstance(error, StopRequestedError):
             raise error
+        logger.warning("LangChain agent tool error: %s", error)
 
     def on_llm_end(self, response, **kwargs) -> None:
         # Fase 6: accumulate usage_metadata from every model call of this turn.
@@ -167,6 +173,45 @@ def _role_to_message(role, text, human_cls, ai_cls):
         return ai_cls(content=text)
     return human_cls(content=text)
 
+
+
+# Output AgentExecutor returns when max_iterations is reached ("force" is the
+# only early-stopping method tool-calling agents support).
+_STOPPED_OUTPUT = "Agent stopped due to max iterations."
+
+
+def _steps_to_text(steps) -> str:
+    """Render the executor's intermediate steps as plain text."""
+    lines = []
+    for action, observation in steps or []:
+        tool = getattr(action, "tool", "tool")
+        tool_input = getattr(action, "tool_input", "")
+        lines.append(f"- {tool}({tool_input}) -> {str(observation)[:2000]}")
+    return "\n".join(lines)
+
+
+def _answer_after_limit(model, system_message, payload, steps, config):
+    """Ask the model, without tools, for a final answer from the steps so far.
+
+    Used when the agent hits max_iterations, so the user gets the work done
+    up to that point instead of the bare stop message.
+    """
+    from langchain_core.messages import HumanMessage
+
+    messages = [system_message, *payload.get("chat_history", [])]
+    messages.append(HumanMessage(content=payload.get("input", "")))
+    messages.append(
+        HumanMessage(
+            content=(
+                "The step limit for tool calls was reached. Tool calls made so far:\n"
+                f"{_steps_to_text(steps)}\n\n"
+                "Do not call any more tools. Answer the request with what these "
+                "results show, and say what is left undone, if anything."
+            )
+        )
+    )
+    message = model.invoke(messages, config=config)
+    return _content_to_text(getattr(message, "content", message))
 
 
 def _build_structured_kwargs(config_kwargs: dict, has_tools: bool) -> dict:
@@ -288,8 +333,6 @@ def run_langchain_llm(
     it transparently. Returns the agent's final text (parsed upstream by
     ``parse_agent_response`` in the autonomous loop).
     """
-    from database import get_config
-
     from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
     from langchain_core.prompts import (
         ChatPromptTemplate,
@@ -343,10 +386,7 @@ def run_langchain_llm(
         ]
     )
 
-    try:
-        max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
-    except Exception:
-        max_iterations = 10
+    max_iterations = lc_settings.agent_max_iterations()
 
     callback = FeedbackCallbackHandler(
         cursor, table, session_id, message_in_id, show_tools_results, on_complete
@@ -363,6 +403,7 @@ def run_langchain_llm(
             tools=lc_tools,
             max_iterations=max_iterations,
             handle_parsing_errors=True,
+            return_intermediate_steps=True,
         )
     else:
         # No tools: skip the tool-calling agent machinery entirely (which would
@@ -381,6 +422,26 @@ def run_langchain_llm(
     result = _invoke_with_retry(
         executor, payload, callback, cursor, table, session_id, message_in_id, on_complete
     )
+    output = result.get("output", "")
+    if has_tools:
+        logger.info(
+            "LangChain agent finished: %d tool call(s), max_iterations=%d",
+            callback.tool_calls, max_iterations,
+        )
+    if has_tools and output == _STOPPED_OUTPUT:
+        logger.warning(
+            "LangChain agent hit max_iterations=%d; generating a final answer",
+            max_iterations,
+        )
+        try:
+            output = _answer_after_limit(
+                model, system_message, payload,
+                result.get("intermediate_steps"), {"callbacks": [callback]},
+            )
+        except StopRequestedError:
+            raise
+        except Exception as e:
+            logger.warning("Final answer after max_iterations failed: %s", e)
     # Fase 6: one usage row per agent turn (iterations + retries already
     # summed by the callback). log_llm_usage is fail-safe by contract, so a
     # missing llm_usage table on old databases never breaks the turn.
@@ -401,5 +462,5 @@ def run_langchain_llm(
     # AgentExecutor passes the final message content through as-is; newer
     # chat models (e.g. langchain-google-genai) return a list of content
     # blocks instead of a string, so normalize before returning.
-    return _content_to_text(result.get("output", ""))
+    return _content_to_text(output)
 

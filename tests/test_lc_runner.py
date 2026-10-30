@@ -266,6 +266,46 @@ class TestRunnerToolCalling(unittest.TestCase):
             )
 
 
+class TestRunnerIterationLimit(unittest.TestCase):
+    """The agent step limit is LC_AGENT_MAX_ITERATIONS, not AUTONOMOUS_MODE."""
+
+    def _run(self, scripted, limit=None):
+        patches = [_patch_model(scripted), _patch_config(autonomous_mode="1"),
+                   patch("agent.db_feedback.insert_feedback", lambda *a, **k: None)]
+        if limit is not None:
+            patches.append(patch.object(runner.lc_settings, "agent_max_iterations",
+                                        return_value=limit))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return runner.run_langchain_llm(
+            "gpt-4o", [], {"system_instruction": "sys", "tools": [echo_tool]},
+            "query", None, "sid", "mid", "messages_out",
+            provider="openai", api_key="k",
+        )
+
+    def _tool_call(self, call_id):
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": "echo_tool", "args": {"x": "hi"}, "id": call_id}],
+        )
+
+    def test_autonomous_mode_one_still_answers_after_a_tool(self):
+        scripted = ScriptedToolCallingModel(
+            responses=[self._tool_call("1"), AIMessage(content="DONE")]
+        )
+        self.assertEqual(self._run(scripted), "DONE")
+
+    def test_final_answer_generated_when_limit_is_hit(self):
+        scripted = ScriptedToolCallingModel(
+            responses=[self._tool_call("1"), self._tool_call("2"),
+                       AIMessage(content="SUMMARY")]
+        )
+        out = self._run(scripted, limit=2)
+        self.assertEqual(out, "SUMMARY")
+        self.assertNotIn("max iterations", out)
+
+
 class TestRunnerStop(unittest.TestCase):
     """/stop propagation: a StopRequestedError inside a tool bubbles out intact."""
 
