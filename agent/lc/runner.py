@@ -183,12 +183,14 @@ def _media_blocks(content, is_gemini: bool, image_input: Optional[bool]):
     return blocks, skipped
 
 
-def _history_to_lc_messages(history):
+def _history_to_lc_messages(history, is_gemini: bool = False,
+                            image_input: Optional[bool] = None):
     """Convert Gemini-style history into LangChain chat messages.
 
     Accepts genai ``types.Content`` objects (role 'user'/'model') and, defensively,
-    OpenAI-style dicts ({'role': ..., 'content': ...}). Text parts only; images
-    are dropped so the tool-calling agent keeps a clean text transcript.
+    OpenAI-style dicts ({'role': ..., 'content': ...}). Images and files of
+    user turns are kept under the same rules as the current message (see
+    ``_media_blocks``), like the legacy Gemini loop that resent them.
     """
     from langchain_core.messages import AIMessage, HumanMessage
 
@@ -196,6 +198,7 @@ def _history_to_lc_messages(history):
     for msg in history or []:
         role = getattr(msg, "role", None)
         parts = getattr(msg, "parts", None)
+        media = []
         if role is None and isinstance(msg, dict):
             role = msg.get("role")
             text = msg.get("content", "")
@@ -206,9 +209,14 @@ def _history_to_lc_messages(history):
             # label at the start of its own line.
             text_parts = [p.text for p in parts if getattr(p, "text", None)]
             parts_text = "\n\n".join(text_parts)
+            if role not in ("model", "assistant"):
+                media, _ = _media_blocks(list(parts), is_gemini, image_input)
         else:
             continue
-        if parts_text:
+        if media:
+            blocks = [{"type": "text", "text": parts_text}] if parts_text else []
+            messages.append(HumanMessage(content=blocks + media))
+        elif parts_text:
             messages.append(_role_to_message(role, parts_text, HumanMessage, AIMessage))
     return messages
 
@@ -445,7 +453,7 @@ def run_langchain_llm(
         # history turn is merged into it upstream); a blank line keeps each
         # "[Message from: ...]" label at the start of its own line.
         "input": _content_to_text(content, sep="\n\n"),
-        "chat_history": _history_to_lc_messages(history),
+        "chat_history": _history_to_lc_messages(history, is_gemini, image_input),
     }
     # Images and files of the current message go in a second human message
     # right after the text (history stays text-only).

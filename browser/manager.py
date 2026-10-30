@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import threading
 import time
@@ -198,17 +199,64 @@ def _resolve_mobile_device(device_name: str):
     return None
 
 
+def _browser_pool_size() -> int:
+    """How many Chromium workers may run (BROWSER_POOL_SIZE, default 2).
+
+    Each worker is a full Chromium with its own thread; Playwright objects
+    only work on the thread that created them, so one worker runs one action
+    at a time. More workers let browser actions of different sessions run in
+    parallel, at about 200 MB of RAM each.
+    """
+    try:
+        return max(1, int(os.environ.get("BROWSER_POOL_SIZE", "2")))
+    except ValueError:
+        return 2
+
+
 class GlobalBrowser:
-    """Singleton for the Playwright Chromium instance, running in a dedicated thread"""
+    """A Playwright Chromium instance running in a dedicated thread.
+
+    ``get_instance`` returns the primary worker; ``acquire`` hands each
+    session the least busy worker of the pool, starting a new one while the
+    pool is below BROWSER_POOL_SIZE.
+    """
     _instance = None
     _lock = threading.Lock()
-    
+    _pool_lock = threading.Lock()
+    _extra = []
+    _assigned = {}
+
     @classmethod
     def get_instance(cls):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls()
             return cls._instance
+
+    @classmethod
+    def acquire(cls):
+        """The worker a new session should use (counted until ``release``)."""
+        primary = cls.get_instance()
+        with cls._pool_lock:
+            workers = [primary] + cls._extra
+
+            def load(worker):
+                return cls._assigned.get(id(worker), 0)
+
+            best = min(workers, key=load)
+            if load(best) > 0 and len(workers) < _browser_pool_size():
+                best = cls()
+                cls._extra.append(best)
+            cls._assigned[id(best)] = load(best) + 1
+            return best
+
+    @classmethod
+    def release(cls, worker):
+        """Marks one session of ``worker`` as closed."""
+        with cls._pool_lock:
+            count = cls._assigned.get(id(worker), 0)
+            if count > 0:
+                cls._assigned[id(worker)] = count - 1
             
     def __init__(self):
         self.task_queue = queue.Queue()
@@ -281,6 +329,9 @@ class BrowserManager:
         self.context = None
         self.page = None
         self.last_activity = time.time()
+        # The Chromium worker this session runs on; every action of the
+        # session goes to this worker's thread.
+        self._browser = GlobalBrowser.acquire()
         self.relaunch_custom_config()
 
     def update_activity(self):
@@ -291,7 +342,7 @@ class BrowserManager:
         Configura e inicializa um context e page. O browser pesado é compartilhado.
         Se já houver um context aberto, ele será fechado e reiniciado.
         """
-        global_browser = GlobalBrowser.get_instance()
+        global_browser = self._browser
 
         def _task():
             if self.context:
@@ -343,7 +394,7 @@ class BrowserManager:
                 return f"Navigated to {url}"
             except Exception as e:
                 return f"Error navigating to {url}: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def navigate_mobile(self, url, device_name="iPhone 13"):
         """Navega até uma URL emulando um dispositivo móvel (smartphone).
@@ -357,7 +408,7 @@ class BrowserManager:
         de uma task), mesmo padrão usado por record_navigation().
         """
         self.update_activity()
-        global_browser = GlobalBrowser.get_instance()
+        global_browser = self._browser
 
         def _task():
             device_options = _resolve_mobile_device(device_name)
@@ -450,7 +501,7 @@ class BrowserManager:
                 return res
             except Exception as e:
                 return f"Error generating snapshot: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def click(self, ref_id):
         self.update_activity()
@@ -463,7 +514,7 @@ class BrowserManager:
                 return f"Clicked on {ref_id}"
             except Exception as e:
                 return f"Error clicking {ref_id}: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def fill(self, ref_id, text):
         self.update_activity()
@@ -475,7 +526,7 @@ class BrowserManager:
                 return f"Filled {ref_id} with '{text}'"
             except Exception as e:
                 return f"Error filling {ref_id}: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def extract(self, ref_id, property_name):
         self.update_activity()
@@ -491,7 +542,7 @@ class BrowserManager:
                     return element.get_attribute(property_name)
             except Exception as e:
                 return f"Error extracting {property_name} from {ref_id}: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def run_js(self, script):
         self.update_activity()
@@ -501,7 +552,7 @@ class BrowserManager:
                 return str(res)
             except Exception as e:
                 return f"Error executing JS: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def take_screenshot(self, path):
         self.update_activity()
@@ -511,7 +562,7 @@ class BrowserManager:
                 return f"Screenshot saved to {path}"
             except Exception as e:
                 return f"Error taking screenshot: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def scroll(self, magnitude):
         self.update_activity()
@@ -522,7 +573,7 @@ class BrowserManager:
                 return f"Scrolled by {magnitude} pixels"
             except Exception as e:
                 return f"Error scrolling: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def save_as_pdf(self, path):
         self.update_activity()
@@ -532,7 +583,7 @@ class BrowserManager:
                 return f"PDF saved to {path}"
             except Exception as e:
                 return f"Error saving PDF: {e}"
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def record_navigation(self, url: str, duration_seconds: int = 5, output_path: str = None) -> str:
         """
@@ -545,7 +596,7 @@ class BrowserManager:
         from utils.file_utils import get_temp_file_path
 
         self.update_activity()
-        global_browser = GlobalBrowser.get_instance()
+        global_browser = self._browser
         final_video_path = output_path or get_temp_file_path("browser_recording.webm")
 
         def _task():
@@ -620,19 +671,19 @@ class BrowserManager:
         self.update_activity()
         def _task():
             return self.context.cookies()
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def add_cookies(self, cookies):
         self.update_activity()
         def _task():
             self.context.add_cookies(cookies)
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def save_state(self, path):
         self.update_activity()
         def _task():
             self.context.storage_state(path=path)
-        return GlobalBrowser.get_instance().submit_task(_task).result()
+        return self._browser.submit_task(_task).result()
 
     def close(self):
         def _task():
@@ -647,9 +698,13 @@ class BrowserManager:
                 self.page = None
                 self.context = None
         try:
-            GlobalBrowser.get_instance().submit_task(_task).result()
+            self._browser.submit_task(_task).result()
         except Exception:
             pass
+        finally:
+            if not getattr(self, "_released", False):
+                self._released = True
+                GlobalBrowser.release(self._browser)
 
 
 # --- Gerenciamento Centralizado de Sessões ---

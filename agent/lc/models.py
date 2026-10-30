@@ -70,7 +70,7 @@ def resolve_provider(
            whose last path segment overlaps other providers' prefixes, e.g.
            ``nvidia/qwen/...`` or ``nvidia/openai/...``), then the Cloudflare
            Workers AI prefixes (``@cf/``/``@hf/``), then qwen/groq/openai/
-           ollama/openrouter;
+           ollama/openrouter/deepseek;
         3. ``default`` ('gemini' unless the caller overrides it — e.g.
            ``lc.outputs`` passes ``None`` to express "no native branch").
 
@@ -107,6 +107,8 @@ def resolve_provider(
         return "ollama"
     if lower.startswith("openrouter/"):
         return "openrouter"
+    if lower.startswith("deepseek/"):
+        return "deepseek"
     return default
 
 

@@ -10,15 +10,28 @@ from utils.setup_utils import (
     setup_whatsapp_config, setup_workers_config, setup_tools_config
 )
 
-def test_backup_database(mocker):
-    # Mock shutil.copy2 to avoid actually copying files
-    mock_copy2 = mocker.patch('utils.setup_utils.shutil.copy2')
-    
-    backup_path = backup_database()
-    
+def test_backup_database(mock_db_path, tmp_path):
+    import sqlite3
+
+    database.init_db()
+    database.set_config("BACKUP_PROBE", "kept")
+
+    backup_path = backup_database(backup_dir=str(tmp_path / "backups"))
+
     assert backup_path.endswith('.db')
-    assert 'bin/backups' in backup_path.replace('\\', '/')
-    mock_copy2.assert_called_once()
+    # The backup holds the latest writes, even in WAL mode.
+    conn = sqlite3.connect(backup_path)
+    value = conn.execute("SELECT value FROM app_config WHERE key = 'BACKUP_PROBE'").fetchone()
+    conn.close()
+    assert value is not None
+
+
+def test_database_uses_wal(mock_db_path):
+    database.init_db()
+    conn = database.get_db()
+    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    conn.close()
+    assert mode == "wal"
 
 def test_setup_app_config(mock_db_path):
     database.init_db()

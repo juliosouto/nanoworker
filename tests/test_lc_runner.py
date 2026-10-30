@@ -335,6 +335,18 @@ class TestRunnerMedia(unittest.TestCase):
         self.assertEqual(blocks, [])
         self.assertEqual(skipped, ["image/png"])
 
+    def test_history_images_follow_the_same_rules(self):
+        turn = gt.Content(role="user", parts=[self.IMG, gt.Part.from_text(text="olha essa foto")])
+        reply = gt.Content(role="model", parts=[gt.Part.from_text(text="Bonita!")])
+
+        gemini = runner._history_to_lc_messages([turn, reply], is_gemini=True)
+        self.assertEqual(gemini[0].content[0], {"type": "text", "text": "olha essa foto"})
+        self.assertEqual(gemini[0].content[1]["type"], "media")
+        self.assertEqual(gemini[1].content, "Bonita!")
+
+        no_vision = runner._history_to_lc_messages([turn], is_gemini=False, image_input=False)
+        self.assertEqual(no_vision[0].content, "olha essa foto")
+
     def _run(self, content, provider, image_input=None):
         from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
@@ -697,6 +709,51 @@ class TestRouteBranch(unittest.TestCase):
         kwargs = lc.call_args.kwargs
         self.assertEqual(kwargs.get("provider"), "openai")
         self.assertEqual(kwargs.get("api_key"), "k")
+
+
+class TestFallbackPromptContract(unittest.TestCase):
+    """A fallback model gets the JSON contract the first model did not need."""
+
+    def test_contract_added_once(self):
+        from agent import llm_router
+
+        with patch("database.get_config", return_value="false"):
+            once = llm_router._with_prompt_contract("SYS")
+            twice = llm_router._with_prompt_contract(once)
+        self.assertIn("SYS", once)
+        self.assertIn("You MUST output your final response as a valid JSON object", once)
+        self.assertEqual(once, twice)
+
+    def _route(self, provider):
+        from agent import llm_router
+
+        def fake_get_db():
+            conn = MagicMock()
+            cur = conn.cursor()
+            cur.fetchone.return_value = {
+                "provider": provider, "api_key": "k", "thinking": 0,
+                "context_window": None, "max_output_tokens": None,
+            }
+            conn.cursor.return_value = cur
+            return conn
+
+        with patch("agent.llm_router.lc_settings.stack_enabled", return_value=True), \
+             patch("database.get_db", fake_get_db), \
+             patch("database.decrypt_value", return_value="k"), \
+             patch("database.get_config", side_effect=lambda k, d=None: d), \
+             patch("agent.lc.runner.run_langchain_llm", return_value="OUT") as lc:
+            llm_router.route_llm_call(
+                "some-model", [], {"system_instruction": "SYS"}, "q",
+                None, "sid", "mid", is_ide=False,
+            )
+        return lc.call_args.args[2]["system_instruction"]
+
+    def test_fallback_without_native_schema_gets_the_contract(self):
+        self.assertIn("valid JSON object", self._route("nvidia"))
+
+    def test_native_schema_model_keeps_the_prompt(self):
+        with patch("agent.lc.outputs.structured_output_enabled", return_value=True):
+            self.assertEqual(self._route("openai"), "SYS")
 
 
 class TestRunnerUsage(unittest.TestCase):

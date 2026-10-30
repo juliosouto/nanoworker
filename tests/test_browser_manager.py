@@ -214,3 +214,47 @@ def test_record_navigation_error(mock_playwright):
     assert "Error recording browser video" in res
 
 
+
+
+@pytest.fixture
+def pool_of_two(monkeypatch):
+    monkeypatch.setenv("BROWSER_POOL_SIZE", "2")
+    GlobalBrowser._extra = []
+    GlobalBrowser._assigned = {}
+    yield
+    GlobalBrowser._extra = []
+    GlobalBrowser._assigned = {}
+
+
+@patch('browser.manager.sync_playwright')
+def test_sessions_spread_over_the_pool(mock_playwright, pool_of_two):
+    a, b, c = BrowserManager(), BrowserManager(), BrowserManager()
+
+    assert a._browser is not b._browser
+    assert c._browser in (a._browser, b._browser)
+    assert len(GlobalBrowser._extra) == 1  # never more than the pool size
+
+    c.close()
+    a.close()
+    a.close()  # closing twice releases once
+    d = BrowserManager()
+    assert d._browser is a._browser
+
+
+@patch('browser.manager.sync_playwright')
+def test_two_sessions_browse_in_parallel(mock_playwright, pool_of_two):
+    import threading
+
+    a, b = BrowserManager(), BrowserManager()
+    for bm in (a, b):
+        bm.page = MagicMock()
+        bm.page.goto.side_effect = lambda *args, **kwargs: time.sleep(0.5)
+
+    start = time.monotonic()
+    threads = [threading.Thread(target=bm.navigate, args=("https://example.com",)) for bm in (a, b)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert time.monotonic() - start < 0.9  # one shared worker would take 1s

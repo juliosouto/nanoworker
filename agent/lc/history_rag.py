@@ -491,6 +491,8 @@ def format_history_context(results) -> str:
         who = payload.get("sender_name") or payload.get("sender_id") or (
             "bot" if payload.get("is_bot") else "?"
         )
+        if payload.get("is_bot") and who != "bot":
+            who = f"{who} (bot)"
         content = " ".join(str(payload.get("content") or "").split())
         lines.append(f"[{stamp} | {who}]: {content}")
     return "\n".join(lines)

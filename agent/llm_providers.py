@@ -378,6 +378,50 @@ def call_qwen_llm(
     )
 
 
+def call_deepseek_llm(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    table: str,
+    api_key: str = None,
+    on_complete=None,
+) -> str:
+    """
+    Makes a call to the DeepSeek API (OpenAI-compatible).
+
+    Arguments match call_qwen_llm. A "deepseek/" routing prefix is stripped
+    from the model name (the API knows "deepseek-chat", not
+    "deepseek/deepseek-chat").
+
+    Returns:
+        str: The generated response text.
+    """
+    import openai
+
+    if not api_key:
+        raise ValueError("API Key for DeepSeek model is not set.")
+
+    if model_name.lower().startswith("deepseek/"):
+        model_name = model_name[len("deepseek/"):]
+    client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    return execute_openai_compatible_llm(
+        client,
+        model_name,
+        history,
+        config_kwargs,
+        content,
+        cursor,
+        session_id,
+        message_in_id,
+        table,
+        on_complete=on_complete,
+    )
+
+
 def call_groq_llm(
     model_name: str,
     history: list,

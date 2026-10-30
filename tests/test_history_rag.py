@@ -384,6 +384,19 @@ def test_retrieve_skips_embedding_on_empty_channel(db, cluster_embeddings):
     assert cluster_embeddings.embed_query_calls >= 1
 
 
+def test_context_marks_bot_replies_with_the_worker_name():
+    from agent.lc.history_rag import format_history_context
+
+    out = format_history_context([
+        {"payload": {"content": "oi", "sender_name": "Rata", "is_bot": True,
+                     "msg_date": "2026-10-30", "msg_time": "10:00:00"}},
+        {"payload": {"content": "resposta antiga", "is_bot": True,
+                     "msg_date": "2026-10-30", "msg_time": "10:01:00"}},
+    ])
+    assert "[2026-10-30 10:00:00 | Rata (bot)]: oi" in out
+    assert "[2026-10-30 10:01:00 | bot]: resposta antiga" in out
+
+
 def test_rag_query_is_label_free(monkeypatch, db):
     """Regression: the retrieval query must be the mention-cleaned,
     label-free text — not the labeled user prompt."""

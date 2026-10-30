@@ -5,6 +5,12 @@ import sys
 # Add the project root to the python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Importing app would start the real WhatsApp worker, the sweeper and the
+# embeddings work against the real database; keep them off in tests.
+os.environ.setdefault("NW_START_WORKERS", "false")
+# One Chromium worker in tests: the browser tests mock the primary worker.
+os.environ.setdefault("BROWSER_POOL_SIZE", "1")
+
 from app import app as flask_app
 import database
 

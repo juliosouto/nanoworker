@@ -458,6 +458,14 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
+    # WAL: readers never block the writer and vice versa, so concurrent
+    # agents do not wait on each other's reads. The mode is stored in the
+    # database file, so setting it once here covers every connection.
+    try:
+        cursor.execute('PRAGMA journal_mode=WAL')
+    except sqlite3.OperationalError as exc:
+        logging.warning(f"Could not enable SQLite WAL mode: {exc}")
+
     # App Config Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS app_config (

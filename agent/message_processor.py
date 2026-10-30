@@ -354,6 +354,37 @@ def _resolve_models(worker) -> list:
     return models
 
 
+# Seconds process_message waits before answering, so rapid messages from one
+# user (e.g. several images) are answered together by the last one.
+_DEBOUNCE_SECONDS = 2
+
+
+def _superseded_by_newer_message(cursor, session_id, message_in_id, content) -> bool:
+    """True when a newer message makes this one redundant.
+
+    Only a newer message from the SAME sender to the SAME worker counts: it
+    answers this one too (this message is in its history). In a group the
+    session is shared by everyone, so a message from another person, or to
+    another worker, must never cancel this one.
+    """
+    cursor.execute('SELECT sender_id FROM messages_in WHERE id = ?', (message_in_id,))
+    row = cursor.fetchone()
+    sender_id = row['sender_id'] if row else None
+    cursor.execute(
+        'SELECT content, sender_id FROM messages_in WHERE session_id = ? '
+        'AND rowid > (SELECT rowid FROM messages_in WHERE id = ?)',
+        (session_id, message_in_id),
+    )
+    newer = [r for r in cursor.fetchall() if r['sender_id'] == sender_id]
+    if not newer:
+        return False
+    worker = (resolve_worker_from_content(content) or {}).get('worker_name')
+    return any(
+        (resolve_worker_from_content(r['content']) or {}).get('worker_name') == worker
+        for r in newer
+    )
+
+
 def process_message(message_in_id, session_id, content, on_complete=None):
     """
     Runs the LLM agent, providing it with tools and conversation history.
@@ -389,15 +420,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         return message_out_id, stop_response
 
     # Wait a bit to debounce multiple rapid messages (like multiple images from WhatsApp)
-    time.sleep(2)
+    time.sleep(_DEBOUNCE_SECONDS)
 
     conn = get_db()
     cursor = conn.cursor()
 
-    # Check if a newer message arrived while we slept
-    cursor.execute('SELECT id FROM messages_in WHERE session_id = ? AND rowid > (SELECT rowid FROM messages_in WHERE id = ?) LIMIT 1', (session_id, message_in_id))
-    newer = cursor.fetchone()
-    if newer:
+    # Check if a newer message of the same batch arrived while we slept
+    if _superseded_by_newer_message(cursor, session_id, message_in_id, original_content):
         cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
         conn.commit()
         conn.close()
