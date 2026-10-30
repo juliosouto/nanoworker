@@ -104,6 +104,32 @@ class TestRunnerNoTools(unittest.TestCase):
         # No tools configured → no ⚙️ feedback is emitted.
         self.assertEqual(feedback, [])
 
+    def test_list_of_content_blocks_output_is_normalized_to_text(self):
+        # langchain-google-genai returns AIMessage.content as a list of content
+        # blocks; the agent executor passes it through as "output". The runner
+        # must hand plain text upstream (parse_agent_response calls .strip()).
+        from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+        blocks = [
+            {"type": "text", "text": '{"response": "oi"}', "extras": {"signature": "x"}},
+        ]
+        with _patch_model(FakeListChatModel(responses=["unused"])), _patch_config(), patch(
+            "agent.lc.runner._invoke_with_retry", return_value={"output": blocks}
+        ):
+            out = runner.run_langchain_llm(
+                "gemini-3-flash-preview",
+                _history([("user", "hi")]),
+                {"system_instruction": "sys"},
+                "query",
+                None,
+                "sid",
+                "mid",
+                "messages_out",
+                provider="google",
+                api_key="k",
+            )
+        self.assertEqual(out, '{"response": "oi"}')
+
     def test_history_is_converted(self):
         # Verify the history → LangChain messages conversion directly (the chain
         # receives formatted prompt values, so inspect _history_to_lc_messages).

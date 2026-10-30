@@ -129,6 +129,8 @@ def _content_to_text(content) -> str:
             elif isinstance(p, dict) and p.get("text"):
                 text_parts.append(p["text"])
         return " ".join([t for t in text_parts if t])
+    if content is None:
+        return ""
     return str(content)
 
 
@@ -393,5 +395,8 @@ def run_langchain_llm(
             )
     except Exception:
         pass
-    return result.get("output", "")
+    # AgentExecutor passes the final message content through as-is; newer
+    # chat models (e.g. langchain-google-genai) return a list of content
+    # blocks instead of a string, so normalize before returning.
+    return _content_to_text(result.get("output", ""))
 
