@@ -1333,7 +1333,7 @@ def get_history_vec_dims(default: int = 768) -> int:
     """Dimensão dos vetores de message_history_vec.
 
     Resolução: env NW_HISTORY_VEC_DIMS (testes/deploys) > mapa do provider de
-    embeddings (gemini=768, openai=1536 — mesmo mapa de agent.lc.memory_rag).
+    embeddings (local all-MiniLM-L6-v2 = 384 — mesmo mapa de agent.lc.memory_rag).
     """
     env = os.environ.get('NW_HISTORY_VEC_DIMS')
     if env:

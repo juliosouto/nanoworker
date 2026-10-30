@@ -1,6 +1,6 @@
-"""Embedding provider resolution: the default is local (LangChain
-HuggingFaceEmbeddings on this machine, no API key); cloud providers are used
-only when explicitly selected, with the key the app already stores."""
+"""Embeddings are always local (LangChain HuggingFaceEmbeddings on this
+machine, no API key), whatever chat providers or LC_EMBEDDINGS_PROVIDER value
+are configured."""
 import importlib
 
 import pytest
@@ -34,41 +34,33 @@ def _add_llm_row(provider, api_key):
     conn.close()
 
 
-def test_default_provider_is_local_even_with_cloud_keys(ready_db):
-    _add_llm_row("gemini", "AIza-test-key")
+def test_provider_is_local_even_with_cloud_keys(ready_db):
+    _add_llm_row("Google", "AIza-test-key")
     _add_llm_row("openai", "sk-test")
     e = _real_embeddings_module()
     assert e.get_embeddings_provider() == "local"
 
 
+@pytest.mark.parametrize("value", ["gemini", "openai", "auto"])
+def test_cloud_setting_is_ignored(ready_db, monkeypatch, value):
+    from agent.lc import settings
+
+    set_config("LC_EMBEDDINGS_PROVIDER", value)
+    monkeypatch.setenv("LC_EMBEDDINGS_PROVIDER", value)
+    e = _real_embeddings_module()
+    assert settings.embeddings_provider() == "local"
+    assert e.get_embeddings_provider() == "local"
+    assert e.embeddings_model(value) == "all-MiniLM-L6-v2"
+
+
 def test_local_model_is_all_minilm(ready_db):
     e = _real_embeddings_module()
-    assert e.embeddings_model("local") == "all-MiniLM-L6-v2"
+    assert e.embeddings_model() == "all-MiniLM-L6-v2"
 
 
-def test_explicit_cloud_provider_uses_stored_key(ready_db):
-    _add_llm_row("gemini", "AIza-test-key")
+def test_get_embeddings_uses_huggingface_embeddings(ready_db, monkeypatch):
+    _add_llm_row("Google", "AIza-test-key")
     set_config("LC_EMBEDDINGS_PROVIDER", "gemini")
-    e = _real_embeddings_module()
-    assert e.get_embeddings_provider() == "gemini"
-    assert e._embedding_api_key("gemini") == "AIza-test-key"
-
-
-def test_gemini_falls_back_to_app_config_key(ready_db):
-    set_config("GEMINI_API_KEY", "AIza-config-key")
-    e = _real_embeddings_module()
-    assert e._embedding_api_key("gemini") == "AIza-config-key"
-
-
-def test_openai_key_only_from_openai_row(ready_db):
-    _add_llm_row("qwen", "qwen-key")
-    e = _real_embeddings_module()
-    assert e._embedding_api_key("openai") is None
-    _add_llm_row("openai", "sk-test")
-    assert e._embedding_api_key("openai") == "sk-test"
-
-
-def test_get_embeddings_local_uses_huggingface_embeddings(ready_db, monkeypatch):
     e = _real_embeddings_module()
     e.get_embeddings.__dict__.pop("_cache", None)
     calls = {}
@@ -77,33 +69,19 @@ def test_get_embeddings_local_uses_huggingface_embeddings(ready_db, monkeypatch)
         def __init__(self, **kwargs):
             calls.update(kwargs)
 
-    monkeypatch.setattr(e, "_embedding_class_by_provider", lambda provider: FakeHF)
+    monkeypatch.setattr(e, "_embedding_class", lambda: FakeHF)
     assert isinstance(e.get_embeddings(), FakeHF)
     assert calls == {"model_name": "all-MiniLM-L6-v2", "cache_folder": e.LOCAL_CACHE_DIR}
 
 
-def test_get_embeddings_cloud_builds_client_with_stored_key(ready_db, monkeypatch):
-    _add_llm_row("gemini", "AIza-test-key")
-    set_config("LC_EMBEDDINGS_PROVIDER", "gemini")
+def test_get_embeddings_returns_none_when_model_fails(ready_db, monkeypatch):
     e = _real_embeddings_module()
     e.get_embeddings.__dict__.pop("_cache", None)
-    calls = {}
 
-    class FakeClient:
-        def __init__(self, **kwargs):
-            calls.update(kwargs)
+    def boom(**kwargs):
+        raise RuntimeError("no weights")
 
-    monkeypatch.setattr(e, "_embedding_class_by_provider", lambda provider: FakeClient)
-    assert isinstance(e.get_embeddings(), FakeClient)
-    assert calls["google_api_key"] == "AIza-test-key"
-    assert calls["model"] == "models/text-embedding-004"
-
-
-def test_get_embeddings_cloud_returns_none_without_key(ready_db, monkeypatch):
-    set_config("LC_EMBEDDINGS_PROVIDER", "openai")
-    e = _real_embeddings_module()
-    e.get_embeddings.__dict__.pop("_cache", None)
-    monkeypatch.setattr(e, "_embedding_class_by_provider", lambda provider: pytest.fail("no client expected"))
+    monkeypatch.setattr(e, "_embedding_class", lambda: boom)
     assert e.get_embeddings() is None
     assert e.embeddings_available() is False
 
@@ -114,7 +92,7 @@ def test_local_embeddings_are_384_dim_and_normalised(ready_db):
     e = _real_embeddings_module()
     e.get_embeddings.__dict__.pop("_cache", None)
     try:
-        model = e._embedding_class_by_provider("local")(
+        model = e._embedding_class()(
             model_name=e.LOCAL_MODEL, cache_folder=e.LOCAL_CACHE_DIR
         )
     except Exception as exc:

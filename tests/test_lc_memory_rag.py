@@ -435,27 +435,26 @@ class TestGetMemoryBlock:
 
 
 class TestSettings:
-    def test_embeddings_provider_default_is_auto(self):
-        assert settings.embeddings_provider() == "auto"
+    def test_embeddings_provider_default_is_local(self):
+        assert settings.embeddings_provider() == "local"
 
-    def test_env_override_embeddings_provider(self, monkeypatch):
+    def test_cloud_embeddings_provider_is_ignored(self, monkeypatch):
         monkeypatch.setenv("LC_EMBEDDINGS_PROVIDER", "gemini")
-        assert settings.embeddings_provider() == "gemini"
+        assert settings.embeddings_provider() == "local"
         monkeypatch.setenv("LC_EMBEDDINGS_PROVIDER", "openai")
-        assert settings.embeddings_provider() == "openai"
+        assert settings.embeddings_provider() == "local"
 
-    def test_invalid_embeddings_provider_warns_once(self, monkeypatch, mocker):
+    def test_unsupported_embeddings_provider_warns_once(self, monkeypatch, mocker):
         monkeypatch.setenv("LC_EMBEDDINGS_PROVIDER", "banana")
         logger = mocker.patch.object(settings.logger, "warning")
         monkeypatch.setattr(settings, "_warned_embeddings_values", set())
-        assert settings.embeddings_provider() == "auto"
-        assert settings.embeddings_provider() == "auto"
+        assert settings.embeddings_provider() == "local"
+        assert settings.embeddings_provider() == "local"
         assert logger.call_count == 1
 
     def test_get_embeddings_model_names(self):
-        assert settings.embeddings_model("gemini") == "models/text-embedding-004"
-        assert settings.embeddings_model("openai") == "text-embedding-3-small"
-        assert settings.embeddings_model() == "text-embedding-3-small"
+        assert settings.embeddings_model("gemini") == "all-MiniLM-L6-v2"
+        assert settings.embeddings_model() == "all-MiniLM-L6-v2"
 
 
 class TestDatabaseHooks:

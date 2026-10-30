@@ -197,21 +197,21 @@ def summary_max_tokens() -> int:
 def embeddings_provider() -> str:
     """Phase 2: embeddings provider used by the RAG retrievers.
 
-    Resolution order: env LC_EMBEDDINGS_PROVIDER > app_config > auto-detect.
-    'auto' inspects llm_config and picks the cheapest available provider
-    (Gemini preferred, OpenAI as fallback). Unknown values are warned once per
-    unique value and treated as 'auto'.
+    Always 'local' (HuggingFaceEmbeddings, see ``agent.lc.embeddings``). A
+    leftover LC_EMBEDDINGS_PROVIDER pointing at a cloud provider is ignored,
+    with a warning once per value.
     """
     raw = os.environ.get("LC_EMBEDDINGS_PROVIDER") or _cfg(
-        "LC_EMBEDDINGS_PROVIDER", "auto"
+        "LC_EMBEDDINGS_PROVIDER", "local"
     )
     mode = str(raw).strip().lower()
-    if mode not in ("auto", "local", "gemini", "openai"):
-        if raw not in _warned_embeddings_values:
-            _warned_embeddings_values.add(raw)
-            logger.warning("Unknown LC_EMBEDDINGS_PROVIDER=%r; using 'auto'", raw)
-        return "auto"
-    return mode
+    if mode not in ("auto", "local") and raw not in _warned_embeddings_values:
+        _warned_embeddings_values.add(raw)
+        logger.warning(
+            "LC_EMBEDDINGS_PROVIDER=%r is no longer supported; embeddings are always local",
+            raw,
+        )
+    return "local"
 
 
 def embeddings_model(provider: Optional[str] = None) -> str:

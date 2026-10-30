@@ -7,8 +7,8 @@ Design notes:
 - ``database.py`` stays pure SQL; embeddings orchestration lives here,
   mirroring ``agent.lc.memory_rag``.
 - The vec0 table is partitioned by ``channel_id`` so KNN never crosses chats.
-- Embeddings provider: the same one used by the user-memory RAG
-  (``agent.lc.embeddings`` — Gemini text-embedding-004 / OpenAI 3-small).
+- Embeddings: the same local model used by the user-memory RAG
+  (``agent.lc.embeddings`` — HuggingFaceEmbeddings all-MiniLM-L6-v2).
 - Every failure is fail-open: vectorization/retrieval problems NEVER block
   message processing; the reply is simply produced without the extra context.
 """

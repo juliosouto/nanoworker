@@ -50,7 +50,7 @@ class MemoryRetriever:
         self.index_dir = index_dir or INDEX_DIR
         self.index: Optional[faiss.Index] = None
         self.metadata: Dict[int, str] = {}
-        # Resolve to the ACTIVE provider (auto > DB config > openai), not the raw flag.
+        # Always 'local' (see agent.lc.embeddings).
         self.provider = get_embeddings_provider()
         self._initialized = False
 
