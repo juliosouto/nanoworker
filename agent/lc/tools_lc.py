@@ -23,9 +23,9 @@ decorator is not gated: it is controlled by ``LC_TOOL_RESULT_MAX_CHARS``
 
 import functools
 import inspect
-import json
 import logging
 import re
+import threading
 from typing import Any, Callable, Dict, List, get_args, get_origin
 
 from google.genai import types
@@ -272,19 +272,6 @@ def gemini_tool_declarations(funcs: List[Callable]) -> List[types.Tool]:
     return result
 
 
-# System prompt for the opt-in tool relevance selector (TOOL_RELEVANCE_FILTER).
-# Biased toward over-inclusion ("when unsure, include it") so a borderline
-# message can never strand the model without a tool it needed.
-_RELEVANCE_SYSTEM_PROMPT = (
-    "You are a tool selector. You receive the user's message and a catalog of "
-    "available tools (name: short description). Decide which tools are actually "
-    "needed to fulfill the request. Respond with ONLY a JSON array of tool "
-    "names, e.g. [\"web_search\", \"send_whatsapp_file\"]. Rules: include a tool "
-    "only if the request plausibly needs it; when unsure, include it; never "
-    "invent tool names; if no tool is needed, return []."
-)
-
-
 def _message_text(content) -> str:
     """Flattens multimodal message content into plain text for the selector."""
     if isinstance(content, str):
@@ -306,71 +293,51 @@ def _message_text(content) -> str:
     return str(content or "")
 
 
-def _resolve_selector_credentials(model_name):
-    """Resolves ``(provider, api_key)`` for the relevance-selector model.
-
-    Mirrors ``route_llm_call``: the decrypted ``llm_config`` row for the model
-    is the source of truth; for Gemini models with no row (or no key there) it
-    falls back to the ``GEMINI_API_KEY`` app_config value (``set_config``
-    encrypts sensitive keys, so it is decrypted too — ``decrypt_value`` returns
-    plain text unchanged on any failure). ``make_chat_model`` does NOT resolve
-    keys itself, so without this the selector could never reach a provider.
-    Any failure returns ``(None, None)``: ``make_chat_model`` then raises and
-    the filter fails open with the full tool set.
-    """
-    try:
-        from database import decrypt_value, get_config, get_db
-
-        from agent.lc.models import resolve_provider
-
-        provider = None
-        api_key = None
-        conn = get_db()
-        try:
-            c = conn.cursor()
-            c.execute(
-                "SELECT provider, api_key FROM llm_config WHERE model_name = ?",
-                (model_name,),
-            )
-            row = c.fetchone()
-        finally:
-            conn.close()
-        if row:
-            try:
-                provider = row["provider"].lower() if row["provider"] else None
-            except (KeyError, IndexError, TypeError):
-                provider = None
-            try:
-                if row["api_key"]:
-                    api_key = decrypt_value(row["api_key"])
-            except (KeyError, IndexError, TypeError):
-                api_key = None
-        if not api_key:
-            try:
-                if resolve_provider(provider, model_name) == "gemini":
-                    raw = get_config("GEMINI_API_KEY", None)
-                    if raw:
-                        api_key = decrypt_value(raw)
-            except Exception:
-                pass
-        return provider, api_key
-    except Exception:
-        return None, None
+# Tool-description vectors (TOOL_MODEL), keyed by the embedded text so an edited docstring
+# is re-embedded automatically. Process-local; tools are few and the local
+# model is cheap, so no persistence is needed.
+_TOOL_VECTOR_CACHE: Dict[str, Any] = {}
+_TOOL_VECTOR_LOCK = threading.Lock()
 
 
-def filter_tools_by_relevance(
-    funcs: List[Callable], content, model_name: str = None
-) -> List[Callable]:
-    """Narrow ``funcs`` to the tools relevant to the user's message (opt-in).
+def _tool_embedding_text(func: Callable) -> str:
+    """Text embedded for a tool: readable name plus its short description."""
+    return f"{func.__name__.replace('_', ' ')}: {first_line_description(func)}"
 
-    Gated behind ``TOOL_RELEVANCE_FILTER`` (advanced settings toggle, default
-    off). When on, ONE lightweight LangChain chat call receives the tool
-    catalog (name + first-line docstring) and the user message, and answers
-    with a JSON array of the tool names it needs.
 
-    Fail-open contract: ANY problem (flag off, empty message, selector error,
-    unparseable output, empty or unknown selection) returns the ORIGINAL list
-    unchanged, so enabling the feature can never break a conversation.
+def _tool_vectors(funcs: List[Callable], embeddings):
+    """L2-normalised vectors for ``funcs`` (cached by embedded text)."""
+    import numpy as np
+
+    texts = [_tool_embedding_text(f) for f in funcs]
+    with _TOOL_VECTOR_LOCK:
+        missing = [t for t in dict.fromkeys(texts) if t not in _TOOL_VECTOR_CACHE]
+        if missing:
+            for text, vec in zip(missing, embeddings.embed_documents(missing)):
+                _TOOL_VECTOR_CACHE[text] = vec
+        matrix = np.array([_TOOL_VECTOR_CACHE[t] for t in texts], dtype="float32")
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return matrix / norms
+
+
+def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
+    """Narrow ``funcs`` to the tools relevant to the user's message (RAG).
+
+    Gated behind ``TOOL_RELEVANCE_FILTER`` (Advanced Settings toggle). When on,
+    each tool's name + short description is embedded with the local
+    multilingual model (``agent.lc.embeddings.TOOL_MODEL``, so Portuguese
+    messages match the English descriptions) and the
+    ``TOOL_RELEVANCE_TOP_K`` tools most similar (cosine) to ``content`` are
+    kept. Every other tool from the same module as a kept tool is added back,
+    so related tools travel together (e.g. browser_navigate with
+    browser_snapshot / browser_click). When off, all tools are sent.
+
+    ``content`` should be the plain user message (no sender label, no history
+    context), so it matches the tool descriptions.
+
+    Fail-open contract: ANY problem (flag off, empty message, embeddings
+    unavailable, embedding error) returns the ORIGINAL list unchanged.
     """
     if not funcs:
         return funcs
@@ -381,63 +348,40 @@ def filter_tools_by_relevance(
         message_text = _message_text(content).strip()
         if not message_text:
             return funcs
-
-        from agent.lc.models import make_chat_model
-
-        catalog = "\n".join(
-            f"- {f.__name__}: {first_line_description(f)}" for f in funcs
-        )
-        selector_name = (
-            model_name
-            or lc_settings.summarizer_model()
-            or "gemini-2.0-flash"
-        )
-        provider, api_key = _resolve_selector_credentials(selector_name)
-        model = make_chat_model(
-            selector_name, provider=provider, api_key=api_key, temperature=0
-        )
-        response = model.invoke(
-            [
-                ("system", _RELEVANCE_SYSTEM_PROMPT),
-                (
-                    "human",
-                    f"Available tools:\n{catalog}\n\n"
-                    f"User message:\n{message_text[:4000]}",
-                ),
-            ]
-        )
-        raw = getattr(response, "content", response)
-        if not isinstance(raw, str):
-            raw = str(raw)
-
-        match = re.search(r"\[.*\]", raw, re.DOTALL)
-        if not match:
-            logger.warning(
-                "Tool relevance filter: no JSON array in selector output; "
-                "keeping all %d tools",
-                len(funcs),
-            )
-            return funcs
-        chosen = json.loads(match.group(0))
-        if not isinstance(chosen, list):
+        top_k = lc_settings.tool_relevance_top_k()
+        if len(funcs) <= top_k:
             return funcs
 
-        valid = {f.__name__: f for f in funcs}
-        picked = [n for n in chosen if isinstance(n, str) and n in valid]
-        if not picked:
+        import numpy as np
+
+        from agent.lc.embeddings import TOOL_MODEL, get_embeddings
+
+        embeddings = get_embeddings(TOOL_MODEL)
+        if embeddings is None:
             logger.warning(
-                "Tool relevance filter: empty/unknown selection; keeping all "
-                "%d tools",
+                "Tool relevance filter: local embeddings unavailable; keeping all %d tools",
                 len(funcs),
             )
             return funcs
 
-        filtered = [valid[n] for n in picked]
+        matrix = _tool_vectors(funcs, embeddings)
+        query = np.array(embeddings.embed_query(message_text[:4000]), dtype="float32")
+        norm = np.linalg.norm(query)
+        if norm:
+            query = query / norm
+        scores = matrix @ query
+        best = [int(i) for i in np.argsort(-scores)[:top_k]]
+
+        modules = {funcs[i].__module__ for i in best}
+        keep = set(best) | {
+            i for i, f in enumerate(funcs) if f.__module__ in modules
+        }
+        filtered = [f for i, f in enumerate(funcs) if i in keep]
         logger.info(
-            "Tool relevance filter: %d/%d tools selected (%s)",
+            "Tool relevance filter: %d/%d tools selected (top: %s)",
             len(filtered),
             len(funcs),
-            ", ".join(picked[:8]),
+            ", ".join(funcs[i].__name__ for i in best[:8]),
         )
         return filtered
     except Exception as e:

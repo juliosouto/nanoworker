@@ -141,14 +141,19 @@ def tool_compact_schema() -> bool:
     return value == "on"
 
 
-def tool_relevance_filter() -> bool:
-    """True when the LangChain tool-relevance filter is active.
+def tool_relevance_top_k() -> int:
+    """How many tools the tool RAG keeps before adding their module siblings."""
+    return _cfg_int("TOOL_RELEVANCE_TOP_K", 15, 1)
 
-    When enabled, a lightweight LLM call narrows the permitted tool set to the
-    tools likely needed by the user's message before the main provider call
-    (saves tokens and reduces tool confusion for small models). Default is ON
-    ('true'); set it to 'false' to send all permitted tools. The filter is
-    fail-open — any error keeps the full tool set.
+
+def tool_relevance_filter() -> bool:
+    """True when the tool relevance filter (tool RAG) is active.
+
+    When enabled, the permitted tool set is narrowed to the tools most similar
+    to the user's message using the local embeddings (see
+    ``agent.lc.tools_lc.filter_tools_by_relevance``). Default is ON ('true');
+    set it to 'false' to send all permitted tools. The filter is fail-open —
+    any error keeps the full tool set.
     """
     raw = os.environ.get("TOOL_RELEVANCE_FILTER") or _cfg(
         "TOOL_RELEVANCE_FILTER", "true"

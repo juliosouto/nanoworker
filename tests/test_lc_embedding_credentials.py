@@ -74,6 +74,23 @@ def test_get_embeddings_uses_huggingface_embeddings(ready_db, monkeypatch):
     assert calls == {"model_name": "all-MiniLM-L6-v2", "cache_folder": e.LOCAL_CACHE_DIR}
 
 
+def test_get_embeddings_caches_per_model(ready_db, monkeypatch):
+    e = _real_embeddings_module()
+    e.get_embeddings.__dict__.pop("_cache", None)
+    loaded = []
+
+    class FakeHF:
+        def __init__(self, **kwargs):
+            loaded.append(kwargs["model_name"])
+
+    monkeypatch.setattr(e, "_embedding_class", lambda: FakeHF)
+    messages = e.get_embeddings()
+    tools = e.get_embeddings(e.TOOL_MODEL)
+    assert messages is not tools
+    assert e.get_embeddings(e.TOOL_MODEL) is tools
+    assert loaded == ["all-MiniLM-L6-v2", "paraphrase-multilingual-MiniLM-L12-v2"]
+
+
 def test_get_embeddings_returns_none_when_model_fails(ready_db, monkeypatch):
     e = _real_embeddings_module()
     e.get_embeddings.__dict__.pop("_cache", None)

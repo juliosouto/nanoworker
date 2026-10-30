@@ -1,211 +1,124 @@
-"""Tests for the opt-in tool relevance filter (TOOL_RELEVANCE_FILTER).
+"""Tests for the tool relevance filter (TOOL_RELEVANCE_FILTER).
 
-The filter uses ONE lightweight LangChain chat call to narrow the permitted
-tool set to what the user's message needs. Core contract: FAIL-OPEN — any
-problem (flag off, selector error, unparseable output, empty/unknown selection)
-returns the ORIGINAL tool list unchanged.
+When on, the filter is a RAG over the tool catalog: tool name + short
+description are embedded with the local embeddings and the top-k tools most
+similar to the user's message are kept (plus their module siblings). When off,
+every tool is sent. Core contract: FAIL-OPEN — any problem returns the
+ORIGINAL tool list unchanged.
 """
-import sys
 import os
+import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from agent.lc import tools_lc
 from agent.lc.tools_lc import filter_tools_by_relevance
 
-
-def search_web(query: str) -> str:
-    """Searches the web. Args: query: the search term."""
-    return "results"
+# One axis per topic; the fake embedder maps text to these keywords.
+_TOPICS = ["web", "file", "mail", "weather", "photo", "browser"]
 
 
-def send_whatsapp_file(file_path: str) -> str:
-    """Sends a file. Args: file_path: absolute path of the file."""
-    return "sent"
+class KeywordEmbeddings:
+    """Deterministic stand-in for HuggingFaceEmbeddings: one dimension per topic."""
+
+    def __init__(self):
+        self.documents_calls = 0
+
+    def _vec(self, text):
+        t = text.lower()
+        vec = [1.0 if k in t else 0.0 for k in _TOPICS]
+        return vec + [0.01]  # never a zero vector
+
+    def embed_documents(self, texts):
+        self.documents_calls += 1
+        return [self._vec(t) for t in texts]
+
+    def embed_query(self, text):
+        return self._vec(text)
 
 
-def read_file(file_path: str) -> str:
-    """Reads a file from disk. Args: file_path: absolute path of the file."""
-    return "contents"
+def _tool(name, doc, module):
+    def f():
+        return name
+
+    f.__name__ = name
+    f.__doc__ = doc
+    f.__module__ = module
+    return f
 
 
-ALL_TOOLS = [search_web, send_whatsapp_file, read_file]
+search_web = _tool("search_web", "Searches the web.", "tools.web_search")
+read_file = _tool("read_file", "Reads a file from disk.", "tools.files")
+send_mail = _tool("send_mail", "Sends an e-mail message.", "tools.mail")
+get_weather = _tool("get_weather", "Gets the weather forecast.", "tools.weather")
+get_photos = _tool("get_photos", "Lists recent photos.", "tools.photos")
+browser_navigate = _tool("browser_navigate", "Opens a URL in the browser.", "tools.browser")
+browser_snapshot = _tool("browser_snapshot", "Returns the page DOM.", "tools.browser")
 
-
-def _creds_patch(provider=None, api_key="test-key"):
-    """Keeps credential resolution hermetic (no real DB in unit tests)."""
-    return patch(
-        "agent.lc.tools_lc._resolve_selector_credentials",
-        return_value=(provider, api_key),
-    )
-
-
-def _selector_returning(raw_content):
-    """Patches make_chat_model so the selector LLM answers `raw_content`."""
-    mock_model = MagicMock()
-    mock_model.invoke.return_value = MagicMock(content=raw_content)
-    return patch("agent.lc.models.make_chat_model", return_value=mock_model)
-
-
-def _enabled():
-    """Flag ON context (use with _creds_patch + _selector_returning)."""
-    return patch("agent.lc.settings.tool_relevance_filter", return_value=True)
+ALL_TOOLS = [
+    search_web, read_file, send_mail, get_weather, get_photos,
+    browser_navigate, browser_snapshot,
+]
 
 
 class TestToolRelevanceFilter(unittest.TestCase):
-    def test_disabled_returns_same_list_and_never_calls_llm(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=False
-        ), patch(
-            "agent.lc.models.make_chat_model",
-            side_effect=AssertionError("must not call the LLM when disabled"),
-        ):
-            result = filter_tools_by_relevance(
-                ALL_TOOLS, "search the web for cats", model_name="gpt-4o"
-            )
-        self.assertEqual(result, ALL_TOOLS)
+    def setUp(self):
+        tools_lc._TOOL_VECTOR_CACHE.clear()
+        self.emb = KeywordEmbeddings()
+        patches = [
+            patch("agent.lc.settings.tool_relevance_filter", return_value=True),
+            patch("agent.lc.settings.tool_relevance_top_k", return_value=2),
+            patch("agent.lc.embeddings.get_embeddings", return_value=self.emb),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
 
-    def test_enabled_selects_relevant_subset(self):
-        with _enabled(), _creds_patch(), _selector_returning(
-            '["search_web"]'
-        ) as mock_make:
-            result = filter_tools_by_relevance(
-                ALL_TOOLS, "search the web for cats", model_name="gpt-4o"
-            )
-        self.assertEqual(result, [search_web])
-        # Credentials resolved from llm_config/app_config reach the factory —
-        # make_chat_model does NOT resolve keys itself.
-        kwargs = mock_make.call_args[1]
-        self.assertIsNone(kwargs["provider"])
-        self.assertEqual(kwargs["api_key"], "test-key")
-        self.assertEqual(kwargs["temperature"], 0)
+    def test_disabled_sends_all_tools_without_embedding(self):
+        with patch("agent.lc.settings.tool_relevance_filter", return_value=False), patch(
+            "agent.lc.embeddings.get_embeddings"
+        ) as get_emb:
+            result = filter_tools_by_relevance(ALL_TOOLS, "what's the weather?")
+        self.assertIs(result, ALL_TOOLS)
+        get_emb.assert_not_called()
 
-    def test_enabled_parses_array_wrapped_in_prose(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), _creds_patch(), _selector_returning(
-            'Sure! Here are the tools: ["search_web", "send_whatsapp_file"]'
-        ):
-            result = filter_tools_by_relevance(
-                ALL_TOOLS, "search cats and send me the file", model_name="m"
-            )
-        self.assertEqual(result, [search_web, send_whatsapp_file])
+    def test_keeps_most_similar_tools(self):
+        result = filter_tools_by_relevance(ALL_TOOLS, "weather and mail please")
+        self.assertEqual(result, [send_mail, get_weather])
 
-    def test_enabled_multimodal_content_is_flattened(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), _creds_patch(), _selector_returning('["search_web"]') as mock_make:
-            result = filter_tools_by_relevance(
-                ALL_TOOLS,
-                [{"type": "text", "text": "please search_web for cats"}],
-                model_name="m",
-            )
-        self.assertEqual(result, [search_web])
-        # The flattened text reached the selector prompt.
-        prompt_text = mock_make.return_value.invoke.call_args[0][0][1][1]
-        self.assertIn("please search_web for cats", prompt_text)
+    def test_module_siblings_are_added(self):
+        result = filter_tools_by_relevance(ALL_TOOLS, "open the browser on that web page")
+        self.assertEqual(result, [search_web, browser_navigate, browser_snapshot])
 
-    def test_selector_error_fails_open(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), _creds_patch(), patch(
-            "agent.lc.models.make_chat_model",
-            side_effect=RuntimeError("api key missing"),
-        ):
-            result = filter_tools_by_relevance(
-                ALL_TOOLS, "search the web", model_name="gpt-4o"
-            )
-        self.assertEqual(result, ALL_TOOLS)
+    def test_tool_vectors_are_cached(self):
+        filter_tools_by_relevance(ALL_TOOLS, "weather")
+        filter_tools_by_relevance(ALL_TOOLS, "mail")
+        self.assertEqual(self.emb.documents_calls, 1)
 
-    def test_unparseable_output_fails_open(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), _creds_patch(), _selector_returning("no tools needed for this"):
-            result = filter_tools_by_relevance(ALL_TOOLS, "hello there")
-        self.assertEqual(result, ALL_TOOLS)
+    def test_fewer_tools_than_top_k_returns_all(self):
+        tools = [search_web, read_file]
+        self.assertIs(filter_tools_by_relevance(tools, "weather"), tools)
 
-    def test_unknown_tool_names_fail_open(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), _creds_patch(), _selector_returning('["made_up_tool", "another_fake"]'):
-            result = filter_tools_by_relevance(ALL_TOOLS, "do the thing")
-        self.assertEqual(result, ALL_TOOLS)
+    def test_empty_message_returns_all(self):
+        self.assertIs(filter_tools_by_relevance(ALL_TOOLS, "   "), ALL_TOOLS)
 
-    def test_empty_selection_fails_open(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), _creds_patch(), _selector_returning("[]"):
-            result = filter_tools_by_relevance(ALL_TOOLS, "hi")
-        self.assertEqual(result, ALL_TOOLS)
+    def test_embeddings_unavailable_returns_all(self):
+        with patch("agent.lc.embeddings.get_embeddings", return_value=None):
+            self.assertIs(filter_tools_by_relevance(ALL_TOOLS, "weather"), ALL_TOOLS)
 
-    def test_empty_message_fails_open_without_llm(self):
-        with patch(
-            "agent.lc.settings.tool_relevance_filter", return_value=True
-        ), patch(
-            "agent.lc.models.make_chat_model",
-            side_effect=AssertionError("must not call the LLM on empty message"),
-        ):
-            result = filter_tools_by_relevance(ALL_TOOLS, "   ")
-        self.assertEqual(result, ALL_TOOLS)
+    def test_embedding_error_returns_all(self):
+        with patch.object(self.emb, "embed_query", side_effect=RuntimeError("boom")):
+            self.assertIs(filter_tools_by_relevance(ALL_TOOLS, "weather"), ALL_TOOLS)
 
     def test_empty_tool_list_returns_empty(self):
         self.assertEqual(filter_tools_by_relevance([], "hello"), [])
 
-
-class TestSelectorCredentials(unittest.TestCase):
-    """_resolve_selector_credentials mirrors route_llm_call's key resolution:
-    llm_config row (decrypted) first, GEMINI_API_KEY app_config fallback."""
-
-    def _run(self):
-        return filter_tools_by_relevance(
-            ALL_TOOLS, "search the web", model_name="test-model"
-        )
-
-    @patch("database.decrypt_value", side_effect=lambda v: f"dec({v})")
-    @patch("database.get_config", return_value=None)
-    @patch("database.get_db")
-    def test_key_from_llm_config_row(self, mock_get_db, *_):
-        row = {"provider": "openrouter", "api_key": "enc-key"}
-        cursor = MagicMock()
-        cursor.fetchone.return_value = row
-        conn = MagicMock()
-        conn.cursor.return_value = cursor
-        mock_get_db.return_value = conn
-
-        with _enabled(), _selector_returning('["search_web"]') as mock_make:
-            result = self._run()
-
-        self.assertEqual(result, [search_web])
-        kwargs = mock_make.call_args[1]
-        self.assertEqual(kwargs["provider"], "openrouter")
-        self.assertEqual(kwargs["api_key"], "dec(enc-key)")
-
-    @patch("database.decrypt_value", side_effect=lambda v: f"dec({v})")
-    @patch("database.get_config", return_value="appconfig-gemini-key")
-    @patch("database.get_db")
-    def test_gemini_falls_back_to_app_config_key(self, mock_get_db, *_):
-        cursor = MagicMock()
-        cursor.fetchone.return_value = None  # no llm_config row
-        conn = MagicMock()
-        conn.cursor.return_value = cursor
-        mock_get_db.return_value = conn
-
-        with _enabled(), _selector_returning('["search_web"]') as mock_make:
-            result = self._run()
-
-        self.assertEqual(result, [search_web])
-        kwargs = mock_make.call_args[1]
-        self.assertIsNone(kwargs["provider"])
-        self.assertEqual(kwargs["api_key"], "dec(appconfig-gemini-key)")
-
-    @patch("database.get_db", side_effect=RuntimeError("db down"))
-    def test_creds_failure_still_fails_open(self, *_):
-        # REAL make_chat_model (not mocked): creds (None, None) -> ValueError
-        # ("API Key for Gemini model is not set.") -> caught -> fail-open.
-        with _enabled():
-            result = self._run()
-        self.assertEqual(result, ALL_TOOLS)
+    def test_multimodal_content_uses_text_parts(self):
+        content = [{"type": "image"}, {"type": "text", "text": "weather and mail"}]
+        result = filter_tools_by_relevance(ALL_TOOLS, content)
+        self.assertEqual(result, [send_mail, get_weather])
 
 
 if __name__ == "__main__":

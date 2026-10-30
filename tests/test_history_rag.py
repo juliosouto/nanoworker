@@ -84,7 +84,7 @@ def cluster_embeddings(monkeypatch):
     import agent.lc.embeddings as e
 
     fake = ClusterEmbeddings(size=8)
-    monkeypatch.setattr(e, "get_embeddings", lambda: fake)
+    monkeypatch.setattr(e, "get_embeddings", lambda *a, **k: fake)
     monkeypatch.setattr(e, "embeddings_available", lambda: True)
     return fake
 

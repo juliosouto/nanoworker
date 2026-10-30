@@ -1,9 +1,13 @@
 """Embeddings for the LangChain RAG stack (Fase 2).
 
 Embeddings are always computed locally with LangChain's
-``HuggingFaceEmbeddings`` (``all-MiniLM-L6-v2``), independent of which chat
-provider each worker uses. No API key and no network calls once the weights are
-cached under ``models/embeddings``.
+``HuggingFaceEmbeddings``, independent of which chat provider each worker uses.
+No API key and no network calls once the weights are cached under
+``models/embeddings``. Two models are used:
+
+    * ``all-MiniLM-L6-v2`` (default): message history RAG;
+    * ``paraphrase-multilingual-MiniLM-L12-v2`` (``TOOL_MODEL``): tool RAG,
+      which matches Portuguese messages against English tool descriptions.
 
 The LangChain embedding class is imported lazily to keep this module cheap to
 import (no heavy libraries loaded unless an embedding is actually requested).
@@ -20,6 +24,7 @@ logger = logging.getLogger(__name__)
 LOCAL_PROVIDER = "local"
 LOCAL_MODEL = "all-MiniLM-L6-v2"
 LOCAL_DIMS = 384
+TOOL_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 LOCAL_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models", "embeddings")
 
 
@@ -40,26 +45,27 @@ def get_embeddings_provider() -> str:
     return LOCAL_PROVIDER
 
 
-def get_embeddings() -> object:
-    """Returns the local embedding instance, lazily created and cached.
+def get_embeddings(model: str = LOCAL_MODEL) -> object:
+    """Returns the local embedding instance for ``model``, lazily created and
+    cached per model.
 
     Returns None when the model cannot be loaded; the caller then skips
     embedding work. A failed load is retried on the next call.
     """
     cache = get_embeddings.__dict__.setdefault("_cache", {})
     with EMBEDDING_LOCK:
-        if LOCAL_PROVIDER not in cache:
+        if model not in cache:
             try:
-                cache[LOCAL_PROVIDER] = _embedding_class()(
-                    model_name=LOCAL_MODEL, cache_folder=LOCAL_CACHE_DIR
+                cache[model] = _embedding_class()(
+                    model_name=model, cache_folder=LOCAL_CACHE_DIR
                 )
             except Exception as exc:
                 logger.warning(
                     "Failed to load local embeddings (%r); will retry next call: %s",
-                    LOCAL_MODEL,
+                    model,
                     exc,
                 )
-    return cache.get(LOCAL_PROVIDER)
+    return cache.get(model)
 
 
 def embeddings_available() -> bool:

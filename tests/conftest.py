@@ -44,7 +44,7 @@ def _embeddings_isolation(monkeypatch):
 
     import agent.lc.embeddings as e
 
-    def fn():
+    def fn(*args, **kwargs):
         return FakeEmbeddings(size=8, seed=42)
 
     monkeypatch.setattr(e, "get_embeddings", fn)
