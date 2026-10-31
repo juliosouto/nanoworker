@@ -34,6 +34,7 @@ _TOOL_STATUSES = [
     ("image", "🖼️ Trabalhando com uma imagem..."),
     ("pdf", "📄 Lendo um PDF..."),
     ("audio", "🎧 Trabalhando com áudio..."),
+    ("chat_messages", "💬 Lendo as mensagens da conversa..."),
     ("whatsapp", "💬 Preparando uma mensagem..."),
     ("memory", "🧠 Consultando a memória..."),
     ("calendar", "📅 Mexendo na agenda..."),
