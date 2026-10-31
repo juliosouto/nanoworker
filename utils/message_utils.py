@@ -588,6 +588,11 @@ def apply_plan_before_execution(content):
     if not content:
         return content
 
+    # The graph flow plans in its own planner node (AGENT_PLANNER).
+    from agent.lc import settings as lc_settings
+    if lc_settings.graph_flow_enabled():
+        return content
+
     from database import get_config
     enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
     if not enabled:

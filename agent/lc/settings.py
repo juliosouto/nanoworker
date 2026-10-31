@@ -57,6 +57,7 @@ _VALID_STRUCTURED = ("auto", "off")
 _VALID_EMBEDDINGS = ("auto", "gemini", "openai")
 _VALID_COMPACT = ("on", "off")
 _VALID_AGENT_FLOWS = ("legacy", "graph")
+_VALID_PLANNER_MODES = ("off", "auto", "always")
 
 # Values that already triggered the "unknown" warning, so a
 # misconfigured/mocked value is reported once per process, not per call.
@@ -66,6 +67,7 @@ _warned_structured_values = set()
 _warned_embeddings_values = set()
 _warned_compact_values = set()
 _warned_agent_flow_values = set()
+_warned_planner_values = set()
 
 
 def _cfg(key, default=None):
@@ -185,6 +187,26 @@ def graph_flow_enabled() -> bool:
 def evaluator_model() -> str:
     """Model for the graph flow's evaluator; "" = the worker's own models."""
     return str(_cfg("AGENT_EVALUATOR_MODEL", "") or "").strip()
+
+
+def planner_mode() -> str:
+    """'off' | 'auto' | 'always' for the graph flow's planner node."""
+    raw = _cfg("AGENT_PLANNER", "")
+    if not str(raw or "").strip():
+        plan_first = str(_cfg("PLAN_BEFORE_EXECUTION", "false") or "").strip().lower()
+        return "always" if plan_first == "true" else "off"
+    value = str(raw).strip().lower()
+    if value not in _VALID_PLANNER_MODES:
+        if raw not in _warned_planner_values:
+            _warned_planner_values.add(raw)
+            logger.warning("Unknown AGENT_PLANNER=%r; using 'off'", raw)
+        return "off"
+    return value
+
+
+def planner_model() -> str:
+    """Model for the graph flow's planner; "" = the worker's own models."""
+    return str(_cfg("AGENT_PLANNER_MODEL", "") or "").strip()
 
 
 def tool_relevance_top_k() -> int:

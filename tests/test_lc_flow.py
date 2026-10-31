@@ -27,6 +27,9 @@ class _FlowCase(unittest.TestCase):
         self.eval_inputs = []
         self.feedback = []
         self.tool_steps = {}  # executor round -> steps reported by the runner
+        self.planner_mode = "off"
+        self.plan_inputs = []
+        self.plans = []
 
         def fake_invoke(history, config_kwargs, content, models, *a, **k):
             self.exec_calls.append(list(content))
@@ -37,7 +40,10 @@ class _FlowCase(unittest.TestCase):
             return self.answers.pop(0)
 
         def fake_route(model_name, history, cfg, content, *a, summarize=False, **k):
-            assert summarize, "the evaluator must use the plain-text backend"
+            assert summarize, "planner/evaluator must use the plain-text backend"
+            if "plan the work" in cfg["system_instruction"]:
+                self.plan_inputs.append((model_name, cfg["system_instruction"], content))
+                return self.plans.pop(0)
             self.eval_inputs.append((model_name, cfg["system_instruction"], content))
             item = self.verdicts.pop(0)
             if isinstance(item, Exception):
@@ -47,6 +53,8 @@ class _FlowCase(unittest.TestCase):
         patches = [
             patch("agent.lc.settings.graph_flow_enabled", return_value=True),
             patch("agent.lc.settings.evaluator_model", return_value=""),
+            patch("agent.lc.settings.planner_mode", side_effect=lambda: self.planner_mode),
+            patch("agent.lc.settings.planner_model", return_value=""),
             patch("agent.llm_router.invoke_llm_with_fallback", side_effect=fake_invoke),
             patch("agent.llm_router.route_llm_call", side_effect=fake_route),
             patch("agent.lc.flow.insert_feedback",
@@ -59,11 +67,15 @@ class _FlowCase(unittest.TestCase):
         self.cursor.fetchone.return_value = None  # no /stop
         self.history = []
 
-    def run_flow(self, limit, content="what is the weather?", models=("m1", "m2")):
+    def run_flow(self, limit, content="what is the weather?", models=("m1", "m2"),
+                 tools=None, show_plan=True):
+        config = {"system_instruction": "sys"}
+        if tools:
+            config["tools"] = tools
         with patch("agent.autonomous_loop.get_config", return_value=str(limit)):
             return execute_autonomous_loop(
-                self.history, {"system_instruction": "sys"}, [content], list(models),
-                self.cursor, "sid", "mid", is_ide=False,
+                self.history, config, [content], list(models),
+                self.cursor, "sid", "mid", is_ide=False, show_plan_in_chat=show_plan,
             )
 
 
@@ -158,6 +170,93 @@ class TestAgentFlow(_FlowCase):
     def test_stop_inside_executor_returns_the_stop_message(self):
         with patch("agent.llm_router.invoke_llm_with_fallback", side_effect=StopRequestedError()):
             self.assertIn("/stop", self.run_flow(3))
+
+
+def weather(city: str) -> str:
+    """Current weather for a city."""
+    return "25°C"
+
+
+class TestPlanner(_FlowCase):
+    PLAN = json.dumps({"needs_plan": True, "steps": ["Call weather for Rio", "Answer the user"]})
+
+    def test_off_never_calls_the_planner(self):
+        self.answers = ["sunny"]
+        self.run_flow(1, tools=[weather])
+        self.assertEqual(self.plan_inputs, [])
+
+    def test_plan_goes_to_chat_executor_and_evaluator(self):
+        self.planner_mode = "always"
+        self.plans = [self.PLAN]
+        self.answers = ["Sunny, 25°C."]
+        self.verdicts = [_verdict("done")]
+        self.assertEqual(self.run_flow(3, tools=[weather]), "Sunny, 25°C.")
+        _, prompt, plan_input = self.plan_inputs[0]
+        self.assertIn("Always write a plan", prompt)
+        self.assertIn("- weather: Current weather for a city.", plan_input)
+        self.assertIn("📋 Execution Plan:\n1. Call weather for Rio\n2. Answer the user", self.feedback)
+        sent = self.exec_calls[0]
+        self.assertEqual(sent[0], "what is the weather?")
+        self.assertIn("1. Call weather for Rio", sent[1])
+        self.assertIn("PLAN:\n1. Call weather for Rio", self.eval_inputs[0][2])
+
+    def test_plan_is_kept_in_history_on_retry(self):
+        self.planner_mode = "always"
+        self.plans = [self.PLAN]
+        self.answers = ["a1", "a2"]
+        self.verdicts = [_verdict("needs_more_work"), _verdict("done")]
+        self.run_flow(3, tools=[weather])
+        user_turn = " ".join(p.text for p in self.history[0].parts)
+        self.assertIn("Call weather for Rio", user_turn)
+        self.assertNotIn("Call weather", self.exec_calls[1][0].text)
+
+    def test_hidden_plan_is_not_shown(self):
+        self.planner_mode = "always"
+        self.plans = [self.PLAN]
+        self.answers = ["sunny"]
+        self.run_flow(1, tools=[weather], show_plan=False)
+        self.assertFalse(any(f.startswith("📋") for f in self.feedback))
+        self.assertIn("1. Call weather for Rio", self.exec_calls[0][1])
+
+    def test_auto_skips_without_tools_and_when_not_needed(self):
+        self.planner_mode = "auto"
+        self.answers = ["hi!"]
+        self.run_flow(1)
+        self.assertEqual(self.plan_inputs, [])
+
+        self.plans = [json.dumps({"needs_plan": False, "steps": ["x"]})]
+        self.answers = ["hi!"]
+        self.run_flow(1, content="hello", tools=[weather])
+        self.assertEqual(len(self.plan_inputs), 1)
+        self.assertEqual(self.exec_calls[-1], ["hello"])
+
+    def test_planner_failure_runs_without_plan(self):
+        self.planner_mode = "always"
+        self.plans = ["nope", "still nope"]
+        self.answers = ["sunny"]
+        self.assertEqual(self.run_flow(1, tools=[weather]), "sunny")
+        self.assertEqual(self.exec_calls[0], ["what is the weather?"])
+
+
+class TestPlannerSettings(unittest.TestCase):
+    def _mode(self, **cfg):
+        from agent.lc import settings
+
+        with patch.object(settings, "_cfg", side_effect=lambda k, d=None: cfg.get(k, d)):
+            return settings.planner_mode()
+
+    def test_modes(self):
+        self.assertEqual(self._mode(), "off")
+        self.assertEqual(self._mode(PLAN_BEFORE_EXECUTION="true"), "always")
+        self.assertEqual(self._mode(AGENT_PLANNER="Auto", PLAN_BEFORE_EXECUTION="true"), "auto")
+        self.assertEqual(self._mode(AGENT_PLANNER="bogus"), "off")
+
+    def test_prose_plan_prefix_is_skipped_in_graph_flow(self):
+        from utils.message_utils import apply_plan_before_execution
+
+        with patch("agent.lc.settings.graph_flow_enabled", return_value=True), \
+                patch("database.get_config", return_value="true"):
+            self.assertEqual(apply_plan_before_execution("do it"), "do it")
 
 
 class TestVerdict(unittest.TestCase):

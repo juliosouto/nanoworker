@@ -221,6 +221,7 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
                 return run_agent_flow(
                     history, config_kwargs, initial_content, models_to_try, cursor,
                     session_id, message_in_id, is_ide, autonomous_limit, on_complete=on_complete,
+                    show_plan_in_chat=show_plan_in_chat,
                 )
             except StopRequestedError:
                 _abort_with_stop_message()

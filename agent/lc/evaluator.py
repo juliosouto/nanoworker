@@ -59,6 +59,7 @@ Decide which status fits:
 - "needs_more_work": the assistant can still make progress on its own (another tool call, a different approach, a missing part of the request). Say exactly what is missing and what to do next.
 - "needs_user_input": the answer asks the user for information only they can give, or the request is ambiguous. This ends the turn; the question goes to the user.
 - "failed": a tool or system error that cannot be worked around prevents the request.
+When a plan is given, check it step by step: an unfinished step means "needs_more_work", unless it turned out unnecessary or impossible.
 Also mark "needs_more_work" when the answer claims an action (sent, saved, scheduled, searched...) that no tool result shows.
 Reply with only a JSON object, no markdown:
 {"status": "<one of the four>", "reason": "<one short sentence>", "missing": ["<what is still missing>"], "next_instruction": "<concrete next step for the assistant, or null>"}"""
@@ -76,9 +77,13 @@ def _format_steps(steps) -> str:
     return "\n".join(lines) or "(no tool calls)"
 
 
-def build_evaluation_input(user_request: str, answer: str, steps) -> str:
+def build_evaluation_input(user_request: str, answer: str, steps, plan=None) -> str:
+    from agent.lc.planner import format_plan
+
+    plan_block = f"PLAN:\n{format_plan(plan)}\n\n" if plan else ""
     return (
         f"USER REQUEST:\n{user_request}\n\n"
+        f"{plan_block}"
         f"TOOL CALLS:\n{_format_steps(steps)}\n\n"
         f"ASSISTANT ANSWER:\n{answer}"
     )
@@ -99,7 +104,7 @@ def parse_verdict(raw_text) -> Optional[Verdict]:
 
 
 def evaluate(user_request, answer, steps, models, cursor, session_id, message_in_id,
-             is_ide) -> Optional[Verdict]:
+             is_ide, plan=None) -> Optional[Verdict]:
     """Ask the evaluator models, in order, for a verdict on ``answer``.
 
     Returns None when no model produces a valid verdict; the flow then keeps
@@ -107,7 +112,7 @@ def evaluate(user_request, answer, steps, models, cursor, session_id, message_in
     """
     from agent.llm_router import route_llm_call
 
-    eval_input = build_evaluation_input(user_request, answer, steps)
+    eval_input = build_evaluation_input(user_request, answer, steps, plan)
     for model_name in models:
         try:
             raw = route_llm_call(
