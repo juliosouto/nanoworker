@@ -141,6 +141,15 @@ def tool_compact_schema() -> bool:
     return value == "on"
 
 
+def agent_max_iterations() -> int:
+    """Max model/tool steps of one LangChain agent turn.
+
+    Separate from AUTONOMOUS_MODE (the number of reflection rounds, seeded as
+    1): one tool call already needs two steps, the call and the answer.
+    """
+    return _cfg_int("LC_AGENT_MAX_ITERATIONS", 25, 2)
+
+
 def tool_relevance_top_k() -> int:
     """How many tools the tool RAG keeps before adding their module siblings."""
     return _cfg_int("TOOL_RELEVANCE_TOP_K", 15, 1)

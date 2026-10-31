@@ -147,9 +147,21 @@ if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
 elif __name__ != '__main__':
     run_workers = True
 
+# The test suite imports this module; NW_START_WORKERS=false keeps it from
+# starting the WhatsApp worker, the sweeper and the embeddings work.
+if os.environ.get('NW_START_WORKERS', 'true').lower() == 'false':
+    run_workers = False
+
 if run_workers:
     # History vector backfill (background, bounded per boot; fail-open).
     def _history_vector_backfill():
+        try:
+            # Load the local embedding models first, so the first message
+            # does not wait for their download.
+            from agent.lc.embeddings import warm_up
+            warm_up()
+        except Exception as exc:
+            logging.error("Embeddings warm-up failed: %s", exc)
         try:
             from agent.lc.history_rag import backfill_missing_vectors
             count = backfill_missing_vectors(limit=200)

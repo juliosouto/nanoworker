@@ -10,7 +10,7 @@ import uuid
 from google.genai import types
 
 from agent.autonomous_loop import execute_autonomous_loop
-from agent.openai_tools import _is_provider_balance_error
+from agent.openai_tools import _is_provider_balance_error, _is_service_unavailable_error
 from agent.prompt_builder import build_system_prompt, build_config_kwargs
 from agent.stop_check import StopRequestedError
 from database import get_config, get_db
@@ -54,6 +54,14 @@ def _friendly_llm_error(error_str: str) -> str:
     if _is_provider_balance_error(proxy_error):
         return (
             "💳 The free model provider is temporarily unavailable (HTTP 402). "
+            "I retried automatically several times without success. "
+            "Please resend your message in a few minutes."
+        )
+    # 503 "model overloaded": the back-off retries ran out (the fallback chain
+    # too, when the worker has other models).
+    if _is_service_unavailable_error(proxy_error):
+        return (
+            "⏳ The AI model is overloaded right now (503, high demand). "
             "I retried automatically several times without success. "
             "Please resend your message in a few minutes."
         )
@@ -214,6 +222,34 @@ def _build_history_from_message_history(cursor, channel_id: str, exclude_client_
     return history
 
 
+# A message this short ("sim", "pode mandar") says little about the tool it
+# needs; the tool filter also reads the bot's last reply in that case.
+_SHORT_TOOL_QUERY_WORDS = 6
+
+
+def _is_whatsapp_tool(func) -> bool:
+    """True for the WhatsApp channel tools (send message/file, poll, ...)."""
+    return getattr(func, "__module__", "").endswith(".whatsapp")
+
+
+def _tool_query(history: list, message: str) -> str:
+    """Text the tool relevance filter matches tools against.
+
+    Normally the plain user message. When it is short, the bot's last reply
+    is prepended, so a confirmation like "sim" after "Quer que eu envie por
+    e-mail?" still selects the e-mail tool.
+    """
+    if len((message or "").split()) > _SHORT_TOOL_QUERY_WORDS:
+        return message
+    for turn in reversed(history or []):
+        if getattr(turn, "role", None) == "model":
+            text = " ".join(p.text for p in turn.parts if getattr(p, "text", None))
+            if text.strip():
+                return f"{text[-500:]}\n{message}"
+            break
+    return message
+
+
 def _attach_history_rag(cursor, channel_id: str, rag_query: str, content: str,
                         current_client_message_id=None) -> str:
     """
@@ -331,6 +367,37 @@ def _resolve_models(worker) -> list:
     return models
 
 
+# Seconds process_message waits before answering, so rapid messages from one
+# user (e.g. several images) are answered together by the last one.
+_DEBOUNCE_SECONDS = 2
+
+
+def _superseded_by_newer_message(cursor, session_id, message_in_id, content) -> bool:
+    """True when a newer message makes this one redundant.
+
+    Only a newer message from the SAME sender to the SAME worker counts: it
+    answers this one too (this message is in its history). In a group the
+    session is shared by everyone, so a message from another person, or to
+    another worker, must never cancel this one.
+    """
+    cursor.execute('SELECT sender_id FROM messages_in WHERE id = ?', (message_in_id,))
+    row = cursor.fetchone()
+    sender_id = row['sender_id'] if row else None
+    cursor.execute(
+        'SELECT content, sender_id FROM messages_in WHERE session_id = ? '
+        'AND rowid > (SELECT rowid FROM messages_in WHERE id = ?)',
+        (session_id, message_in_id),
+    )
+    newer = [r for r in cursor.fetchall() if r['sender_id'] == sender_id]
+    if not newer:
+        return False
+    worker = (resolve_worker_from_content(content) or {}).get('worker_name')
+    return any(
+        (resolve_worker_from_content(r['content']) or {}).get('worker_name') == worker
+        for r in newer
+    )
+
+
 def process_message(message_in_id, session_id, content, on_complete=None):
     """
     Runs the LLM agent, providing it with tools and conversation history.
@@ -366,15 +433,13 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         return message_out_id, stop_response
 
     # Wait a bit to debounce multiple rapid messages (like multiple images from WhatsApp)
-    time.sleep(2)
+    time.sleep(_DEBOUNCE_SECONDS)
 
     conn = get_db()
     cursor = conn.cursor()
 
-    # Check if a newer message arrived while we slept
-    cursor.execute('SELECT id FROM messages_in WHERE session_id = ? AND rowid > (SELECT rowid FROM messages_in WHERE id = ?) LIMIT 1', (session_id, message_in_id))
-    newer = cursor.fetchone()
-    if newer:
+    # Check if a newer message of the same batch arrived while we slept
+    if _superseded_by_newer_message(cursor, session_id, message_in_id, original_content):
         cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
         conn.commit()
         conn.close()
@@ -451,7 +516,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         ids = current_sender_id
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
-        content = f"[Message from: {sender_label} ({ids})]\n{content}"
+        # In groups the last history turn (other people's messages) is merged
+        # into this prompt below, so mark which message the reply is for.
+        content = (
+            f"[Message from: {sender_label} ({ids})] "
+            f"[Current message: reply to {sender_label}]\n{content}"
+        )
 
     # History RAG (WhatsApp channels): retrieve the most relevant vectorized
     # history of this channel and APPEND it to the user's prompt before the
@@ -498,7 +568,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         # natively (structured output) so the builder can omit the prose block.
         from agent.lc import outputs as lc_outputs
         _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
-        native_structured = lc_outputs.structured_output_enabled(
+        native_structured = lc_outputs.schema_enforced_by_api(
             _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
         )
         system_prompt = build_system_prompt(
@@ -519,7 +589,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             # user message (local embeddings); fail-open to the full set.
             from agent.lc.tools_lc import filter_tools_by_relevance
 
-            tools = filter_tools_by_relevance(tools, rag_query)
+            tools = filter_tools_by_relevance(
+                tools, _tool_query(history, rag_query),
+                always_keep=_is_whatsapp_tool if (is_wa_group or is_wa_private) else None,
+            )
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
 
@@ -647,7 +720,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
         # Fase 1: decide native-vs-prompt structured output from the first model.
         from agent.lc import outputs as lc_outputs
         _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
-        native_structured = lc_outputs.structured_output_enabled(
+        native_structured = lc_outputs.schema_enforced_by_api(
             _provider0, models_to_try[0] if models_to_try else "", has_tools=True
         )
         system_prompt = build_system_prompt(

@@ -144,6 +144,17 @@ class TestProviderSupport:
         assert structured_output_enabled("openai", "gpt-4o") is True
         assert structured_output_enabled("ollama", "llama3.1") is False
 
+    def test_json_object_providers_keep_the_prompt_contract(self, monkeypatch):
+        # json_object guarantees valid JSON but not the field names.
+        from agent.lc.outputs import schema_enforced_by_api
+        monkeypatch.setenv("LLM_STACK", "langchain")
+        monkeypatch.delenv("LC_STRUCTURED_OUTPUT", raising=False)
+        assert schema_enforced_by_api("deepseek", "deepseek-chat") is False
+        assert schema_enforced_by_api("qwen", "qwen-plus") is False
+        assert schema_enforced_by_api("openai", "gpt-4o") is True
+        # The API-side json_object mode stays on for them.
+        assert structured_output_enabled("deepseek", "deepseek-chat") is True
+
     def test_structured_disabled_when_off(self, monkeypatch):
         monkeypatch.setenv("LLM_STACK", "langchain")
         monkeypatch.setenv("LC_STRUCTURED_OUTPUT", "off")

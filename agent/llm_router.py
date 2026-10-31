@@ -147,6 +147,22 @@ def _prune_history_to_fit(
     return history
 
 
+def _with_prompt_contract(system_instruction):
+    """Appends the prose JSON contract to a system prompt that lacks it."""
+    from agent.prompt_builder import JSON_SCHEMA_PROMPT, JSON_SCHEMA_PROMPT_WITH_PLAN
+    from database import get_config
+
+    text = system_instruction or ""
+    if "You MUST output your final response as a valid JSON object" in text:
+        return system_instruction
+    try:
+        with_plan = (get_config("PLAN_BEFORE_EXECUTION", "false") or "").lower() == "true"
+    except Exception:
+        with_plan = False
+    contract = JSON_SCHEMA_PROMPT_WITH_PLAN if with_plan else JSON_SCHEMA_PROMPT
+    return f"{text}\n\n{contract}" if text else contract
+
+
 def route_llm_call(
     model_name: str,
     history: list,
@@ -184,7 +200,7 @@ def route_llm_call(
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT provider, api_key, thinking, context_window, max_output_tokens, image_output, text_output FROM llm_config WHERE model_name = ?",
+        "SELECT provider, api_key, thinking, context_window, max_output_tokens, image_output, text_output, image_input FROM llm_config WHERE model_name = ?",
         (model_name,),
     )
     row = c.fetchone()
@@ -197,6 +213,7 @@ def route_llm_call(
     max_output_tokens = None
     image_output = False
     text_output = False
+    image_input = None
     if row:
         try:
             provider = row["provider"].lower() if row["provider"] else None
@@ -227,6 +244,10 @@ def route_llm_call(
             text_output = bool(row["text_output"])
         except (KeyError, IndexError, TypeError):
             text_output = False
+        try:
+            image_input = bool(row["image_input"])
+        except (KeyError, IndexError, TypeError):
+            image_input = None
 
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
@@ -241,10 +262,19 @@ def route_llm_call(
     # When route_llm_call is used as a summarizer backend (no contract), skip
     # the native structured-output patch that would otherwise break the call.
     if not summarize:
-        if lc_outputs.structured_output_enabled(
-            provider, model_name, has_tools=bool(local_kwargs.get("tools"))
-        ):
+        has_tools = bool(local_kwargs.get("tools"))
+        if lc_outputs.structured_output_enabled(provider, model_name, has_tools=has_tools):
             local_kwargs.update(lc_outputs.build_structured_kwargs(provider))
+        # On the LangChain stack the system prompt is built for the first
+        # model of the chain (the legacy builder always includes the
+        # contract); a fallback model whose API does not enforce the contract
+        # still needs it written in the prompt.
+        if lc_settings.stack_enabled() and not lc_outputs.schema_enforced_by_api(
+            provider, model_name, has_tools=has_tools
+        ):
+            local_kwargs["system_instruction"] = _with_prompt_contract(
+                local_kwargs.get("system_instruction")
+            )
 
     # Trim old history to the model's context window configured in the LLM models UI.
     # Only active when 'Context Window' is set; otherwise history is passed as-is.
@@ -308,6 +338,7 @@ def route_llm_call(
             api_key=api_key,
             max_output_tokens=max_output_tokens,
             on_complete=on_complete,
+            image_input=image_input,
         )
 
     # NVIDIA is checked first (before the Qwen/OpenAI branches) because NIM hosts
@@ -354,6 +385,19 @@ def route_llm_call(
         )
     elif provider == "qwen" or model_name.lower().startswith("qwen"):
         return _providers.call_qwen_llm(
+            model_name,
+            history,
+            local_kwargs,
+            content,
+            cursor,
+            session_id,
+            message_in_id,
+            table,
+            api_key,
+            on_complete=on_complete,
+        )
+    elif provider == "deepseek" or model_name.lower().startswith("deepseek/"):
+        return _providers.call_deepseek_llm(
             model_name,
             history,
             local_kwargs,

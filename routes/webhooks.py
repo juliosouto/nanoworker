@@ -1,5 +1,6 @@
 import logging
 import re
+import threading
 
 import requests as req
 from flask import Blueprint, jsonify, request, session
@@ -111,8 +112,12 @@ def extract_and_send_images(out_text, target_jid):
     return remaining, sent
 
 
-def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None):
-    """Build an on_complete callback that sends the agent reply via Baileys."""
+def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None, worker_name=None):
+    """Build an on_complete callback that sends the agent reply via Baileys.
+
+    ``worker_name`` is recorded as the sender of the bot's replies in the
+    channel timeline, so history and RAG show which worker answered.
+    """
     from utils.audio_utils import extract_and_generate_audio
 
     last_progress_msg_id = None
@@ -140,6 +145,7 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None):
                     or "Error on attempt" in text_to_send
                     or "Quota exceeded" in text_to_send
                     or "Rate limit (" in text_to_send
+                    or "Model overloaded (503)" in text_to_send
                     or "Model provider temporarily unavailable" in text_to_send
                     or "Empty response from model" in text_to_send
                 )
@@ -193,6 +199,7 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None):
                                 is_group=target_jid.endswith('@g.us'),
                                 from_me=1,
                                 is_bot=1,
+                                sender_name=worker_name,
                                 content=text_to_send,
                                 msg_timestamp=int(_time.time()),
                                 was_processed=1,
@@ -256,6 +263,30 @@ def webhook():
     if not data or 'content' not in data or 'channel_id' not in data:
         return jsonify({"error": "Missing required fields"}), 400
 
+    if 'audio_base64' in data or 'quoted_audio_base64' in data:
+        # Transcription can take many seconds; the Baileys worker awaits this
+        # request before forwarding its next message, so audio is handled in
+        # the background and the request returns at once.
+        threading.Thread(
+            target=_handle_inbound_safely, args=(data,), daemon=True,
+            name="webhook-audio",
+        ).start()
+        return jsonify({"status": "processing"}), 202
+
+    body, status = _handle_inbound(data)
+    return jsonify(body), status
+
+
+def _handle_inbound_safely(data):
+    """Runs _handle_inbound in a background thread, logging any failure."""
+    try:
+        _handle_inbound(data)
+    except Exception:
+        logging.exception("Background webhook processing failed")
+
+
+def _handle_inbound(data):
+    """Processes one inbound message; returns (response body, status code)."""
     content = data['content']
 
     # 1. Transcribe audio (before permission checks so transcription feeds mention detection)
@@ -307,7 +338,7 @@ def webhook():
         if data.get('history_only'):
             # Mention-less text message from the Baileys worker: saved above,
             # never processed. The worker keeps replying only when mentioned.
-            return jsonify({
+            return ({
                 "status": "saved_only" if history_saved else "duplicate",
             }), 200
 
@@ -321,7 +352,7 @@ def webhook():
             if reason == "rate_limit":
                 callback = _build_wa_callback(target_jid, data.get('message_id'))
                 callback("Rate limit reached. Please wait a minute.")
-            return jsonify({"status": "ignored", "reason": reason or "permissions_or_disabled"}), 200
+            return ({"status": "ignored", "reason": reason or "permissions_or_disabled"}), 200
 
         # The message reached the processing pipeline: flag its history row.
         if history_saved:
@@ -331,8 +362,11 @@ def webhook():
             except Exception:
                 pass
 
+        from utils.message_utils import resolve_worker_from_content
+        worker = resolve_worker_from_content(content) or {}
         on_complete = _build_wa_callback(
-            target_jid, data.get('message_id'), channel_id=data['channel_id']
+            target_jid, data.get('message_id'), channel_id=data['channel_id'],
+            worker_name=worker.get('worker_name'),
         )
         _send_composing_presence(target_jid)
 
@@ -387,7 +421,7 @@ def webhook():
 
     # 5. Response
     if is_sync:
-        return jsonify({
+        return ({
             "status": "received",
             "message_in_id": in_id,
             "session_id": session_id,
@@ -395,7 +429,7 @@ def webhook():
             "created_at": "Just now"
         }), 200
 
-    return jsonify({
+    return ({
         "status": "processing",
         "message_in_id": in_id,
         "session_id": session_id,

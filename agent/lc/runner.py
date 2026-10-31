@@ -25,6 +25,7 @@ from typing import Optional
 
 from agent.lc import cache as lc_cache
 from agent.lc import models as lc_models
+from agent.lc import settings as lc_settings
 from agent.lc.tools_lc import build_lc_tools
 from agent.stop_check import StopRequestedError, is_stop_requested, sleep_interruptible
 from langchain_core.callbacks import BaseCallbackHandler
@@ -56,6 +57,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         self.usage_input_tokens = 0
         self.usage_output_tokens = 0
         self.usage_calls = 0
+        self.tool_calls = 0
 
     # -- helpers ---------------------------------------------------------
     def _feedback(self, text: str) -> None:
@@ -72,10 +74,13 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         # the whole agent loop to finish.
         if is_stop_requested():
             raise StopRequestedError()
+        self.tool_calls += 1
+        logger.info("LangChain agent tool call: %s(%s)", name, str(input_str)[:300])
         self._feedback(f"⚙️ Executing local tool: {name}...")
 
     def on_tool_end(self, output, **kwargs) -> None:
         name = kwargs.get("name") or "tool"
+        logger.info("LangChain agent tool result: %s -> %s", name, str(output)[:300])
         msg = f"⚙️ Executed tools: {name}\nResults:\n- {output}"
         self._feedback(msg)
         if self._on_complete and self._show_tools_results:
@@ -89,6 +94,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         # inside a tool must keep propagating (never swallow it here).
         if isinstance(error, StopRequestedError):
             raise error
+        logger.warning("LangChain agent tool error: %s", error)
 
     def on_llm_end(self, response, **kwargs) -> None:
         # Fase 6: accumulate usage_metadata from every model call of this turn.
@@ -110,7 +116,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
             pass
 
 
-def _content_to_text(content) -> str:
+def _content_to_text(content, sep: str = " ") -> str:
     """Normalize the current message content to plain text.
 
     Accepts a bare string, a list mixing strings and genai ``Content``/``Part``
@@ -128,18 +134,63 @@ def _content_to_text(content) -> str:
                 text_parts.append(p.text)
             elif isinstance(p, dict) and p.get("text"):
                 text_parts.append(p["text"])
-        return " ".join([t for t in text_parts if t])
+        return sep.join([t for t in text_parts if t])
     if content is None:
         return ""
     return str(content)
 
 
-def _history_to_lc_messages(history):
+def _media_blocks(content, is_gemini: bool, image_input: Optional[bool]):
+    """Convert the media parts of the current message into LangChain blocks.
+
+    ``content`` is the legacy list of strings and genai ``Part`` objects.
+    Gemini gets every attachment (inline bytes or Files API URI), like the
+    legacy Gemini loop. Other providers get inline images only, and only when
+    the model is registered with ``image_input``; a Gemini Files API URI is
+    useless to them.
+
+    Returns:
+        tuple[list, list]: the content blocks, and one note per attachment
+        that was not sent (appended to the prompt so the model knows).
+    """
+    import base64
+
+    blocks, skipped = [], []
+    if not isinstance(content, list):
+        return blocks, skipped
+    for part in content:
+        inline = getattr(part, "inline_data", None)
+        file_data = getattr(part, "file_data", None)
+        if inline is not None and getattr(inline, "data", None):
+            mime = inline.mime_type or "application/octet-stream"
+            if is_gemini:
+                blocks.append({"type": "media", "data": inline.data, "mime_type": mime})
+            elif mime.startswith("image/") and image_input:
+                b64 = base64.b64encode(inline.data).decode("ascii")
+                blocks.append(
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                )
+            else:
+                skipped.append(mime)
+        elif file_data is not None and getattr(file_data, "file_uri", None):
+            mime = file_data.mime_type or "application/octet-stream"
+            if is_gemini:
+                blocks.append(
+                    {"type": "media", "file_uri": file_data.file_uri, "mime_type": mime}
+                )
+            else:
+                skipped.append(mime)
+    return blocks, skipped
+
+
+def _history_to_lc_messages(history, is_gemini: bool = False,
+                            image_input: Optional[bool] = None):
     """Convert Gemini-style history into LangChain chat messages.
 
     Accepts genai ``types.Content`` objects (role 'user'/'model') and, defensively,
-    OpenAI-style dicts ({'role': ..., 'content': ...}). Text parts only; images
-    are dropped so the tool-calling agent keeps a clean text transcript.
+    OpenAI-style dicts ({'role': ..., 'content': ...}). Images and files of
+    user turns are kept under the same rules as the current message (see
+    ``_media_blocks``), like the legacy Gemini loop that resent them.
     """
     from langchain_core.messages import AIMessage, HumanMessage
 
@@ -147,16 +198,25 @@ def _history_to_lc_messages(history):
     for msg in history or []:
         role = getattr(msg, "role", None)
         parts = getattr(msg, "parts", None)
+        media = []
         if role is None and isinstance(msg, dict):
             role = msg.get("role")
             text = msg.get("content", "")
-            parts_text = text if isinstance(text, str) else _content_to_text(text)
+            parts_text = text if isinstance(text, str) else _content_to_text(text, sep="\n\n")
         elif parts is not None:
+            # Consecutive group messages are merged into one turn, one part
+            # per message; a blank line keeps each "[Message from: ...]"
+            # label at the start of its own line.
             text_parts = [p.text for p in parts if getattr(p, "text", None)]
-            parts_text = " ".join(text_parts)
+            parts_text = "\n\n".join(text_parts)
+            if role not in ("model", "assistant"):
+                media, _ = _media_blocks(list(parts), is_gemini, image_input)
         else:
             continue
-        if parts_text:
+        if media:
+            blocks = [{"type": "text", "text": parts_text}] if parts_text else []
+            messages.append(HumanMessage(content=blocks + media))
+        elif parts_text:
             messages.append(_role_to_message(role, parts_text, HumanMessage, AIMessage))
     return messages
 
@@ -167,6 +227,46 @@ def _role_to_message(role, text, human_cls, ai_cls):
         return ai_cls(content=text)
     return human_cls(content=text)
 
+
+
+# Output AgentExecutor returns when max_iterations is reached ("force" is the
+# only early-stopping method tool-calling agents support).
+_STOPPED_OUTPUT = "Agent stopped due to max iterations."
+
+
+def _steps_to_text(steps) -> str:
+    """Render the executor's intermediate steps as plain text."""
+    lines = []
+    for action, observation in steps or []:
+        tool = getattr(action, "tool", "tool")
+        tool_input = getattr(action, "tool_input", "")
+        lines.append(f"- {tool}({tool_input}) -> {str(observation)[:2000]}")
+    return "\n".join(lines)
+
+
+def _answer_after_limit(model, system_message, payload, steps, config):
+    """Ask the model, without tools, for a final answer from the steps so far.
+
+    Used when the agent hits max_iterations, so the user gets the work done
+    up to that point instead of the bare stop message.
+    """
+    from langchain_core.messages import HumanMessage
+
+    messages = [system_message, *payload.get("chat_history", [])]
+    messages.append(HumanMessage(content=payload.get("input", "")))
+    messages.extend(payload.get("input_media") or [])
+    messages.append(
+        HumanMessage(
+            content=(
+                "The step limit for tool calls was reached. Tool calls made so far:\n"
+                f"{_steps_to_text(steps)}\n\n"
+                "Do not call any more tools. Answer the request with what these "
+                "results show, and say what is left undone, if anything."
+            )
+        )
+    )
+    message = model.invoke(messages, config=config)
+    return _content_to_text(getattr(message, "content", message))
 
 
 def _build_structured_kwargs(config_kwargs: dict, has_tools: bool) -> dict:
@@ -194,7 +294,7 @@ def _build_structured_kwargs(config_kwargs: dict, has_tools: bool) -> dict:
 
 def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
                        message_in_id, on_complete):
-    """Run the agent, retrying transient 429/402 errors like the legacy loops.
+    """Run the agent, retrying transient 429/402/503 errors like the legacy loops.
 
     Reuses the exact classification/back-off helpers from ``agent.openai_tools``
     so the ⏳ / 💳 feedback and waits are identical to the OpenAI-compatible loop.
@@ -206,7 +306,9 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
         _PROVIDER_BALANCE_WAIT,
         _is_provider_balance_error,
         _is_rate_limit_error,
+        _is_service_unavailable_error,
         _wait_seconds_for_rate_limit,
+        _wait_seconds_for_unavailable,
     )
     from agent.db_feedback import insert_feedback
 
@@ -240,6 +342,14 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
                 wait_seconds = _wait_seconds_for_rate_limit(e)
                 retry_feedback = (
                     f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                    f"Waiting {wait_seconds:.0f}s to retry..."
+                )
+            elif _is_service_unavailable_error(e):
+                if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                    raise e
+                wait_seconds = _wait_seconds_for_unavailable(retry_attempt)
+                retry_feedback = (
+                    f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
                     f"Waiting {wait_seconds:.0f}s to retry..."
                 )
             else:
@@ -281,22 +391,23 @@ def run_langchain_llm(
     api_key: Optional[str] = None,
     max_output_tokens: Optional[int] = None,
     on_complete=None,
+    image_input: Optional[bool] = None,
 ) -> str:
     """Execute one LLM turn through the unified LangChain tool-calling agent.
 
     Signature mirrors ``call_gemini_llm`` so ``route_llm_call`` can dispatch to
     it transparently. Returns the agent's final text (parsed upstream by
-    ``parse_agent_response`` in the autonomous loop).
+    ``parse_agent_response`` in the autonomous loop). ``image_input`` is the
+    model's ``llm_config.image_input`` flag (None when the model is not
+    registered); it decides whether images reach non-Gemini models.
     """
-    from database import get_config
-
     from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
     from langchain_core.prompts import (
         ChatPromptTemplate,
         HumanMessagePromptTemplate,
         MessagesPlaceholder,
     )
-    from langchain_core.messages import SystemMessage
+    from langchain_core.messages import HumanMessage, SystemMessage
 
     lc_cache.maybe_init_cache()
 
@@ -317,11 +428,9 @@ def run_langchain_llm(
         **_build_structured_kwargs(config_kwargs, has_tools),
     )
 
+    is_gemini = lc_models.resolve_provider(provider, model_name) == "gemini"
     lc_tools = (
-        build_lc_tools(
-            tool_funcs,
-            gemini_safe=(lc_models.resolve_provider(provider, model_name) == "gemini"),
-        )
+        build_lc_tools(tool_funcs, gemini_safe=is_gemini)
         if has_tools
         else []
     )
@@ -339,22 +448,34 @@ def run_langchain_llm(
             system_message,
             MessagesPlaceholder(variable_name="chat_history", optional=True),
             HumanMessagePromptTemplate.from_template("{input}"),
+            MessagesPlaceholder(variable_name="input_media", optional=True),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ]
     )
 
-    try:
-        max_iterations = int(get_config("AUTONOMOUS_MODE", "10"))
-    except Exception:
-        max_iterations = 10
+    max_iterations = lc_settings.agent_max_iterations()
 
     callback = FeedbackCallbackHandler(
         cursor, table, session_id, message_in_id, show_tools_results, on_complete
     )
     payload = {
-        "input": _content_to_text(content),
-        "chat_history": _history_to_lc_messages(history),
+        # The current message may carry several group messages (the last
+        # history turn is merged into it upstream); a blank line keeps each
+        # "[Message from: ...]" label at the start of its own line.
+        "input": _content_to_text(content, sep="\n\n"),
+        "chat_history": _history_to_lc_messages(history, is_gemini, image_input),
     }
+    # Images and files of the current message go in a second human message
+    # right after the text (history stays text-only).
+    media, skipped = _media_blocks(content, is_gemini, image_input)
+    if media:
+        payload["input_media"] = [HumanMessage(content=media)]
+    if skipped:
+        logger.info("LangChain runner: attachment(s) not sent to %s: %s", model_name, skipped)
+        payload["input"] += "\n\n" + "\n".join(
+            f"[Attachment ({mime}) not sent: this model does not accept it]"
+            for mime in skipped
+        )
 
     if has_tools:
         agent = create_tool_calling_agent(model, lc_tools, agent_prompt)
@@ -363,6 +484,7 @@ def run_langchain_llm(
             tools=lc_tools,
             max_iterations=max_iterations,
             handle_parsing_errors=True,
+            return_intermediate_steps=True,
         )
     else:
         # No tools: skip the tool-calling agent machinery entirely (which would
@@ -374,6 +496,7 @@ def run_langchain_llm(
                 system_message,
                 MessagesPlaceholder(variable_name="chat_history", optional=True),
                 HumanMessagePromptTemplate.from_template("{input}"),
+                MessagesPlaceholder(variable_name="input_media", optional=True),
             ]
         )
         executor = _DirectChainExecutor(direct_prompt | model)
@@ -381,6 +504,26 @@ def run_langchain_llm(
     result = _invoke_with_retry(
         executor, payload, callback, cursor, table, session_id, message_in_id, on_complete
     )
+    output = result.get("output", "")
+    if has_tools:
+        logger.info(
+            "LangChain agent finished: %d tool call(s), max_iterations=%d",
+            callback.tool_calls, max_iterations,
+        )
+    if has_tools and output == _STOPPED_OUTPUT:
+        logger.warning(
+            "LangChain agent hit max_iterations=%d; generating a final answer",
+            max_iterations,
+        )
+        try:
+            output = _answer_after_limit(
+                model, system_message, payload,
+                result.get("intermediate_steps"), {"callbacks": [callback]},
+            )
+        except StopRequestedError:
+            raise
+        except Exception as e:
+            logger.warning("Final answer after max_iterations failed: %s", e)
     # Fase 6: one usage row per agent turn (iterations + retries already
     # summed by the callback). log_llm_usage is fail-safe by contract, so a
     # missing llm_usage table on old databases never breaks the turn.
@@ -401,5 +544,5 @@ def run_langchain_llm(
     # AgentExecutor passes the final message content through as-is; newer
     # chat models (e.g. langchain-google-genai) return a list of content
     # blocks instead of a string, so normalize before returning.
-    return _content_to_text(result.get("output", ""))
+    return _content_to_text(output)
 

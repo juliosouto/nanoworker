@@ -115,6 +115,13 @@ class TestToolRelevanceFilter(unittest.TestCase):
     def test_empty_tool_list_returns_empty(self):
         self.assertEqual(filter_tools_by_relevance([], "hello"), [])
 
+    def test_always_keep_adds_tools_whatever_their_score(self):
+        result = filter_tools_by_relevance(
+            ALL_TOOLS, "weather and mail please",
+            always_keep=lambda f: f.__module__ == "tools.photos",
+        )
+        self.assertEqual(result, [send_mail, get_weather, get_photos])
+
     def test_multimodal_content_uses_text_parts(self):
         content = [{"type": "image"}, {"type": "text", "text": "weather and mail"}]
         result = filter_tools_by_relevance(ALL_TOOLS, content)

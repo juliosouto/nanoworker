@@ -10,7 +10,7 @@ import re
 
 from agent.db_feedback import insert_feedback
 from agent.lc import settings as lc_settings
-from agent.lc.tools_lc import first_line_description
+from agent.lc.tools_lc import first_line_description, json_schema_type
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
@@ -71,6 +71,38 @@ def _is_rate_limit_error(error: Exception) -> bool:
     )
 
 
+# Back-off for 503 "model overloaded": 5s, 10s, 20s, 40s.
+_UNAVAILABLE_BASE_WAIT = 5.0
+_UNAVAILABLE_MAX_WAIT = 60.0
+
+
+def _is_service_unavailable_error(error: Exception) -> bool:
+    """True for HTTP 503 / UNAVAILABLE / overloaded errors.
+
+    Example (Gemini)::
+
+        503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is
+        currently experiencing high demand. ...', 'status': 'UNAVAILABLE'}}
+
+    Demand spikes are usually short, so the call is retried with back-off.
+    """
+    error_str = str(error)
+    lowered = error_str.lower()
+    code = getattr(error, "code", None) or getattr(error, "status_code", None)
+    return (
+        code == 503
+        or re.search(r"\b503\b", error_str) is not None
+        or "'status': 'unavailable'" in lowered
+        or "overloaded" in lowered
+        or "high demand" in lowered
+    )
+
+
+def _wait_seconds_for_unavailable(attempt: int) -> float:
+    """Exponential back-off for the n-th (0-based) 503 retry."""
+    return min(_UNAVAILABLE_BASE_WAIT * (2 ** attempt), _UNAVAILABLE_MAX_WAIT)
+
+
 def _wait_seconds_for_rate_limit(error: Exception) -> float:
     """Respects the provider's own '"retry in Xs'" hint (e.g. Gemini), otherwise
     falls back to a fixed 30s wait."""
@@ -102,21 +134,11 @@ def convert_to_openai_tool(func) -> dict:
     properties = {}
     required = []
 
-    # Type map Python to JSON Schema
-    type_map = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        list: "array",
-        dict: "object",
-    }
-
     for param_name, param in sig.parameters.items():
         if param_name in ["self", "args", "kwargs"]:
             continue
 
-        param_type = type_map.get(param.annotation, "string")
+        param_type, item_type = json_schema_type(param.annotation)
 
         # Simple extraction of parameter description from docstring if present
         param_desc = f"Parameter {param_name}"
@@ -129,6 +151,8 @@ def convert_to_openai_tool(func) -> dict:
                         break
 
         properties[param_name] = {"type": param_type, "description": param_desc}
+        if param_type == "array":
+            properties[param_name]["items"] = {"type": item_type or "string"}
 
         # Detect fixed-choice values ("Must be one of: 'a', 'b', 'c'.") and expose
         # them as an enum so small models don't send invalid values.
@@ -210,7 +234,7 @@ def execute_openai_compatible_llm(
     for msg in history:
         role = "user" if msg.role == "user" else "assistant"
         text_parts = [p.text for p in msg.parts if getattr(p, "text", None)]
-        messages.append({"role": role, "content": " ".join(text_parts)})
+        messages.append({"role": role, "content": "\n\n".join(text_parts)})
 
     if isinstance(content, list):
         text_parts = []
@@ -221,7 +245,7 @@ def execute_openai_compatible_llm(
                 text_parts.append(p.text)
     else:
         text_parts = [content]
-    messages.append({"role": "user", "content": " ".join([t for t in text_parts if t])})
+    messages.append({"role": "user", "content": "\n\n".join([t for t in text_parts if t])})
 
     # 2. Convert raw python functions into OpenAI tool schemas
     permitted_tools = config_kwargs.get("tools", [])
@@ -363,6 +387,14 @@ def execute_openai_compatible_llm(
                     wait_seconds = _wait_seconds_for_rate_limit(e)
                     retry_feedback = (
                         f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                        f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
+                elif _is_service_unavailable_error(e):
+                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                        raise e  # retries exhausted: propagate for model fallback
+                    wait_seconds = _wait_seconds_for_unavailable(retry_attempt)
+                    retry_feedback = (
+                        f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
                         f"Waiting {wait_seconds:.0f}s to retry..."
                     )
                 else:

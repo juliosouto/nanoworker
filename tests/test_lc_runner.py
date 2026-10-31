@@ -266,6 +266,115 @@ class TestRunnerToolCalling(unittest.TestCase):
             )
 
 
+class TestRunnerIterationLimit(unittest.TestCase):
+    """The agent step limit is LC_AGENT_MAX_ITERATIONS, not AUTONOMOUS_MODE."""
+
+    def _run(self, scripted, limit=None):
+        patches = [_patch_model(scripted), _patch_config(autonomous_mode="1"),
+                   patch("agent.db_feedback.insert_feedback", lambda *a, **k: None)]
+        if limit is not None:
+            patches.append(patch.object(runner.lc_settings, "agent_max_iterations",
+                                        return_value=limit))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return runner.run_langchain_llm(
+            "gpt-4o", [], {"system_instruction": "sys", "tools": [echo_tool]},
+            "query", None, "sid", "mid", "messages_out",
+            provider="openai", api_key="k",
+        )
+
+    def _tool_call(self, call_id):
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": "echo_tool", "args": {"x": "hi"}, "id": call_id}],
+        )
+
+    def test_autonomous_mode_one_still_answers_after_a_tool(self):
+        scripted = ScriptedToolCallingModel(
+            responses=[self._tool_call("1"), AIMessage(content="DONE")]
+        )
+        self.assertEqual(self._run(scripted), "DONE")
+
+    def test_final_answer_generated_when_limit_is_hit(self):
+        scripted = ScriptedToolCallingModel(
+            responses=[self._tool_call("1"), self._tool_call("2"),
+                       AIMessage(content="SUMMARY")]
+        )
+        out = self._run(scripted, limit=2)
+        self.assertEqual(out, "SUMMARY")
+        self.assertNotIn("max iterations", out)
+
+
+class TestRunnerMedia(unittest.TestCase):
+    """Images and files of the current message reach the model."""
+
+    IMG = gt.Part.from_bytes(data=b"\x89PNG", mime_type="image/png")
+    PDF = gt.Part.from_bytes(data=b"%PDF", mime_type="application/pdf")
+    URI = gt.Part.from_uri(file_uri="https://files/abc", mime_type="application/pdf")
+
+    def test_gemini_gets_every_attachment(self):
+        blocks, skipped = runner._media_blocks(
+            [self.IMG, self.PDF, self.URI, "text"], is_gemini=True, image_input=None
+        )
+        self.assertEqual([b["type"] for b in blocks], ["media"] * 3)
+        self.assertEqual(blocks[0]["data"], b"\x89PNG")
+        self.assertEqual(blocks[2]["file_uri"], "https://files/abc")
+        self.assertEqual(skipped, [])
+
+    def test_other_provider_gets_images_when_flagged(self):
+        blocks, skipped = runner._media_blocks(
+            [self.IMG, self.PDF, self.URI], is_gemini=False, image_input=True
+        )
+        self.assertEqual(len(blocks), 1)
+        self.assertTrue(blocks[0]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertEqual(skipped, ["application/pdf", "application/pdf"])
+
+    def test_other_provider_without_image_input_gets_a_note(self):
+        blocks, skipped = runner._media_blocks([self.IMG], is_gemini=False, image_input=False)
+        self.assertEqual(blocks, [])
+        self.assertEqual(skipped, ["image/png"])
+
+    def test_history_images_follow_the_same_rules(self):
+        turn = gt.Content(role="user", parts=[self.IMG, gt.Part.from_text(text="olha essa foto")])
+        reply = gt.Content(role="model", parts=[gt.Part.from_text(text="Bonita!")])
+
+        gemini = runner._history_to_lc_messages([turn, reply], is_gemini=True)
+        self.assertEqual(gemini[0].content[0], {"type": "text", "text": "olha essa foto"})
+        self.assertEqual(gemini[0].content[1]["type"], "media")
+        self.assertEqual(gemini[1].content, "Bonita!")
+
+        no_vision = runner._history_to_lc_messages([turn], is_gemini=False, image_input=False)
+        self.assertEqual(no_vision[0].content, "olha essa foto")
+
+    def _run(self, content, provider, image_input=None):
+        from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+        seen = {}
+
+        class Spy(FakeListChatModel):
+            def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+                seen["messages"] = messages
+                return super()._generate(messages, stop, run_manager, **kwargs)
+
+        with _patch_model(Spy(responses=["OK"])), _patch_config():
+            runner.run_langchain_llm(
+                "m", [], {"system_instruction": "sys"}, content,
+                None, "sid", "mid", "messages_out",
+                provider=provider, api_key="k", image_input=image_input,
+            )
+        return seen["messages"]
+
+    def test_image_sent_after_the_text(self):
+        msgs = self._run([self.IMG, "what is this?"], "google")
+        self.assertEqual(msgs[-2].content, "what is this?")
+        self.assertEqual(msgs[-1].content[0]["type"], "media")
+
+    def test_skipped_attachment_is_noted_in_the_prompt(self):
+        msgs = self._run([self.IMG, "what is this?"], "openrouter", image_input=False)
+        self.assertIn("[Attachment (image/png) not sent", msgs[-1].content)
+
+
 class TestRunnerStop(unittest.TestCase):
     """/stop propagation: a StopRequestedError inside a tool bubbles out intact."""
 
@@ -437,6 +546,23 @@ class TestRunnerHelpers(unittest.TestCase):
         )
         self.assertEqual([m.type for m in msgs], ["human", "ai"])
 
+    def test_history_merged_group_messages_keep_labels_on_own_lines(self):
+        turn = gt.Content(role="user", parts=[
+            gt.Part.from_text(text="[Message from: Vitor (1)]\ncotação do dólar?"),
+            gt.Part.from_text(text="[Message from: Capivara (2)]\nprevisão do tempo"),
+        ])
+        msgs = runner._history_to_lc_messages([turn])
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("dólar?\n\n[Message from: Capivara (2)]", msgs[0].content)
+
+    def test_current_input_keeps_each_group_message_on_its_own_line(self):
+        content = [
+            gt.Part.from_text(text="[Message from: Vitor (1)]\ncotação do dólar?"),
+            "[Message from: Capivara (2)] [Current message: reply to Capivara]\nprevisão do tempo",
+        ]
+        text = runner._content_to_text(content, sep="\n\n")
+        self.assertIn("dólar?\n\n[Message from: Capivara (2)]", text)
+
     def test_history_empty(self):
         self.assertEqual(runner._history_to_lc_messages([]), [])
 
@@ -583,6 +709,100 @@ class TestRouteBranch(unittest.TestCase):
         kwargs = lc.call_args.kwargs
         self.assertEqual(kwargs.get("provider"), "openai")
         self.assertEqual(kwargs.get("api_key"), "k")
+
+
+GEMINI_503 = (
+    "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently "
+    "experiencing high demand. Spikes in demand are usually temporary. Please try "
+    "again later.', 'status': 'UNAVAILABLE'}}"
+)
+
+
+class TestRunnerUnavailableRetry(unittest.TestCase):
+    """503 "model overloaded" errors are retried with back-off."""
+
+    def _executor(self, outcomes):
+        executor = MagicMock()
+        executor.invoke.side_effect = outcomes
+        return executor
+
+    def _invoke(self, executor, waits, feedback):
+        def fake_sleep(seconds):
+            waits.append(seconds)
+            return False
+
+        with patch.object(runner, "sleep_interruptible", side_effect=fake_sleep), \
+             patch("agent.db_feedback.insert_feedback",
+                   side_effect=lambda *a: feedback.append(a[-1])):
+            return runner._invoke_with_retry(
+                executor, {}, MagicMock(), None, "messages_out", "sid", "mid", None
+            )
+
+    def test_detects_the_gemini_error(self):
+        from agent.openai_tools import _is_service_unavailable_error
+
+        self.assertTrue(_is_service_unavailable_error(Exception(GEMINI_503)))
+        self.assertFalse(_is_service_unavailable_error(Exception("400 bad request for 5519503000")))
+
+    def test_retries_then_succeeds(self):
+        waits, feedback = [], []
+        executor = self._executor([Exception(GEMINI_503), Exception(GEMINI_503), {"output": "ok"}])
+        self.assertEqual(self._invoke(executor, waits, feedback), {"output": "ok"})
+        self.assertEqual(waits, [5.0, 10.0])
+        self.assertIn("Model overloaded (503) on attempt 1/5", feedback[0])
+
+    def test_gives_up_after_the_last_attempt(self):
+        waits, feedback = [], []
+        executor = self._executor([Exception(GEMINI_503)] * 5)
+        with self.assertRaises(Exception):
+            self._invoke(executor, waits, feedback)
+        self.assertEqual(executor.invoke.call_count, 5)
+        self.assertEqual(waits, [5.0, 10.0, 20.0, 40.0])
+
+
+class TestFallbackPromptContract(unittest.TestCase):
+    """A fallback model gets the JSON contract the first model did not need."""
+
+    def test_contract_added_once(self):
+        from agent import llm_router
+
+        with patch("database.get_config", return_value="false"):
+            once = llm_router._with_prompt_contract("SYS")
+            twice = llm_router._with_prompt_contract(once)
+        self.assertIn("SYS", once)
+        self.assertIn("You MUST output your final response as a valid JSON object", once)
+        self.assertEqual(once, twice)
+
+    def _route(self, provider):
+        from agent import llm_router
+
+        def fake_get_db():
+            conn = MagicMock()
+            cur = conn.cursor()
+            cur.fetchone.return_value = {
+                "provider": provider, "api_key": "k", "thinking": 0,
+                "context_window": None, "max_output_tokens": None,
+            }
+            conn.cursor.return_value = cur
+            return conn
+
+        with patch("agent.llm_router.lc_settings.stack_enabled", return_value=True), \
+             patch("database.get_db", fake_get_db), \
+             patch("database.decrypt_value", return_value="k"), \
+             patch("database.get_config", side_effect=lambda k, d=None: d), \
+             patch("agent.lc.runner.run_langchain_llm", return_value="OUT") as lc:
+            llm_router.route_llm_call(
+                "some-model", [], {"system_instruction": "SYS"}, "q",
+                None, "sid", "mid", is_ide=False,
+            )
+        return lc.call_args.args[2]["system_instruction"]
+
+    def test_fallback_without_native_schema_gets_the_contract(self):
+        self.assertIn("valid JSON object", self._route("nvidia"))
+
+    def test_native_schema_model_keeps_the_prompt(self):
+        with patch("agent.lc.outputs.structured_output_enabled", return_value=True):
+            self.assertEqual(self._route("openai"), "SYS")
 
 
 class TestRunnerUsage(unittest.TestCase):

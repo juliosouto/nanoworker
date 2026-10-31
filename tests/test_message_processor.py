@@ -20,8 +20,16 @@ class TestFriendlyLLMError(unittest.TestCase):
         self.assertIn("quota (429)", result)
 
     def test_other_error_keeps_generic_message(self):
-        result = _friendly_llm_error("503 Service Unavailable")
-        self.assertEqual(result, "Error calling LLM API: 503 Service Unavailable")
+        result = _friendly_llm_error("500 Internal Server Error")
+        self.assertEqual(result, "Error calling LLM API: 500 Internal Server Error")
+
+    def test_overloaded_503_returns_friendly_message(self):
+        raw = ("Error calling LLM API: 503 UNAVAILABLE. {'error': {'code': 503, 'message': "
+               "'This model is currently experiencing high demand. Spikes in demand are usually "
+               "temporary. Please try again later.', 'status': 'UNAVAILABLE'}}")
+        result = _friendly_llm_error(raw)
+        self.assertIn("overloaded", result)
+        self.assertNotIn("{'error'", result)
 
     def test_provider_402_returns_friendly_message(self):
         # Exact production payload for a free OpenRouter model (GMICloud host).
@@ -48,3 +56,30 @@ class TestFriendlyLLMError(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestToolQuery:
+    """The tool filter reads the bot's last reply when the message is short."""
+
+    def _history(self):
+        from google.genai import types as gt
+
+        return [
+            gt.Content(role="user", parts=[gt.Part.from_text(text="[Message from: A]\nmanda o relatório")]),
+            gt.Content(role="model", parts=[gt.Part.from_text(text="Quer que eu envie por e-mail?")]),
+        ]
+
+    def test_short_message_gets_last_bot_reply(self):
+        from agent.message_processor import _tool_query
+
+        assert _tool_query(self._history(), "sim") == "Quer que eu envie por e-mail?\nsim"
+
+    def test_long_message_is_used_alone(self):
+        from agent.message_processor import _tool_query
+
+        msg = "qual é a previsão do tempo para amanhã em Campinas?"
+        assert _tool_query(self._history(), msg) == msg
+
+    def test_no_bot_reply_keeps_message(self):
+        from agent.message_processor import _tool_query
+
+        assert _tool_query([], "sim") == "sim"

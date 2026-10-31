@@ -12,6 +12,16 @@ from utils.message_utils import process_tools_for_llm
 
 logger = logging.getLogger(__name__)
 
+# When the reply counts as "satisfied". Without it, a reply that asks the user
+# for missing information was marked false and re-run up to AUTONOMOUS_MODE
+# times by the reflection loop.
+SATISFIED_RULE = (
+    'Note: Set "is_the_user_request_completely_satisfied" to true when you have '
+    "answered the request, or when you need information only the user can give "
+    '(ask for it in "llm_response"). Set it to false only when you can still make '
+    "progress on your own, e.g. with another tool call. Never leave it null."
+)
+
 # The JSON schema prompt appended to all system prompts
 JSON_SCHEMA_PROMPT = """
 You MUST output your final response as a valid JSON object matching exactly this schema:
@@ -22,8 +32,9 @@ You MUST output your final response as a valid JSON object matching exactly this
   "critical_system_failure": <boolean>
 }
 Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverable system exception or fatal tool error that prevents you from satisfying the request.
+{satisfied_rule}
 Do not include any markdown formatting like ```json, just the raw JSON object.
-"""
+""".replace("{satisfied_rule}", SATISFIED_RULE)
 
 # JSON schema variant used when PLAN_BEFORE_EXECUTION is enabled. It adds an
 # "execution_plan" field so the plan can be kept separate from the final
@@ -39,8 +50,9 @@ You MUST output your final response as a valid JSON object matching exactly this
 }
 Note: Put your plan ONLY in the "execution_plan" field. The "llm_response" field must contain ONLY the final result requested by the user, never the plan or any planning meta-commentary.
 Note: Set "critical_system_failure" to true ONLY if you encounter an unrecoverable system exception or fatal tool error that prevents you from satisfying the request.
+{satisfied_rule}
 Do not include any markdown formatting like ```json, just the raw JSON object.
-"""
+""".replace("{satisfied_rule}", SATISFIED_RULE)
 
 
 def _fetch_user_memory(cursor) -> str:
@@ -154,7 +166,7 @@ def build_system_prompt(
                 lc_outputs.resolve_provider_for_model(models_to_try[0])
                 if models_to_try else None
             )
-            native_structured = lc_outputs.structured_output_enabled(
+            native_structured = lc_outputs.schema_enforced_by_api(
                 _provider0, models_to_try[0] if models_to_try else "",
                 has_tools=bool(include_tool_rules),
             )

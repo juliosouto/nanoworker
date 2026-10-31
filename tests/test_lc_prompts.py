@@ -68,6 +68,16 @@ class TestBuildSystemPrompt:
         out = build_system_prompt(cursor=mocker.MagicMock(), native_structured=False)
         assert JSON_SCHEMA_PROMPT in out
 
+    def test_satisfied_rule_in_both_modes(self, mocker):
+        # A reply asking the user for missing data must count as satisfied, or
+        # the reflection loop re-runs it up to AUTONOMOUS_MODE times.
+        self._patch(mocker)
+        from agent.prompt_builder import JSON_SCHEMA_PROMPT, SATISFIED_RULE
+        assert SATISFIED_RULE in JSON_SCHEMA_PROMPT
+        for native in (True, False):
+            out = build_system_prompt(cursor=mocker.MagicMock(), native_structured=native)
+            assert SATISFIED_RULE in out
+
     def test_worker_instructions_kept(self, mocker):
         self._patch(mocker)
         out = build_system_prompt(

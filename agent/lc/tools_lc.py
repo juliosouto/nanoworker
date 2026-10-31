@@ -26,7 +26,8 @@ import inspect
 import logging
 import re
 import threading
-from typing import Any, Callable, Dict, List, get_args, get_origin
+import types as _pytypes
+from typing import Any, Callable, Dict, List, Optional, Union, get_args, get_origin
 
 from google.genai import types
 from langchain_core.tools import StructuredTool
@@ -63,6 +64,39 @@ _PYDANTIC_TYPE_MAP = {
 }
 
 
+def _unwrap_optional(annotation):
+    """``Optional[X]`` / ``X | None`` -> ``X``; anything else unchanged."""
+    origin = get_origin(annotation)
+    if origin is Union or origin is getattr(_pytypes, "UnionType", None):
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return annotation
+
+
+def json_schema_type(annotation):
+    """JSON schema type of a parameter annotation, and the item type of arrays.
+
+    Handles parameterized and optional annotations (``list[str]``,
+    ``List[int]``, ``Optional[int]``), which a plain lookup would report as
+    "string" — the model then sent a list or a number and the call failed
+    validation.
+
+    Returns:
+        tuple[str, str | None]: (type, item type for arrays else None).
+    """
+    t = _unwrap_optional(annotation)
+    origin = get_origin(t) or t
+    json_type = _TYPE_MAP.get(origin, "string")
+    if json_type != "array":
+        return json_type, None
+    args = get_args(t)
+    inner = _TYPE_MAP.get(_unwrap_optional(args[0]), "string") if args else "string"
+    if inner in ("array", "object"):
+        inner = "string"
+    return json_type, inner
+
+
 def first_line_description(func: Callable) -> str:
     """Short description: first non-empty line of the docstring.
 
@@ -93,11 +127,7 @@ def tool_param_schema(func: Callable) -> Dict[str, Any]:
         if name in ("self", "args", "kwargs"):
             continue
 
-        py_type = param.annotation
-        json_type = _TYPE_MAP.get(py_type, "string")
-        if json_type == "string" and py_type not in _TYPE_MAP:
-            # Unknown annotation: do not lie about the type.
-            json_type = "string"
+        json_type, item_type = json_schema_type(param.annotation)
 
         param_desc = f"Parameter {name}"
         if doc:
@@ -118,10 +148,7 @@ def tool_param_schema(func: Callable) -> Dict[str, Any]:
         # otherwise; empty properties for objects. The python tool still
         # receives the real JSON values the model sends.
         if json_type == "array":
-            inner = "string"
-            if get_origin(py_type) is not None and get_args(py_type):
-                inner = _TYPE_MAP.get(get_args(py_type)[0], "string")
-            prop["items"] = {"type": inner}
+            prop["items"] = {"type": item_type or "string"}
         elif json_type == "object":
             prop["properties"] = {}
 
@@ -163,11 +190,16 @@ def _build_args_schema(func: Callable, gemini_safe: bool = False) -> Any:
     for pname, pdef in schema["properties"].items():
         param = sig.parameters.get(pname)
         field_type = _PYDANTIC_TYPE_MAP.get(pdef["type"], str)
+        if pdef["type"] == "array":
+            item = pdef.get("items", {}).get("type", "string")
+            field_type = List[_PYDANTIC_TYPE_MAP.get(item, str)]
         description = pdef.get("description", "")
         if gemini_safe and pdef["type"] == "object":
             field_type = str
             description = f"{description} (JSON object encoded as a string)".strip()
         if param is not None and param.default is not inspect.Parameter.empty:
+            if param.default is None:
+                field_type = Optional[field_type]
             fields[pname] = (field_type, Field(default=param.default, description=description))
         else:
             fields[pname] = (field_type, Field(description=description))
@@ -215,11 +247,22 @@ def lc_tool(func: Callable, gemini_safe: bool = False) -> StructuredTool:
     ``_build_args_schema``).
     """
     args_schema = _build_args_schema(func, gemini_safe=gemini_safe)
+    name = func.__name__
+
+    def _invalid_args(error) -> str:
+        # Sent back to the model as the tool result, so it can fix the
+        # arguments and call again instead of failing the whole turn.
+        return (
+            f"Error: invalid arguments for {name}: {error}. "
+            "Fix the arguments to match the tool schema and call it again."
+        )
+
     return StructuredTool.from_function(
         func=func,
-        name=func.__name__,
+        name=name,
         description=first_line_description(func),
         args_schema=args_schema,
+        handle_validation_error=_invalid_args,
     )
 
 
@@ -321,7 +364,9 @@ def _tool_vectors(funcs: List[Callable], embeddings):
     return matrix / norms
 
 
-def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
+def filter_tools_by_relevance(
+    funcs: List[Callable], content, always_keep: Optional[Callable[[Callable], bool]] = None
+) -> List[Callable]:
     """Narrow ``funcs`` to the tools relevant to the user's message (RAG).
 
     Gated behind ``TOOL_RELEVANCE_FILTER`` (Advanced Settings toggle). When on,
@@ -334,7 +379,10 @@ def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
     browser_snapshot / browser_click). When off, all tools are sent.
 
     ``content`` should be the plain user message (no sender label, no history
-    context), so it matches the tool descriptions.
+    context), so it matches the tool descriptions. Tools for which
+    ``always_keep(tool)`` is true are kept whatever their score (e.g. the
+    WhatsApp tools in a WhatsApp chat: the embedding model does not link
+    "enquete" to "poll").
 
     Fail-open contract: ANY problem (flag off, empty message, embeddings
     unavailable, embedding error) returns the ORIGINAL list unchanged.
@@ -376,6 +424,8 @@ def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
         keep = set(best) | {
             i for i, f in enumerate(funcs) if f.__module__ in modules
         }
+        if always_keep is not None:
+            keep |= {i for i, f in enumerate(funcs) if always_keep(f)}
         filtered = [f for i, f in enumerate(funcs) if i in keep]
         logger.info(
             "Tool relevance filter: %d/%d tools selected (top: %s)",

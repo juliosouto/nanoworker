@@ -29,7 +29,8 @@ COMPACT_RULES_TEMPLATE = """\
 7. Files are stored in /app/files/ with subfolders: documents/, downloads/, images/, music/, temp/, videos/.
 """
 COMPACT_RULES_WITH_TOOLS = """\
-8. You are sending a list of tools you can use; always use a tool to fulfill the user's request.\
+8. You are sending a list of tools you can use; always use a tool to fulfill the user's request.
+9. Never say you did something (sent, created, scheduled, saved...) unless you called the tool for it and it succeeded. If no available tool can do it, say so.\
 """
 
 _compact_rules_prompt = ChatPromptTemplate.from_template(COMPACT_RULES_TEMPLATE)
@@ -72,6 +73,7 @@ def build_system_prompt(
     from agent.prompt_builder import (
         JSON_SCHEMA_PROMPT,
         JSON_SCHEMA_PROMPT_WITH_PLAN,
+        SATISFIED_RULE,
         _fetch_user_memory,
         _inject_channel_rules,
         _inject_project_path,
@@ -107,10 +109,13 @@ def build_system_prompt(
     if not native_structured:
         schema_enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
         schema_prompt = JSON_SCHEMA_PROMPT_WITH_PLAN if schema_enabled else JSON_SCHEMA_PROMPT
-        if system_prompt:
-            system_prompt = f"{system_prompt}\n\n{schema_prompt}"
-        else:
-            system_prompt = schema_prompt
+    else:
+        # The API enforces the field names, not when the request is satisfied.
+        schema_prompt = SATISFIED_RULE
+    if system_prompt:
+        system_prompt = f"{system_prompt}\n\n{schema_prompt}"
+    else:
+        system_prompt = schema_prompt
 
     # 7. User memory: every entry, always. These are fixed, mandatory
     # instructions (like worker_instructions), so no RAG selection applies.

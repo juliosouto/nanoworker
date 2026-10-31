@@ -38,6 +38,7 @@ class TestResolveProvider(unittest.TestCase):
         self.assertEqual(resolve_provider(None, "openai/gpt"), "openai")
         self.assertEqual(resolve_provider(None, "ollama/llama"), "ollama")
         self.assertEqual(resolve_provider(None, "openrouter/x"), "openrouter")
+        self.assertEqual(resolve_provider(None, "deepseek/deepseek-chat"), "deepseek")
 
     def test_default_is_gemini(self):
         self.assertEqual(resolve_provider(None, "gemini-2.0-flash"), "gemini")

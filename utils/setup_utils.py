@@ -1,18 +1,19 @@
 import os
-import shutil
 import sqlite3
 from datetime import datetime
-from database import get_db, encrypt_value, DB_PATH
+from database import get_db, encrypt_value
 
 
-def backup_database():
+def backup_database(backup_dir=None):
     """
     Creates a timestamped backup copy of the active database file
-    into the bin/backups/ directory. The filename follows the format:
-    YYYY-MM-DD HH-MM-SS.db
+    into the bin/backups/ directory (or ``backup_dir``). The filename follows
+    the format: YYYY-MM-DD HH-MM-SS.db
     """
+    import database
+
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    backup_dir = os.path.join(project_root, 'bin', 'backups')
+    backup_dir = backup_dir or os.path.join(project_root, 'bin', 'backups')
     os.makedirs(backup_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
@@ -20,9 +21,18 @@ def backup_database():
     backup_path = os.path.join(backup_dir, backup_filename)
 
     # Resolve DB_PATH relative to project root if not absolute
-    db_source = DB_PATH if os.path.isabs(DB_PATH) else os.path.join(project_root, DB_PATH)
+    db_path = database.DB_PATH
+    db_source = db_path if os.path.isabs(db_path) else os.path.join(project_root, db_path)
 
-    shutil.copy2(db_source, backup_path)
+    # SQLite's backup API, not a file copy: in WAL mode recent writes may
+    # still be in the -wal file and a plain copy would miss them.
+    src = sqlite3.connect(db_source)
+    dst = sqlite3.connect(backup_path)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
     return backup_path
 
 def setup_app_config():

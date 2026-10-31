@@ -103,6 +103,45 @@ def test_get_embeddings_returns_none_when_model_fails(ready_db, monkeypatch):
     assert e.embeddings_available() is False
 
 
+def test_failed_load_waits_before_retrying(ready_db, monkeypatch):
+    e = _real_embeddings_module()
+    attempts = []
+
+    def boom(**kwargs):
+        attempts.append(1)
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr(e, "_embedding_class", lambda: boom)
+    assert e.get_embeddings() is None
+    assert e.get_embeddings() is None
+    assert len(attempts) == 1
+    monkeypatch.setattr(e, "LOAD_RETRY_SECONDS", 0)
+    assert e.get_embeddings() is None
+    assert len(attempts) == 2
+
+
+def test_loading_one_model_does_not_block_the_other(ready_db, monkeypatch):
+    import threading
+
+    e = _real_embeddings_module()
+    release = threading.Event()
+
+    class SlowHF:
+        def __init__(self, model_name, **kwargs):
+            if model_name == e.TOOL_MODEL:
+                release.wait(5)
+
+    monkeypatch.setattr(e, "_embedding_class", lambda: SlowHF)
+    t = threading.Thread(target=e.get_embeddings, args=(e.TOOL_MODEL,))
+    t.start()
+    try:
+        assert e.get_embeddings() is not None  # returns while the tool model loads
+        assert t.is_alive()
+    finally:
+        release.set()
+        t.join()
+
+
 def test_local_embeddings_are_384_dim_and_normalised(ready_db):
     """Runs the real all-MiniLM-L6-v2 model; skipped when its weights are not
     cached and the environment has no network to fetch them."""

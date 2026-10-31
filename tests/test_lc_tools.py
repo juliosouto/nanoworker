@@ -449,3 +449,50 @@ class TestSchemaBuildResilience(unittest.TestCase):
         self.assertEqual(
             decls[0].function_declarations[0].name, "multi_param_tool"
         )
+
+
+class TestParameterizedAnnotations:
+    """list[str] / Optional[int] params keep their real JSON types."""
+
+    def _func(self):
+        from typing import Optional
+
+        def send_poll(question: str, options: list[str], note_id: Optional[int] = None) -> str:
+            """Creates a poll.
+
+            options: The choices.
+            """
+            return f"{question}:{'|'.join(options)}:{note_id}"
+
+        return send_poll
+
+    def test_schema_types(self):
+        from agent.lc.tools_lc import tool_param_schema
+
+        props = tool_param_schema(self._func())["properties"]
+        assert props["options"]["type"] == "array"
+        assert props["options"]["items"] == {"type": "string"}
+        assert props["note_id"]["type"] == "integer"
+
+    def test_legacy_openai_schema_types(self):
+        from agent.openai_tools import convert_to_openai_tool
+
+        props = convert_to_openai_tool(self._func())["function"]["parameters"]["properties"]
+        assert props["options"]["type"] == "array"
+        assert props["options"]["items"] == {"type": "string"}
+        assert props["note_id"]["type"] == "integer"
+
+    def test_list_and_null_arguments_reach_the_tool(self):
+        from agent.lc.tools_lc import lc_tool
+
+        tool = lc_tool(self._func(), gemini_safe=True)
+        assert tool.run({"question": "Q", "options": ["A", "B"]}) == "Q:A|B:None"
+        assert tool.run({"question": "Q", "options": ["A", "B"], "note_id": None}) == "Q:A|B:None"
+        assert tool.run({"question": "Q", "options": ["A", "B"], "note_id": 7}) == "Q:A|B:7"
+
+    def test_invalid_arguments_go_back_to_the_model(self):
+        from agent.lc.tools_lc import lc_tool
+
+        out = lc_tool(self._func()).run({"question": "Q", "options": "A, B"})
+        assert out.startswith("Error: invalid arguments for send_poll:")
+        assert "call it again" in out
