@@ -759,6 +759,48 @@ class TestRunnerUnavailableRetry(unittest.TestCase):
         self.assertEqual(executor.invoke.call_count, 5)
         self.assertEqual(waits, [5.0, 10.0, 20.0, 40.0])
 
+    def test_fails_over_fast_when_another_model_follows(self):
+        from agent.openai_tools import reset_has_fallback_model, set_has_fallback_model
+
+        waits, feedback = [], []
+        executor = self._executor([Exception(GEMINI_503)] * 5)
+        token = set_has_fallback_model(True)
+        try:
+            with self.assertRaises(Exception):
+                self._invoke(executor, waits, feedback)
+        finally:
+            reset_has_fallback_model(token)
+        self.assertEqual(executor.invoke.call_count, 2)
+        self.assertEqual(waits, [5.0])
+        self.assertIn("Model overloaded (503) on attempt 1/2", feedback[0])
+
+
+class TestFallbackChainUnavailable(unittest.TestCase):
+    """invoke_llm_with_fallback tells each model whether another one follows."""
+
+    def test_flag_is_set_per_model(self):
+        from agent import llm_router
+        from agent.openai_tools import _has_fallback_model
+
+        seen = []
+
+        def fake_route(model_name, *a, **k):
+            seen.append((model_name, _has_fallback_model.get()))
+            if model_name != "m3":
+                raise Exception(GEMINI_503)
+            return "ok"
+
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        with patch.object(llm_router, "route_llm_call", side_effect=fake_route), \
+                patch.object(llm_router, "insert_feedback"):
+            out = llm_router.invoke_llm_with_fallback(
+                [], {}, "hi", ["m1", "m2", "m3"], cursor, "sid", "mid"
+            )
+        self.assertEqual(out, "ok")
+        self.assertEqual(seen, [("m1", True), ("m2", True), ("m3", False)])
+        self.assertFalse(_has_fallback_model.get())
+
 
 class TestFallbackPromptContract(unittest.TestCase):
     """A fallback model gets the JSON contract the first model did not need."""

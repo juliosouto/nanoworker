@@ -12,6 +12,7 @@ from agent.db_feedback import insert_feedback
 from agent.openai_tools import (
     _describe_tool_args,
     _is_service_unavailable_error,
+    _unavailable_attempts,
     _wait_seconds_for_unavailable,
     execute_openai_compatible_llm,
 )
@@ -169,11 +170,12 @@ def call_gemini_llm(
             except Exception as e:
                 error_str = str(e)
                 if _is_service_unavailable_error(e):
-                    if attempt >= max_retries - 1:
+                    attempts = _unavailable_attempts(max_retries)
+                    if attempt >= attempts - 1:
                         raise e  # retries exhausted: fall back to the model fallback chain
                     wait_seconds = _wait_seconds_for_unavailable(attempt)
                     feedback = (
-                        f"⏳ Model overloaded (503) on attempt {attempt + 1}/{max_retries}. "
+                        f"⏳ Model overloaded (503) on attempt {attempt + 1}/{attempts}. "
                         f"Waiting {wait_seconds:.0f}s to retry..."
                     )
                     insert_feedback(cursor, table, session_id, message_in_id, feedback)

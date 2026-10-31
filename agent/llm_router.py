@@ -6,6 +6,7 @@ and implements fallback across multiple models.
 import logging
 
 from agent.db_feedback import insert_feedback
+from agent.openai_tools import reset_has_fallback_model, set_has_fallback_model
 from agent.stop_check import StopRequestedError
 import agent.llm_providers as _providers
 import agent.lc.settings as lc_settings
@@ -547,6 +548,8 @@ def invoke_llm_with_fallback(
                 cursor, table, session_id, message_in_id, f"Changing to {model_name}"
             )
 
+        # A 503 on this model fails over fast while another model follows.
+        fallback_token = set_has_fallback_model(i < len(models_to_try) - 1)
         try:
             response_text = route_llm_call(
                 model_name,
@@ -569,5 +572,7 @@ def invoke_llm_with_fallback(
                 continue
             else:
                 raise e
+        finally:
+            reset_has_fallback_model(fallback_token)
 
     return "Error: All models failed."

@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import re
+from contextvars import ContextVar
 
 from agent.db_feedback import insert_feedback
 from agent.lc import settings as lc_settings
@@ -96,6 +97,30 @@ def _is_service_unavailable_error(error: Exception) -> bool:
         or "overloaded" in lowered
         or "high demand" in lowered
     )
+
+
+# 503 attempts on one model while the fallback chain still has another model:
+# one quick retry, then switch models. A 503 means the provider is saturated,
+# so waiting out the full back-off on it (75s) only delays an answer the next
+# model can give right away; the full back-off is kept for the last model.
+_UNAVAILABLE_ATTEMPTS_WITH_FALLBACK = 2
+_has_fallback_model: ContextVar = ContextVar("has_fallback_model", default=False)
+
+
+def set_has_fallback_model(value: bool):
+    """Tell the retry loops whether another model follows; returns a reset token."""
+    return _has_fallback_model.set(bool(value))
+
+
+def reset_has_fallback_model(token) -> None:
+    _has_fallback_model.reset(token)
+
+
+def _unavailable_attempts(max_attempts: int) -> int:
+    """How many times a 503 is tried on the current model."""
+    if _has_fallback_model.get():
+        return min(max_attempts, _UNAVAILABLE_ATTEMPTS_WITH_FALLBACK)
+    return max_attempts
 
 
 def _wait_seconds_for_unavailable(attempt: int) -> float:
@@ -390,11 +415,12 @@ def execute_openai_compatible_llm(
                         f"Waiting {wait_seconds:.0f}s to retry..."
                     )
                 elif _is_service_unavailable_error(e):
-                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                    attempts = _unavailable_attempts(_API_CALL_MAX_RETRIES)
+                    if retry_attempt >= attempts - 1:
                         raise e  # retries exhausted: propagate for model fallback
                     wait_seconds = _wait_seconds_for_unavailable(retry_attempt)
                     retry_feedback = (
-                        f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                        f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{attempts}. "
                         f"Waiting {wait_seconds:.0f}s to retry..."
                     )
                 else:

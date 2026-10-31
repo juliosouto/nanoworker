@@ -321,6 +321,7 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
         _is_provider_balance_error,
         _is_rate_limit_error,
         _is_service_unavailable_error,
+        _unavailable_attempts,
         _wait_seconds_for_rate_limit,
         _wait_seconds_for_unavailable,
     )
@@ -359,11 +360,12 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
                     f"Waiting {wait_seconds:.0f}s to retry..."
                 )
             elif _is_service_unavailable_error(e):
-                if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                attempts = _unavailable_attempts(_API_CALL_MAX_RETRIES)
+                if retry_attempt >= attempts - 1:
                     raise e
                 wait_seconds = _wait_seconds_for_unavailable(retry_attempt)
                 retry_feedback = (
-                    f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                    f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{attempts}. "
                     f"Waiting {wait_seconds:.0f}s to retry..."
                 )
             else:
