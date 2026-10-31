@@ -7,7 +7,6 @@ Rode na raiz do projeto (onde fica o nanoworker.db; no Docker, /app):
 Não precisa reiniciar o app: get_config lê o banco a cada chamada. Variáveis
 de ambiente (LLM_STACK, AGENT_FLOW) têm prioridade sobre o banco.
 """
-import shutil
 import sqlite3
 import sys
 from datetime import datetime
@@ -30,12 +29,15 @@ ROLLBACK = {
 def main():
     values = ROLLBACK if "--rollback" in sys.argv else ENABLE
 
-    backup = f"{DB_PATH}.bak-{datetime.now():%Y%m%d-%H%M%S-%f}"
-    shutil.copy2(DB_PATH, backup)
-    print(f"Backup: {backup}")
-
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     try:
+        # SQLite's backup API also copies what is still in the -wal file,
+        # so the backup is complete while the app is running.
+        backup = f"{DB_PATH}.bak-{datetime.now():%Y%m%d-%H%M%S-%f}"
+        with sqlite3.connect(backup) as dest:
+            conn.backup(dest)
+        print(f"Backup: {backup}")
+
         keys = list(values)
         marks = ",".join("?" * len(keys))
         before = dict(conn.execute(
