@@ -113,3 +113,61 @@ class TestAgentFlowSetting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGraphExecutorSqliteThreads(unittest.TestCase):
+    """The graph's tool node runs tools in a worker thread: the feedback
+    callback and the /stop check must not use the caller's sqlite cursor there."""
+
+    def setUp(self):
+        import os
+        import sqlite3
+        import tempfile
+
+        import database
+
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.addCleanup(os.unlink, self.db_path)
+        p = patch.object(database, "DB_PATH", self.db_path)
+        p.start()
+        self.addCleanup(p.stop)
+        self.conn = sqlite3.connect(self.db_path)
+        self.conn.execute(
+            "CREATE TABLE messages_out (id TEXT, session_id TEXT, in_reply_to TEXT, content TEXT)"
+        )
+        self.conn.commit()
+        self.addCleanup(self.conn.close)
+
+    def test_tool_feedback_written_from_the_tool_thread(self):
+        scripted = base.ScriptedToolCallingModel(
+            responses=[
+                AIMessage(content="", tool_calls=[{"name": "echo_tool", "args": {"x": "hi"}, "id": "1"}]),
+                AIMessage(content="DONE"),
+            ]
+        )
+        from agent.db_feedback import thread_safe_cursor
+
+        # Mirrors execute_autonomous_loop, which wraps the cursor its /stop check uses.
+        stop_cursor = thread_safe_cursor(self.conn.cursor())
+
+        def stop_check():
+            stop_cursor.execute("SELECT 1 FROM messages_out WHERE content = '/stop'")
+            return stop_cursor.fetchone() is not None
+
+        from agent.stop_check import reset_stop_check, set_stop_check
+
+        token = set_stop_check(stop_check)
+        try:
+            with base._patch_model(scripted), base._patch_config(), \
+                    patch.object(runner.lc_settings, "agent_flow", return_value="graph"):
+                out = runner.run_langchain_llm(
+                    "gpt-4o", [], {"system_instruction": "sys", "tools": [base.echo_tool]},
+                    "query", self.conn.cursor(), "sid", "mid", "messages_out",
+                    provider="openai", api_key="k",
+                )
+        finally:
+            reset_stop_check(token)
+        self.assertEqual(out, "DONE")
+        rows = [r[0] for r in self.conn.execute("SELECT content FROM messages_out")]
+        self.assertIn("⚙️ Executing local tool: echo_tool...", rows)

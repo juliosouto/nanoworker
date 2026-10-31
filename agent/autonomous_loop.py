@@ -193,6 +193,10 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
     elif autonomous_limit > 20:
         autonomous_limit = 20
 
+    from agent.db_feedback import thread_safe_cursor
+
+    # The /stop check also runs from the graph's tool thread (AGENT_FLOW=graph).
+    cursor = thread_safe_cursor(cursor)
     current_send_content = list(initial_content) if isinstance(initial_content, list) else [initial_content]
     final_response = ""
     table = "ide_messages_out" if is_ide else "messages_out"

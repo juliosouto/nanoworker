@@ -59,7 +59,10 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
                  on_complete=None):
         super().__init__()
         self.raise_error = True  # let StopRequestedError from hooks propagate
-        self._cursor = cursor
+        from agent.db_feedback import thread_safe_cursor
+
+        # Tool hooks run in the graph's tool thread (AGENT_FLOW=graph).
+        self._cursor = thread_safe_cursor(cursor)
         self._table = table
         self._session_id = session_id
         self._message_in_id = message_in_id
