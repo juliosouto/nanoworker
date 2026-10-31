@@ -771,3 +771,64 @@ def test_send_whatsapp_message_to_other_chat_still_works(wa_setup, mocker):
         reset()
     assert "successfully" in res
     post.assert_called_once()
+
+
+def _in_group(mocker, last_content, sender="5511999999999", sender_alt="275603907469434"):
+    """Answer a group message from ``sender`` (session sid-1)."""
+    from utils.session import current_session_id
+
+    rows = {
+        "sessions": {"channel_id": "wa_web:120363111-222@g.us"},
+        "messages_in": {"sender_id": sender, "sender_id_alt": sender_alt, "content": last_content},
+    }
+    conn = MagicMock()
+    conn.execute.side_effect = lambda sql, params=(): MagicMock(
+        fetchone=MagicMock(return_value=rows["sessions" if "FROM sessions" in sql else "messages_in"])
+    )
+    mocker.patch("database.get_db", return_value=conn)
+    token = current_session_id.set("sid-1")
+    return lambda: current_session_id.reset(token)
+
+
+@pytest.mark.parametrize("target", ["5511999999999", "5511999999999@s.whatsapp.net", "275603907469434@lid"])
+def test_group_reply_to_the_requester_in_private_is_refused(wa_setup, mocker, target):
+    os_name, wa_module = wa_setup
+    post = mocker.patch("requests.post")
+    reset = _in_group(mocker, "@Flint estamos na zoeira. Esquece isso")
+    try:
+        results = [
+            wa_module.send_whatsapp_message(target, "ok"),
+            wa_module.send_whatsapp_file(target, "/tmp/x.pdf"),
+            wa_module.send_whatsapp_poll(target, "Q?", ["a", "b"]),
+        ]
+    finally:
+        reset()
+    assert all(r.startswith("Error: not sent. You are in a group chat") for r in results)
+    post.assert_not_called()
+
+
+def test_group_private_message_allowed_when_asked(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    reset = _in_group(mocker, "@Flint me manda isso no privado")
+    mocker.patch.object(wa_module, "_is_allowed_to", return_value=True)
+    mocker.patch("utils.audio_utils.extract_and_generate_audio", return_value=("ok", None))
+    post = mocker.patch("requests.post", return_value=MagicMock(status_code=200))
+    try:
+        res = wa_module.send_whatsapp_message("5511999999999", "ok")
+    finally:
+        reset()
+    assert "successfully" in res
+    post.assert_called_once()
+
+
+def test_group_message_to_someone_else_is_allowed(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    reset = _in_group(mocker, "@Flint manda um oi pro Pedro")
+    mocker.patch.object(wa_module, "_is_allowed_to", return_value=True)
+    mocker.patch("utils.audio_utils.extract_and_generate_audio", return_value=("oi", None))
+    post = mocker.patch("requests.post", return_value=MagicMock(status_code=200))
+    try:
+        res = wa_module.send_whatsapp_message("5511888888888", "oi")
+    finally:
+        reset()
+    assert "successfully" in res

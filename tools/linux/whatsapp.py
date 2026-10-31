@@ -1,4 +1,5 @@
 import logging
+import re
 
 import requests
 
@@ -257,6 +258,55 @@ def _is_current_chat(phone_number) -> bool:
         return False
 
 
+# Words that mean the user asked for a private message from a group chat.
+_PRIVATE_REQUEST_RE = re.compile(
+    r"\b(privado|pv|dm|inbox|particular|reservado|direct|private(ly)?)\b", re.IGNORECASE
+)
+
+
+def _private_reply_in_group(phone_number) -> bool:
+    """True when, in a group chat, the target is the private chat of the person
+    who just asked and they did not ask for a private message.
+
+    Models sometimes "reply to the user" by messaging their number: the answer
+    then lands in that person's private chat instead of the group.
+    """
+    target = _jid_number(phone_number)
+    if not target or str(phone_number).strip().lower() == "self" or "@g.us" in str(phone_number):
+        return False
+    try:
+        from utils.session import current_session_id
+        session_id = current_session_id.get()
+        if not session_id:
+            return False
+        from database import get_db
+        conn = get_db()
+        try:
+            session = conn.execute("SELECT channel_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if not session or not str(session["channel_id"] or "").endswith("@g.us"):
+                return False
+            last = conn.execute(
+                "SELECT sender_id, sender_id_alt, content FROM messages_in "
+                "WHERE session_id = ? ORDER BY rowid DESC LIMIT 1", (session_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not last:
+            return False
+        senders = {_jid_number(last["sender_id"]), _jid_number(last["sender_id_alt"])} - {""}
+        return target in senders and not _PRIVATE_REQUEST_RE.search(last["content"] or "")
+    except Exception as e:
+        logger.warning(f"Could not check the group reply target: {e}")
+        return False
+
+
+_PRIVATE_REPLY_ERROR = (
+    "Error: not sent. You are in a group chat and this is the private chat of the person "
+    "who asked, who did not ask for a private message. Answer in the group: put text in "
+    "your final answer, or send files/polls to the group's own phone_number."
+)
+
+
 def send_whatsapp_message(phone_number: str, message: str) -> str:
     """
     Sends a text message to a phone number via WhatsApp.
@@ -280,6 +330,8 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
         return ("Error: not sent. This is the current chat, where your reply is delivered "
                 "automatically. Do not call send_whatsapp_message for it: put this message "
                 "in your final answer instead.")
+    if _private_reply_in_group(phone_number):
+        return _PRIVATE_REPLY_ERROR
     from utils.audio_utils import extract_and_generate_audio
     text_to_send, audio_path = extract_and_generate_audio(message)
     
@@ -348,6 +400,8 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
         A confirmation string indicating success or an error message.
     """
     phone_number = str(phone_number)
+    if _private_reply_in_group(phone_number):
+        return _PRIVATE_REPLY_ERROR
     import os
     import shutil
     import uuid
@@ -456,6 +510,8 @@ def send_whatsapp_poll(phone_number: str, question: str, options: list[str], mul
         A confirmation string indicating success or an error message.
     """
     phone_number = str(phone_number)
+    if _private_reply_in_group(phone_number):
+        return _PRIVATE_REPLY_ERROR
     if not _is_allowed_to(phone_number, allow_mentions_override=True):
         return (f"Error: Access Denied. Sending polls to {phone_number} is blocked. "
                 f"You MUST reply to the user EXACTLY with this English sentence: "
