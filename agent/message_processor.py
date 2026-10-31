@@ -227,6 +227,11 @@ def _build_history_from_message_history(cursor, channel_id: str, exclude_client_
 _SHORT_TOOL_QUERY_WORDS = 6
 
 
+def _is_whatsapp_tool(func) -> bool:
+    """True for the WhatsApp channel tools (send message/file, poll, ...)."""
+    return getattr(func, "__module__", "").endswith(".whatsapp")
+
+
 def _tool_query(history: list, message: str) -> str:
     """Text the tool relevance filter matches tools against.
 
@@ -584,7 +589,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             # user message (local embeddings); fail-open to the full set.
             from agent.lc.tools_lc import filter_tools_by_relevance
 
-            tools = filter_tools_by_relevance(tools, _tool_query(history, rag_query))
+            tools = filter_tools_by_relevance(
+                tools, _tool_query(history, rag_query),
+                always_keep=_is_whatsapp_tool if (is_wa_group or is_wa_private) else None,
+            )
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
 

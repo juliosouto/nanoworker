@@ -503,3 +503,45 @@ def test_overloaded_gemini_is_retried(env, monkeypatch):
     assert texts[-1] == "Respondi depois da fila."
     # The progress message is deleted once the answer arrives.
     assert any(kind == "delete" for kind, _ in env.baileys.calls)
+
+
+def test_whatsapp_tools_survive_the_tool_filter(env, monkeypatch):
+    """The embedding model does not link "enquete" to "poll"; in a WhatsApp
+    chat the WhatsApp tools are sent anyway."""
+    def send_whatsapp_poll(phone_number: str, question: str, options: list[str]) -> str:
+        """Sends a poll for voting via WhatsApp."""
+        return "poll sent"
+
+    send_whatsapp_poll.__module__ = "tools.linux.whatsapp"
+    tools = [get_weather, send_whatsapp_poll]
+    monkeypatch.setattr("agent.message_processor.get_permitted_tools", lambda **kw: tools)
+    database.set_config("TOOL_RELEVANCE_FILTER", "true")
+    monkeypatch.setattr("agent.lc.settings.tool_relevance_top_k", lambda: 1)
+
+    class WeatherOnly:
+        """Fake embeddings: everything looks like the weather tool."""
+        def embed_documents(self, texts):
+            return [[1.0, 0.0] if "weather" in t else [0.0, 1.0] for t in texts]
+
+        def embed_query(self, text):
+            return [1.0, 0.0]
+
+    monkeypatch.setattr("agent.lc.embeddings.get_embeddings", lambda *a, **k: WeatherOnly())
+    from agent.lc import tools_lc
+    tools_lc._TOOL_VECTOR_CACHE.clear()
+
+    env.model.script = [
+        _tool_call("send_whatsapp_poll", {"phone_number": GROUP, "question": "Q?", "options": ["A", "B"]}),
+        _answer("Enquete criada."),
+    ]
+    _post(env, f"@{WORKER} crie uma enquete para isso")
+
+    tool_results = [m.content for m in env.model.calls[1] if isinstance(m, ToolMessage)]
+    assert tool_results == ["poll sent"]
+    assert env.baileys.sent_texts()[-1] == "Enquete criada."
+
+
+def test_prompt_forbids_claiming_actions_not_done(env):
+    env.model.script = [_answer("ok")]
+    _post(env, f"@{WORKER} oi")
+    assert "Never say you did something" in env.model.calls[0][0].content

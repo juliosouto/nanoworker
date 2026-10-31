@@ -42,6 +42,7 @@ def apply_standard_rules(system_prompt: str, worker_name: str = None, include_to
         standard_rules += """
     11. I am sending a list of tools you can use. It's a big list.
     12. Always use a tool to fulfill the user's request.
+    13. Never say you did something (sent, created, scheduled, saved...) unless you called the tool for it and it succeeded. If no available tool can do it, say so.
     """
     
     standard_rules += "\n    "

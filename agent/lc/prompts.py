@@ -29,7 +29,8 @@ COMPACT_RULES_TEMPLATE = """\
 7. Files are stored in /app/files/ with subfolders: documents/, downloads/, images/, music/, temp/, videos/.
 """
 COMPACT_RULES_WITH_TOOLS = """\
-8. You are sending a list of tools you can use; always use a tool to fulfill the user's request.\
+8. You are sending a list of tools you can use; always use a tool to fulfill the user's request.
+9. Never say you did something (sent, created, scheduled, saved...) unless you called the tool for it and it succeeded. If no available tool can do it, say so.\
 """
 
 _compact_rules_prompt = ChatPromptTemplate.from_template(COMPACT_RULES_TEMPLATE)

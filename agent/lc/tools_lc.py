@@ -364,7 +364,9 @@ def _tool_vectors(funcs: List[Callable], embeddings):
     return matrix / norms
 
 
-def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
+def filter_tools_by_relevance(
+    funcs: List[Callable], content, always_keep: Optional[Callable[[Callable], bool]] = None
+) -> List[Callable]:
     """Narrow ``funcs`` to the tools relevant to the user's message (RAG).
 
     Gated behind ``TOOL_RELEVANCE_FILTER`` (Advanced Settings toggle). When on,
@@ -377,7 +379,10 @@ def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
     browser_snapshot / browser_click). When off, all tools are sent.
 
     ``content`` should be the plain user message (no sender label, no history
-    context), so it matches the tool descriptions.
+    context), so it matches the tool descriptions. Tools for which
+    ``always_keep(tool)`` is true are kept whatever their score (e.g. the
+    WhatsApp tools in a WhatsApp chat: the embedding model does not link
+    "enquete" to "poll").
 
     Fail-open contract: ANY problem (flag off, empty message, embeddings
     unavailable, embedding error) returns the ORIGINAL list unchanged.
@@ -419,6 +424,8 @@ def filter_tools_by_relevance(funcs: List[Callable], content) -> List[Callable]:
         keep = set(best) | {
             i for i, f in enumerate(funcs) if f.__module__ in modules
         }
+        if always_keep is not None:
+            keep |= {i for i, f in enumerate(funcs) if always_keep(f)}
         filtered = [f for i, f in enumerate(funcs) if i in keep]
         logger.info(
             "Tool relevance filter: %d/%d tools selected (top: %s)",
