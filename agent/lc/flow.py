@@ -143,10 +143,10 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
 
     def retry(state: FlowState) -> FlowState:
         verdict = state["verdict"]
-        emit(
-            f"🔄 Agent reflecting (Iteration {state['iteration']}/{limit}): "
-            f"{verdict.reason or 'answer incomplete'}"
-        )
+        # The reviewer's reason is internal (English, about tools): log it and
+        # keep the chat message the same as the legacy loop's.
+        logger.info("Agent reflecting (%d/%d): %s", state["iteration"], limit, verdict.reason)
+        emit(f"🔄 Agent reflecting (Iteration {state['iteration']}/{limit})...")
         # Media already seen by the model is not re-sent (same as the legacy loop).
         parts = [
             types.Part.from_text(text=p) if isinstance(p, str) else p

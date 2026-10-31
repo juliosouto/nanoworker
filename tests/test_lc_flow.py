@@ -116,8 +116,8 @@ class TestAgentFlow(_FlowCase):
         # The first round moved into the history (user turn + model answer).
         self.assertEqual([c.role for c in self.history], ["user", "model"])
         self.assertEqual(self.history[1].parts[0].text, "I will check.")
-        self.assertTrue(any(f.startswith("🔄 Agent reflecting (Iteration 1/3): no forecast")
-                            for f in self.feedback))
+        self.assertIn("🔄 Agent reflecting (Iteration 1/3)...", self.feedback)
+        self.assertFalse(any("no forecast" in f for f in self.feedback))
 
     def test_needs_user_input_and_failed_end_the_turn(self):
         for status in ("needs_user_input", "failed"):
