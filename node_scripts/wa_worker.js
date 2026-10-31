@@ -649,6 +649,7 @@ app.post('/send', async (req, res) => {
     try {
         console.log(`[Baileys Outbound] to ${targetJid} (edit: ${edit_msg_id || 'none'}): ${text}`);
         let sentMsg;
+        let edited = false;
 
         if (edit_msg_id) {
             try {
@@ -660,6 +661,7 @@ app.post('/send', async (req, res) => {
                         fromMe: true
                     }
                 });
+                edited = Boolean(sentMsg);
             } catch (editErr) {
                 console.warn(`[Baileys Outbound] Failed to edit message ${edit_msg_id} (${editErr.message}), sending new message instead...`);
             }
@@ -688,13 +690,15 @@ app.post('/send', async (req, res) => {
             }
         }
 
-        const msgId = sentMsg?.key?.id || edit_msg_id || null;
+        // An edited message keeps its original id; report that one so the
+        // caller can keep editing the same message.
+        const msgId = edited ? edit_msg_id : (sentMsg?.key?.id || edit_msg_id || null);
         if (msgId) {
             botSentMsgIds.add(msgId);
             // Optional: prevent the Set from growing indefinitely
             if (botSentMsgIds.size > 1000) botSentMsgIds.clear();
         }
-        res.json({ status: 'sent', target: targetJid, message_id: msgId });
+        res.json({ status: 'sent', target: targetJid, message_id: msgId, edited });
     } catch (err) {
         console.error('Failed to send message via Baileys:', err);
         res.status(500).json({ error: 'Failed to send message' });

@@ -8,7 +8,9 @@ import time
 from google import genai
 from google.genai import types
 
+from agent import status
 from agent.db_feedback import insert_feedback
+from agent.status import report_status, tool_status
 from agent.openai_tools import (
     _describe_tool_args,
     _is_service_unavailable_error,
@@ -275,6 +277,7 @@ def call_gemini_llm(
             # Log execution starting
             msg_start = f"⚙️ Executing local tool: {tool_name}..."
             insert_feedback(cursor, table, session_id, message_in_id, msg_start)
+            report_status(tool_status(tool_name))
 
             # Execute Python function with didactic feedback for unknown tools or
             # bad arguments (parity with the OpenAI-compatible loop). A bare
@@ -322,6 +325,7 @@ def call_gemini_llm(
             results_str = "\nResults:\n- " + "\n- ".join(tool_results)
             msg_end = f"⚙️ Executed tools: {tools_str}{results_str}"
             insert_feedback(cursor, table, session_id, message_in_id, msg_end)
+            report_status(status.ANALYZING)
             if on_complete and show_tools_results:
                 try:
                     on_complete(msg_end)

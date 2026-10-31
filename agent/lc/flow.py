@@ -26,7 +26,9 @@ from typing import Any, List, Optional, TypedDict
 from google.genai import types
 
 from agent.db_feedback import insert_feedback
+from agent import status
 from agent.llm_usage import usage_stage
+from agent.status import report_status
 from agent.stop_check import StopRequestedError, is_stop_requested
 
 logger = logging.getLogger(__name__)
@@ -121,6 +123,7 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
     )
 
     def plan(state: FlowState) -> FlowState:
+        report_status(status.PLANNING)
         with _stage("planner"):
             steps = planner.make_plan(
                 user_request, tool_funcs, planner_mode, planner_models,
@@ -142,6 +145,8 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         # /stop between rounds (inside a round the runner checks it per tool).
         if is_stop_requested():
             raise StopRequestedError()
+        if state.get("iteration", 0) > 0:
+            report_status(status.REFINING)
         steps: List = []
         token = lc_runner.set_tool_steps_sink(steps)
         try:
@@ -160,6 +165,7 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         }
 
     def evaluate(state: FlowState) -> FlowState:
+        report_status(status.REVIEWING)
         with _stage("evaluator"):
             verdict = evaluator.evaluate(
                 user_request, state["answer"], state.get("steps"), evaluator_models,

@@ -9,7 +9,9 @@ import logging
 import re
 from contextvars import ContextVar
 
+from agent import status
 from agent.db_feedback import insert_feedback
+from agent.status import report_status, tool_status
 from agent.lc import settings as lc_settings
 from agent.lc.tools_lc import first_line_description, json_schema_type
 from agent.stop_check import StopRequestedError, sleep_interruptible
@@ -516,6 +518,7 @@ def execute_openai_compatible_llm(
             # Log execution starting
             msg_start = f"⚙️ Executing local tool: {tool_name}..."
             insert_feedback(cursor, table, session_id, message_in_id, msg_start)
+            report_status(tool_status(tool_name))
 
             tool_func = next(
                 (f for f in permitted_tools if getattr(f, "__name__", "") == tool_name),
@@ -572,6 +575,7 @@ def execute_openai_compatible_llm(
             results_str = "\nResults:\n- " + "\n- ".join(tool_results)
             msg_end = f"⚙️ Executed tools: {tools_str}{results_str}"
             insert_feedback(cursor, table, session_id, message_in_id, msg_end)
+            report_status(status.ANALYZING)
             if on_complete and show_tools_results:
                 try:
                     on_complete(msg_end)

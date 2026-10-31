@@ -127,6 +127,23 @@ class TestGraphToolErrors(unittest.TestCase):
         self.assertEqual(feedback, ["⚙️ Executed tools: get_weather\nResults:\n- 31°C"])
 
 
+class TestToolStatus(unittest.TestCase):
+    def test_tool_start_and_end_report_status(self):
+        from agent import status
+
+        seen = []
+        handler = runner.FeedbackCallbackHandler(None, "t", "s", "m", False)
+        handler._feedback = lambda text: None
+        token = status.set_status_reporter(seen.append)
+        try:
+            with patch("agent.lc.runner.is_stop_requested", return_value=False):
+                handler.on_tool_start({}, "x", name="search_web")
+            handler.on_tool_end("result", name="search_web")
+        finally:
+            status.reset_status_reporter(token)
+        self.assertEqual(seen, ["🌐 Buscando na web...", status.ANALYZING])
+
+
 class TestAgentFlowSetting(unittest.TestCase):
     def _flow(self, value):
         with patch.dict("os.environ", {"AGENT_FLOW": value}):

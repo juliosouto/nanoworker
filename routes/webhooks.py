@@ -112,24 +112,129 @@ def extract_and_send_images(out_text, target_jid):
     return remaining, sent
 
 
+# Progress notices from the agent loops (retries, waits, reflection). On
+# WhatsApp they go into the status reply instead of separate messages.
+_PROGRESS_MARKERS = (
+    "Agent reflecting",
+    "Error on attempt",
+    "Quota exceeded",
+    "Rate limit (",
+    "Model overloaded (503)",
+    "Model provider temporarily unavailable",
+    "Empty response from model",
+)
+
+
+def _status_text(text):
+    """The status to show for an intermediate message, or None for an answer."""
+    from agent import status
+
+    if not text:
+        return None
+    if text.startswith("⚙️ Executed tools"):
+        return status.ANALYZING  # raw tool results are not shown to the user
+    if text.startswith("📋 Execution Plan"):
+        return text
+    if any(marker in text for marker in _PROGRESS_MARKERS):
+        return text
+    return None
+
+
 def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None, worker_name=None):
     """Build an on_complete callback that sends the agent reply via Baileys.
+
+    While the agent works, every status ("Buscando na web...", retries, the
+    plan) is shown in ONE message that replies to the user's message and is
+    edited at each step (``on_complete.report_status``). The final answer
+    then replaces that message, so the user ends up with a single reply.
 
     ``worker_name`` is recorded as the sender of the bot's replies in the
     channel timeline, so history and RAG show which worker answered.
     """
     from utils.audio_utils import extract_and_generate_audio
 
-    last_progress_msg_id = None
+    state = {"status_msg_id": None, "status_text": None}
+    lock = threading.Lock()
     # The bot's own replies join the same channel timeline (from_me=1) so the
     # LLM history rebuilt from message_history keeps the assistant turns
     # interleaved with the (possibly mention-less) group messages.
     history_channel_id = channel_id or f"wa_web:{(target_jid or '').split(':')[0]}"
 
+    def _send_text(text, edit_msg_id=None):
+        """POST /send; returns (message_id, edited) or (None, False)."""
+        payload = {"text": text, "jid": target_jid}
+        if edit_msg_id:
+            payload["edit_msg_id"] = edit_msg_id
+        elif reply_to_msg_id:
+            payload["quoted_msg_id"] = reply_to_msg_id
+        resp = req.post(f'{BAILEYS_URL}/send', json=payload, timeout=5)
+        logging.info(f"Text send response: {resp.status_code} {resp.text}")
+        if resp.status_code != 200:
+            return None, False
+        data = resp.json()
+        return data.get("message_id"), bool(data.get("edited"))
+
+    def report_status(text):
+        """Show ``text`` in the status reply (sent once, then edited)."""
+        with lock:
+            if not text or text == state["status_text"]:
+                return
+            try:
+                msg_id, edited = _send_text(text, edit_msg_id=state["status_msg_id"])
+            except Exception as e:
+                logging.warning(f"Failed to update status message: {e}")
+                return
+            if msg_id and not edited:
+                # First status, or the edit failed (e.g. too old) and the
+                # worker sent a new message: keep editing that one.
+                state["status_msg_id"] = msg_id
+            state["status_text"] = text
+
+    def _drop_status_message():
+        msg_id = state["status_msg_id"]
+        state["status_msg_id"] = state["status_text"] = None
+        if not msg_id:
+            return
+        try:
+            del_resp = req.post(f'{BAILEYS_URL}/delete',
+                                json={"message_id": msg_id, "jid": target_jid}, timeout=5)
+            logging.info(f"Status message deletion response: {del_resp.status_code} {del_resp.text}")
+        except Exception as del_err:
+            logging.warning(f"Failed to delete status message {msg_id}: {del_err}")
+
+    def _record_reply(msg_id, text):
+        """Record the delivered reply in the channel timeline. is_bot=1 marks
+        it as an assistant turn (from_me alone would also cover the human
+        owner typing on their phone). Status messages are NOT recorded."""
+        try:
+            import time as _time
+            from database import insert_message_history
+            bot_row_id = insert_message_history(
+                message_id=msg_id,
+                channel_id=history_channel_id,
+                remote_jid=target_jid,
+                is_group=target_jid.endswith('@g.us'),
+                from_me=1,
+                is_bot=1,
+                sender_name=worker_name,
+                content=text,
+                msg_timestamp=int(_time.time()),
+                was_processed=1,
+            )
+            if bot_row_id is not None:
+                from agent.lc.history_rag import vectorize_message
+                vectorize_message(bot_row_id)
+        except Exception as history_err:
+            logging.error(f"Failed to record bot reply in message_history: {history_err}")
+
     def on_complete(out_text):
-        nonlocal last_progress_msg_id
         try:
             logging.info(f"on_complete triggered for {target_jid} with text length {len(out_text)}")
+
+            status_text = _status_text(out_text)
+            if status_text:
+                report_status(status_text)
+                return
 
             # Deliver generated images as native WhatsApp media. The first
             # image carries the remaining text as its caption, so when images
@@ -139,76 +244,19 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None, worker
 
             text_to_send, audio_path = extract_and_generate_audio(out_text)
 
-            is_progress_msg = bool(
-                text_to_send and (
-                    "Agent reflecting" in text_to_send
-                    or "Error on attempt" in text_to_send
-                    or "Quota exceeded" in text_to_send
-                    or "Rate limit (" in text_to_send
-                    or "Model overloaded (503)" in text_to_send
-                    or "Model provider temporarily unavailable" in text_to_send
-                    or "Empty response from model" in text_to_send
-                )
-            )
-
-            # If this is a final successful response and we previously posted
-            # a progress / retry error message, delete that progress message first.
-            if not is_progress_msg and last_progress_msg_id:
-                try:
-                    del_payload = {"message_id": last_progress_msg_id, "jid": target_jid}
-                    del_resp = req.post(f'{BAILEYS_URL}/delete', json=del_payload, timeout=5)
-                    logging.info(f"Progress message deletion response: {del_resp.status_code} {del_resp.text}")
-                except Exception as del_err:
-                    logging.warning(f"Failed to delete progress message {last_progress_msg_id}: {del_err}")
-                finally:
-                    last_progress_msg_id = None
-
-            # When images were delivered, the remaining text already rode along
-            # as the first image's caption; only send it separately if no image
-            # was actually sent.
-            if text_to_send and not images_sent:
-                payload = {"text": text_to_send, "jid": target_jid}
-                if is_progress_msg and last_progress_msg_id:
-                    payload["edit_msg_id"] = last_progress_msg_id
-                elif reply_to_msg_id:
-                    payload["quoted_msg_id"] = reply_to_msg_id
-
-                resp = req.post(f'{BAILEYS_URL}/send', json=payload, timeout=5)
-                logging.info(f"Text send response: {resp.status_code} {resp.text}")
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    msg_id = data.get("message_id")
-                    if is_progress_msg and msg_id:
-                        last_progress_msg_id = msg_id
-                    elif not is_progress_msg:
-                        last_progress_msg_id = None
-
-                    # Record the delivered reply (text only) in the channel
-                    # timeline. Progress/heartbeat messages are NOT recorded.
-                    # is_bot=1 marks it as an assistant turn (from_me alone
-                    # would also cover the human owner typing on their phone).
-                    if not is_progress_msg and text_to_send:
-                        try:
-                            import time as _time
-                            from database import insert_message_history
-                            bot_row_id = insert_message_history(
-                                message_id=msg_id,
-                                channel_id=history_channel_id,
-                                remote_jid=target_jid,
-                                is_group=target_jid.endswith('@g.us'),
-                                from_me=1,
-                                is_bot=1,
-                                sender_name=worker_name,
-                                content=text_to_send,
-                                msg_timestamp=int(_time.time()),
-                                was_processed=1,
-                            )
-                            if bot_row_id is not None:
-                                from agent.lc.history_rag import vectorize_message
-                                vectorize_message(bot_row_id)
-                        except Exception as history_err:
-                            logging.error(f"Failed to record bot reply in message_history: {history_err}")
+            with lock:
+                if text_to_send and not images_sent:
+                    # The answer replaces the status reply when there is one.
+                    status_msg_id = state["status_msg_id"]
+                    msg_id, edited = _send_text(text_to_send, edit_msg_id=status_msg_id)
+                    if status_msg_id and not edited:
+                        _drop_status_message()  # the answer went out as a new message
+                    state["status_msg_id"] = state["status_text"] = None
+                    if msg_id:
+                        _record_reply(msg_id, text_to_send)
+                else:
+                    # Images or audio only: no text to put in the status reply.
+                    _drop_status_message()
 
             if audio_path:
                 resp = req.post(f'{BAILEYS_URL}/send_audio', json={"file_path": audio_path, "jid": target_jid}, timeout=5)
@@ -220,6 +268,7 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None, worker
         except Exception as e:
             logging.error(f"Failed to send reply to Baileys Worker: {e}")
 
+    on_complete.report_status = report_status
     return on_complete
 
 

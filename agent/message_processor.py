@@ -604,7 +604,16 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             temperature=worker.get('temperature') if worker else None,
         )
 
-        mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results)
+        # Live status (one reply edited at each step) when the channel supports it.
+        from agent import status as agent_status
+        status_reporter = getattr(on_complete, "report_status", None)
+        status_token = agent_status.set_status_reporter(status_reporter) if status_reporter else None
+        try:
+            agent_status.report_status(agent_status.THINKING)
+            mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results)
+        finally:
+            if status_token is not None:
+                agent_status.reset_status_reporter(status_token)
 
     except StopRequestedError:
         mock_response = "🛑 Processamento interrompido pelo usuário (/stop)."

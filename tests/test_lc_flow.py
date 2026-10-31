@@ -266,6 +266,21 @@ class TestPlanner(_FlowCase):
         self.run_flow(3, tools=[weather])
         self.assertEqual(self.stages, ["planner", "executor", "evaluator", "executor", "evaluator"])
 
+    def test_status_reported_at_each_step(self):
+        from agent import status
+
+        seen = []
+        self.planner_mode = "always"
+        self.plans = [self.PLAN]
+        self.answers = ["a1", "a2"]
+        self.verdicts = [_verdict("needs_more_work"), _verdict("done")]
+        token = status.set_status_reporter(seen.append)
+        try:
+            self.run_flow(3, tools=[weather])
+        finally:
+            status.reset_status_reporter(token)
+        self.assertEqual(seen, [status.PLANNING, status.REVIEWING, status.REFINING, status.REVIEWING])
+
     def test_plan_is_kept_in_history_on_retry(self):
         self.planner_mode = "always"
         self.plans = [self.PLAN]

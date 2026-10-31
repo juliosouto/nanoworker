@@ -86,21 +86,37 @@ class FakeBaileys:
     def post(self, url, json=None, timeout=None, **kwargs):
         self.calls.append((url.rsplit("/", 1)[-1], json or {}))
         self._n += 1
+        edit_id = (json or {}).get("edit_msg_id")
 
         class Resp:
             status_code = 200
             text = "ok"
 
-            def __init__(self, msg_id):
-                self._msg_id = msg_id
+            def __init__(self, msg_id, edited):
+                self._msg_id, self._edited = msg_id, edited
 
             def json(self):
-                return {"status": "sent", "message_id": self._msg_id}
+                return {"status": "sent", "message_id": self._msg_id, "edited": self._edited}
 
-        return Resp(f"bot-msg-{self._n}")
+        # Like the worker: an edit keeps the message's original id.
+        if edit_id:
+            return Resp(edit_id, True)
+        return Resp(f"bot-msg-{self._n}", False)
 
     def sent_texts(self):
+        """Every text posted, including status updates and edits."""
         return [body["text"] for kind, body in self.calls if kind == "send"]
+
+    def final_texts(self):
+        """What the chat shows at the end: edits replace, deletes remove."""
+        messages, n = {}, 0
+        for kind, body in self.calls:
+            n += 1
+            if kind == "send":
+                messages[body.get("edit_msg_id") or f"bot-msg-{n}"] = body["text"]
+            elif kind == "delete":
+                messages.pop(body.get("message_id"), None)
+        return list(messages.values())
 
 
 class InlineThread:
@@ -247,7 +263,7 @@ def test_reply_reaches_the_group_quoting_the_message(env):
     env.model.script = [_answer("Bom dia, Julio!")]
     msg_id = _post(env, f"@{WORKER} bom dia")
 
-    assert env.baileys.sent_texts() == ["Bom dia, Julio!"]
+    assert env.baileys.final_texts() == ["Bom dia, Julio!"]
     send = [body for kind, body in env.baileys.calls if kind == "send"][0]
     assert send["jid"] == GROUP
     assert send["quoted_msg_id"] == msg_id
@@ -335,7 +351,7 @@ def test_clarifying_question_is_sent_without_reflection(env):
     _post(env, f"@{WORKER} qual a previsão do tempo?")
 
     assert len(env.model.calls) == 1
-    assert env.baileys.sent_texts() == ["Para qual cidade?"]
+    assert env.baileys.final_texts() == ["Para qual cidade?"]
 
 
 def test_image_reaches_the_model(env):
@@ -480,9 +496,9 @@ def test_audio_transcription_does_not_hold_the_webhook(env, monkeypatch):
     assert time.monotonic() - start < 0.5  # the webhook answered before transcribing
 
     deadline = time.monotonic() + 10
-    while not env.baileys.sent_texts() and time.monotonic() < deadline:
+    while env.baileys.final_texts() in ([], ["🤔 Pensando..."]) and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert env.baileys.sent_texts() == ["São 10h."]
+    assert env.baileys.final_texts() == ["São 10h."]
     assert "que horas são?" in _human_input(env.model.calls[0])
 
 
@@ -501,8 +517,9 @@ def test_overloaded_gemini_is_retried(env, monkeypatch):
     texts = env.baileys.sent_texts()
     assert any("Model overloaded (503) on attempt 1/5" in t for t in texts)
     assert texts[-1] == "Respondi depois da fila."
-    # The progress message is deleted once the answer arrives.
-    assert any(kind == "delete" for kind, _ in env.baileys.calls)
+    # The answer replaces the status reply: one message left, nothing deleted.
+    assert env.baileys.final_texts() == ["Respondi depois da fila."]
+    assert not any(kind == "delete" for kind, _ in env.baileys.calls)
 
 
 def test_whatsapp_tools_survive_the_tool_filter(env, monkeypatch):

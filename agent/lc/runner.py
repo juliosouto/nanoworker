@@ -28,6 +28,8 @@ from agent.lc import cache as lc_cache
 from agent.lc import models as lc_models
 from agent.lc import settings as lc_settings
 from agent.lc.tools_lc import build_lc_tools
+from agent import status
+from agent.status import report_status, tool_status
 from agent.stop_check import StopRequestedError, is_stop_requested, sleep_interruptible
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -94,6 +96,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         self.tool_calls += 1
         logger.info("LangChain agent tool call: %s(%s)", name, str(input_str)[:300])
         self._feedback(f"⚙️ Executing local tool: {name}...")
+        report_status(tool_status(name))
 
     def on_tool_end(self, output, **kwargs) -> None:
         name = kwargs.get("name") or "tool"
@@ -102,6 +105,7 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         logger.info("LangChain agent tool result: %s -> %s", name, str(output)[:300])
         msg = f"⚙️ Executed tools: {name}\nResults:\n- {output}"
         self._feedback(msg)
+        report_status(status.ANALYZING)
         if self._on_complete and self._show_tools_results:
             try:
                 self._on_complete(msg)
