@@ -145,6 +145,7 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None, worker
                     or "Error on attempt" in text_to_send
                     or "Quota exceeded" in text_to_send
                     or "Rate limit (" in text_to_send
+                    or "Model overloaded (503)" in text_to_send
                     or "Model provider temporarily unavailable" in text_to_send
                     or "Empty response from model" in text_to_send
                 )

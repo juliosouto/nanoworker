@@ -10,7 +10,7 @@ import uuid
 from google.genai import types
 
 from agent.autonomous_loop import execute_autonomous_loop
-from agent.openai_tools import _is_provider_balance_error
+from agent.openai_tools import _is_provider_balance_error, _is_service_unavailable_error
 from agent.prompt_builder import build_system_prompt, build_config_kwargs
 from agent.stop_check import StopRequestedError
 from database import get_config, get_db
@@ -54,6 +54,14 @@ def _friendly_llm_error(error_str: str) -> str:
     if _is_provider_balance_error(proxy_error):
         return (
             "💳 The free model provider is temporarily unavailable (HTTP 402). "
+            "I retried automatically several times without success. "
+            "Please resend your message in a few minutes."
+        )
+    # 503 "model overloaded": the back-off retries ran out (the fallback chain
+    # too, when the worker has other models).
+    if _is_service_unavailable_error(proxy_error):
+        return (
+            "⏳ The AI model is overloaded right now (503, high demand). "
             "I retried automatically several times without success. "
             "Please resend your message in a few minutes."
         )

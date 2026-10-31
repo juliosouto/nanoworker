@@ -711,6 +711,55 @@ class TestRouteBranch(unittest.TestCase):
         self.assertEqual(kwargs.get("api_key"), "k")
 
 
+GEMINI_503 = (
+    "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently "
+    "experiencing high demand. Spikes in demand are usually temporary. Please try "
+    "again later.', 'status': 'UNAVAILABLE'}}"
+)
+
+
+class TestRunnerUnavailableRetry(unittest.TestCase):
+    """503 "model overloaded" errors are retried with back-off."""
+
+    def _executor(self, outcomes):
+        executor = MagicMock()
+        executor.invoke.side_effect = outcomes
+        return executor
+
+    def _invoke(self, executor, waits, feedback):
+        def fake_sleep(seconds):
+            waits.append(seconds)
+            return False
+
+        with patch.object(runner, "sleep_interruptible", side_effect=fake_sleep), \
+             patch("agent.db_feedback.insert_feedback",
+                   side_effect=lambda *a: feedback.append(a[-1])):
+            return runner._invoke_with_retry(
+                executor, {}, MagicMock(), None, "messages_out", "sid", "mid", None
+            )
+
+    def test_detects_the_gemini_error(self):
+        from agent.openai_tools import _is_service_unavailable_error
+
+        self.assertTrue(_is_service_unavailable_error(Exception(GEMINI_503)))
+        self.assertFalse(_is_service_unavailable_error(Exception("400 bad request for 5519503000")))
+
+    def test_retries_then_succeeds(self):
+        waits, feedback = [], []
+        executor = self._executor([Exception(GEMINI_503), Exception(GEMINI_503), {"output": "ok"}])
+        self.assertEqual(self._invoke(executor, waits, feedback), {"output": "ok"})
+        self.assertEqual(waits, [5.0, 10.0])
+        self.assertIn("Model overloaded (503) on attempt 1/5", feedback[0])
+
+    def test_gives_up_after_the_last_attempt(self):
+        waits, feedback = [], []
+        executor = self._executor([Exception(GEMINI_503)] * 5)
+        with self.assertRaises(Exception):
+            self._invoke(executor, waits, feedback)
+        self.assertEqual(executor.invoke.call_count, 5)
+        self.assertEqual(waits, [5.0, 10.0, 20.0, 40.0])
+
+
 class TestFallbackPromptContract(unittest.TestCase):
     """A fallback model gets the JSON contract the first model did not need."""
 

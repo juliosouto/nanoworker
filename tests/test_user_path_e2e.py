@@ -484,3 +484,22 @@ def test_audio_transcription_does_not_hold_the_webhook(env, monkeypatch):
         time.sleep(0.05)
     assert env.baileys.sent_texts() == ["São 10h."]
     assert "que horas são?" in _human_input(env.model.calls[0])
+
+
+def test_overloaded_gemini_is_retried(env, monkeypatch):
+    monkeypatch.setattr("agent.lc.runner.sleep_interruptible", lambda seconds: False)
+
+    def overloaded(messages):
+        raise Exception(
+            "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently "
+            "experiencing high demand.', 'status': 'UNAVAILABLE'}}"
+        )
+
+    env.model.script = [overloaded, _answer("Respondi depois da fila.")]
+    _post(env, f"@{WORKER} oi")
+
+    texts = env.baileys.sent_texts()
+    assert any("Model overloaded (503) on attempt 1/5" in t for t in texts)
+    assert texts[-1] == "Respondi depois da fila."
+    # The progress message is deleted once the answer arrives.
+    assert any(kind == "delete" for kind, _ in env.baileys.calls)

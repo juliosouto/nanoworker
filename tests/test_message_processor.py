@@ -20,8 +20,16 @@ class TestFriendlyLLMError(unittest.TestCase):
         self.assertIn("quota (429)", result)
 
     def test_other_error_keeps_generic_message(self):
-        result = _friendly_llm_error("503 Service Unavailable")
-        self.assertEqual(result, "Error calling LLM API: 503 Service Unavailable")
+        result = _friendly_llm_error("500 Internal Server Error")
+        self.assertEqual(result, "Error calling LLM API: 500 Internal Server Error")
+
+    def test_overloaded_503_returns_friendly_message(self):
+        raw = ("Error calling LLM API: 503 UNAVAILABLE. {'error': {'code': 503, 'message': "
+               "'This model is currently experiencing high demand. Spikes in demand are usually "
+               "temporary. Please try again later.', 'status': 'UNAVAILABLE'}}")
+        result = _friendly_llm_error(raw)
+        self.assertIn("overloaded", result)
+        self.assertNotIn("{'error'", result)
 
     def test_provider_402_returns_friendly_message(self):
         # Exact production payload for a free OpenRouter model (GMICloud host).

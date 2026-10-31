@@ -9,7 +9,12 @@ from google import genai
 from google.genai import types
 
 from agent.db_feedback import insert_feedback
-from agent.openai_tools import execute_openai_compatible_llm, _describe_tool_args
+from agent.openai_tools import (
+    _describe_tool_args,
+    _is_service_unavailable_error,
+    _wait_seconds_for_unavailable,
+    execute_openai_compatible_llm,
+)
 from agent.lc import settings as lc_settings
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
@@ -163,15 +168,21 @@ def call_gemini_llm(
                 break
             except Exception as e:
                 error_str = str(e)
-                if "503" in error_str:
-                    feedback = f"⚠️ 503 Error on attempt {attempt + 1}/{max_retries}. Retrying..."
+                if _is_service_unavailable_error(e):
+                    if attempt >= max_retries - 1:
+                        raise e  # retries exhausted: fall back to the model fallback chain
+                    wait_seconds = _wait_seconds_for_unavailable(attempt)
+                    feedback = (
+                        f"⏳ Model overloaded (503) on attempt {attempt + 1}/{max_retries}. "
+                        f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
                     insert_feedback(cursor, table, session_id, message_in_id, feedback)
                     if on_complete:
                         try:
                             on_complete(feedback)
                         except Exception:
                             pass
-                    if sleep_interruptible(2):
+                    if sleep_interruptible(wait_seconds):
                         raise StopRequestedError()
                     continue
                 elif _is_minute_quota_exceeded(error_str, e):

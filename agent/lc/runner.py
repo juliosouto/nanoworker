@@ -294,7 +294,7 @@ def _build_structured_kwargs(config_kwargs: dict, has_tools: bool) -> dict:
 
 def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
                        message_in_id, on_complete):
-    """Run the agent, retrying transient 429/402 errors like the legacy loops.
+    """Run the agent, retrying transient 429/402/503 errors like the legacy loops.
 
     Reuses the exact classification/back-off helpers from ``agent.openai_tools``
     so the ⏳ / 💳 feedback and waits are identical to the OpenAI-compatible loop.
@@ -306,7 +306,9 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
         _PROVIDER_BALANCE_WAIT,
         _is_provider_balance_error,
         _is_rate_limit_error,
+        _is_service_unavailable_error,
         _wait_seconds_for_rate_limit,
+        _wait_seconds_for_unavailable,
     )
     from agent.db_feedback import insert_feedback
 
@@ -340,6 +342,14 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
                 wait_seconds = _wait_seconds_for_rate_limit(e)
                 retry_feedback = (
                     f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
+                    f"Waiting {wait_seconds:.0f}s to retry..."
+                )
+            elif _is_service_unavailable_error(e):
+                if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                    raise e
+                wait_seconds = _wait_seconds_for_unavailable(retry_attempt)
+                retry_feedback = (
+                    f"⏳ Model overloaded (503) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
                     f"Waiting {wait_seconds:.0f}s to retry..."
                 )
             else:
