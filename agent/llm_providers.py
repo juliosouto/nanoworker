@@ -21,6 +21,12 @@ from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
 
+def _client_limits() -> dict:
+    """Per-call timeout and no SDK retries for the OpenAI/Groq clients (see
+    agent.lc.models._request_limits)."""
+    return {"timeout": lc_settings.llm_request_timeout(), "max_retries": 0}
+
+
 def _is_minute_quota_exceeded(error_str: str, exception: Exception) -> bool:
     """
     Returns True for 429 RESOURCE_EXHAUSTED errors caused by per-minute quotas
@@ -89,7 +95,10 @@ def call_gemini_llm(
     max_retries = 5
     if not api_key:
         raise ValueError("API Key for Gemini model is not set.")
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=lc_settings.llm_request_timeout() * 1000),
+    )
 
     # Extract show_tools_results so it's not passed to the Gemini API
     show_tools_results = config_kwargs.pop("show_tools_results", True)
@@ -375,6 +384,7 @@ def call_qwen_llm(
 
     client = openai.OpenAI(
         api_key=api_key,
+        **_client_limits(),
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     )
     return execute_openai_compatible_llm(
@@ -420,7 +430,7 @@ def call_deepseek_llm(
 
     if model_name.lower().startswith("deepseek/"):
         model_name = model_name[len("deepseek/"):]
-    client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com", **_client_limits())
     return execute_openai_compatible_llm(
         client,
         model_name,
@@ -471,7 +481,7 @@ def call_groq_llm(
     if not api_key:
         raise ValueError("API Key for Groq model is not set.")
 
-    client = Groq(api_key=api_key)
+    client = Groq(api_key=api_key, **_client_limits())
     limit_tokens = max_output_tokens if max_output_tokens else 1024
     return execute_openai_compatible_llm(
         client,
@@ -524,7 +534,7 @@ def call_openai_llm(
     if not api_key:
         raise ValueError("API Key for OpenAI model is not set.")
 
-    client = openai.OpenAI(api_key=api_key)
+    client = openai.OpenAI(api_key=api_key, **_client_limits())
     limit_tokens = max_output_tokens if max_output_tokens else None
     return execute_openai_compatible_llm(
         client,
@@ -580,7 +590,7 @@ def call_ollama_llm(
     )
 
     # We use a dummy API key because Ollama doesn't require one, but openai client does
-    client = openai.OpenAI(api_key="ollama", base_url=base_url)
+    client = openai.OpenAI(api_key="ollama", base_url=base_url, **_client_limits())
     limit_tokens = max_output_tokens if max_output_tokens else None
     return execute_openai_compatible_llm(
         client,
@@ -641,6 +651,7 @@ def call_openrouter_llm(
     # OpenRouter requires default headers for ranking, passing them here
     client = openai.OpenAI(
         api_key=api_key,
+        **_client_limits(),
         base_url="https://openrouter.ai/api/v1",
         default_headers={
             "HTTP-Referer": "https://github.com/nanoworker",
@@ -708,6 +719,7 @@ def call_nvidia_llm(
 
     client = openai.OpenAI(
         api_key=api_key,
+        **_client_limits(),
         base_url="https://integrate.api.nvidia.com/v1",
     )
     limit_tokens = max_output_tokens if max_output_tokens else None
@@ -777,6 +789,7 @@ def call_cloudflare_llm(
 
     client = openai.OpenAI(
         api_key=api_key,
+        **_client_limits(),
         base_url=f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
     )
     limit_tokens = max_output_tokens if max_output_tokens else None

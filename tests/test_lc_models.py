@@ -276,3 +276,32 @@ class TestCloudflareModel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRequestLimits(unittest.TestCase):
+    """Every chat model gets the per-call timeout and no SDK-internal retries."""
+
+    def test_every_provider(self):
+        with patch("agent.lc.settings.llm_request_timeout", return_value=45), \
+                patch("database.get_config", return_value="http://localhost:11434/v1"):
+            models = {
+                "gemini": make_chat_model("gemini-2.0-flash", provider="gemini", api_key="k"),
+                "openai": make_chat_model("gpt-4o", provider="openai", api_key="k"),
+                "groq": make_chat_model("llama-3", provider="groq", api_key="k"),
+                "ollama": make_chat_model("ollama/llama3", provider="ollama"),
+            }
+        for name, m in models.items():
+            with self.subTest(provider=name):
+                timeout = getattr(m, "timeout", None) or getattr(m, "request_timeout", None)
+                self.assertEqual(timeout, 45)
+                self.assertEqual(m.max_retries, 0)
+
+
+class TestRequestTimeoutSetting(unittest.TestCase):
+    def test_default_and_minimum(self):
+        from agent.lc import settings
+
+        with patch.object(settings, "_cfg", side_effect=lambda k, d=None: d):
+            self.assertEqual(settings.llm_request_timeout(), 45)
+        with patch.object(settings, "_cfg", side_effect=lambda k, d=None: "1"):
+            self.assertEqual(settings.llm_request_timeout(), 5)

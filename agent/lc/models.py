@@ -52,6 +52,18 @@ _OPENAI_COMPAT_DEFAULT_TEMPERATURE = 1.0
 _GROQ_DEFAULT_MAX_TOKENS = 1024
 
 
+def _request_limits() -> dict:
+    """Per-call timeout and no SDK-internal retries.
+
+    Our loops already retry 429/402/503 with feedback and the fallback chain
+    covers the rest; SDK retries on top (ChatGoogleGenerativeAI defaults to 6)
+    multiply the wait on an overloaded provider.
+    """
+    from agent.lc.settings import llm_request_timeout
+
+    return {"timeout": llm_request_timeout(), "max_retries": 0}
+
+
 def resolve_provider(
     provider: Optional[str],
     model_name: str,
@@ -188,6 +200,7 @@ def _make_gemini(
     kwargs = {
         "model": model_name,
         "google_api_key": api_key,
+        **_request_limits(),
         "temperature": (
             _GEMINI_DEFAULT_TEMPERATURE if temperature is None else temperature
         ),
@@ -256,6 +269,7 @@ def _make_openai_compat(
         kwargs["max_tokens"] = int(max_output_tokens)
     if response_format is not None:
         kwargs["response_format"] = response_format
+    kwargs.update(_request_limits())
     return ChatOpenAI(**kwargs)
 
 
@@ -274,6 +288,7 @@ def _make_groq(model_name, api_key, temperature, max_output_tokens, response_for
         "max_tokens": (
             int(max_output_tokens) if max_output_tokens else _GROQ_DEFAULT_MAX_TOKENS
         ),
+        **_request_limits(),
     }
     # ChatGroq has no first-class response_format field; route it through
     # model_kwargs so it reaches the API verbatim (json_schema / json_object).
@@ -307,4 +322,5 @@ def _make_ollama(model_name, temperature, max_output_tokens, response_format):
         kwargs["max_tokens"] = int(max_output_tokens)
     if response_format is not None:
         kwargs["response_format"] = response_format
+    kwargs.update(_request_limits())
     return ChatOpenAI(**kwargs)

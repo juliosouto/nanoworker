@@ -1,6 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+import agent.llm_providers as _providers
+
 from agent.llm_providers import (
     call_gemini_llm,
     call_qwen_llm,
@@ -441,6 +443,7 @@ def test_call_cloudflare_llm_success(mock_get_config, mock_openai, mock_execute,
     # The account ID read from app_config is embedded in the base URL
     mock_openai.assert_called_once_with(
         api_key="test_key",
+        **_providers._client_limits(),
         base_url="https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1",
     )
     # The full "@cf/"-prefixed slug is required by the API and is NOT stripped

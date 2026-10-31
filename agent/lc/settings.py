@@ -40,6 +40,16 @@ Keys:
                            plain text (no AgentResponse JSON contract).
     AGENT_EVALUATOR_MODEL  str (default "") - model that judges each answer in
                            the graph flow; "" uses the worker's own models.
+    AGENT_PLANNER          'off' | 'auto' | 'always' - phase 3: plan the steps
+                           before the first round (graph flow only). 'auto'
+                           lets the planner skip simple requests and needs
+                           tools. Default: 'always' when PLAN_BEFORE_EXECUTION
+                           is true, else 'off'.
+    AGENT_PLANNER_MODEL    str (default "") - model for the planner; "" uses
+                           the worker's own models.
+    LLM_REQUEST_TIMEOUT    int seconds (default 45, min 5) - limit for one model
+                           API call, so a provider that hangs under high demand
+                           fails over to the next model instead of stalling.
 
 Every reader degrades to its default when the config table is unavailable,
 so import-time and early-startup paths never break.
@@ -207,6 +217,11 @@ def planner_mode() -> str:
 def planner_model() -> str:
     """Model for the graph flow's planner; "" = the worker's own models."""
     return str(_cfg("AGENT_PLANNER_MODEL", "") or "").strip()
+
+
+def llm_request_timeout() -> int:
+    """Seconds one model API call may take before it fails (fallback follows)."""
+    return _cfg_int("LLM_REQUEST_TIMEOUT", 45, 5)
 
 
 def tool_relevance_top_k() -> int:
