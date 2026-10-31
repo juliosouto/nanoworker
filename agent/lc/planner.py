@@ -88,10 +88,13 @@ def make_plan(user_request, tool_funcs, mode, models, cursor, session_id, messag
     ``mode`` is 'auto' (the planner may decide a plan is not needed) or 'always'.
     """
     from agent.llm_router import route_llm_call
+    from agent.openai_tools import reset_has_fallback_model, set_has_fallback_model
 
     prompt = PLANNER_PROMPT.format(mode_rule=_ALWAYS_RULE if mode == "always" else _AUTO_RULE)
     planner_input = build_planner_input(user_request, tool_funcs)
-    for model_name in models:
+    for i, model_name in enumerate(models):
+        # A 503 fails over fast while another model follows (same as the executor).
+        fallback_token = set_has_fallback_model(i < len(models) - 1)
         try:
             raw = route_llm_call(
                 model_name, [], {"system_instruction": prompt, "temperature": 0},
@@ -102,6 +105,8 @@ def make_plan(user_request, tool_funcs, mode, models, cursor, session_id, messag
         except Exception as e:
             logger.warning("Planner model %s failed: %s", model_name, e)
             continue
+        finally:
+            reset_has_fallback_model(fallback_token)
         plan = parse_plan(raw)
         if plan is None:
             logger.warning("Planner model %s returned no valid plan: %r", model_name, str(raw)[:200])

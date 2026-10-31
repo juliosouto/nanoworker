@@ -111,9 +111,12 @@ def evaluate(user_request, answer, steps, models, cursor, session_id, message_in
     the answer instead of looping on an unknown state.
     """
     from agent.llm_router import route_llm_call
+    from agent.openai_tools import reset_has_fallback_model, set_has_fallback_model
 
     eval_input = build_evaluation_input(user_request, answer, steps, plan)
-    for model_name in models:
+    for i, model_name in enumerate(models):
+        # A 503 fails over fast while another model follows (same as the executor).
+        fallback_token = set_has_fallback_model(i < len(models) - 1)
         try:
             raw = route_llm_call(
                 model_name, [], {"system_instruction": EVALUATOR_PROMPT, "temperature": 0},
@@ -124,6 +127,8 @@ def evaluate(user_request, answer, steps, models, cursor, session_id, message_in
         except Exception as e:
             logger.warning("Evaluator model %s failed: %s", model_name, e)
             continue
+        finally:
+            reset_has_fallback_model(fallback_token)
         verdict = parse_verdict(raw)
         if verdict is not None:
             logger.info("Evaluator verdict: %s", json.dumps(verdict.model_dump(), ensure_ascii=False))

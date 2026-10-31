@@ -142,6 +142,23 @@ class TestAgentFlow(_FlowCase):
         self.assertEqual([m for m, _, _ in self.eval_inputs], ["m1", "m2"])
         self.assertEqual(len(self.exec_calls), 1)
 
+    def test_evaluator_fails_over_fast_on_503_except_on_last_model(self):
+        from agent.llm_router import route_llm_call as scripted_route
+        from agent.openai_tools import _has_fallback_model
+
+        flags = []
+
+        def spy(*a, **k):
+            flags.append(_has_fallback_model.get())
+            return scripted_route(*a, **k)
+
+        self.answers = ["sunny"]
+        self.verdicts = [RuntimeError("503"), _verdict("done")]
+        with patch("agent.llm_router.route_llm_call", side_effect=spy):
+            self.run_flow(3)
+        self.assertEqual(flags, [True, False])
+        self.assertFalse(_has_fallback_model.get())
+
     def test_evaluator_model_setting_is_used(self):
         self.answers = ["sunny"]
         self.verdicts = [_verdict("done")]
