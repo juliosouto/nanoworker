@@ -10,7 +10,7 @@ import re
 
 from agent.db_feedback import insert_feedback
 from agent.lc import settings as lc_settings
-from agent.lc.tools_lc import first_line_description
+from agent.lc.tools_lc import first_line_description, json_schema_type
 from agent.stop_check import StopRequestedError, sleep_interruptible
 from database import get_config
 
@@ -134,21 +134,11 @@ def convert_to_openai_tool(func) -> dict:
     properties = {}
     required = []
 
-    # Type map Python to JSON Schema
-    type_map = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        list: "array",
-        dict: "object",
-    }
-
     for param_name, param in sig.parameters.items():
         if param_name in ["self", "args", "kwargs"]:
             continue
 
-        param_type = type_map.get(param.annotation, "string")
+        param_type, item_type = json_schema_type(param.annotation)
 
         # Simple extraction of parameter description from docstring if present
         param_desc = f"Parameter {param_name}"
@@ -161,6 +151,8 @@ def convert_to_openai_tool(func) -> dict:
                         break
 
         properties[param_name] = {"type": param_type, "description": param_desc}
+        if param_type == "array":
+            properties[param_name]["items"] = {"type": item_type or "string"}
 
         # Detect fixed-choice values ("Must be one of: 'a', 'b', 'c'.") and expose
         # them as an enum so small models don't send invalid values.
