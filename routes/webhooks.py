@@ -272,6 +272,26 @@ def _build_wa_callback(target_jid, reply_to_msg_id=None, channel_id=None, worker
     return on_complete
 
 
+def _only_mentions_a_worker(text):
+    """True when ``text`` is just worker mention(s), e.g. "@Ratazana" or "Ratazana"."""
+    from database import get_db
+
+    try:
+        conn = get_db()
+        try:
+            names = [r['worker_name'] for r in conn.execute('SELECT worker_name FROM workers_config')]
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    rest = text or ''
+    for name in sorted((n for n in names if n), key=len, reverse=True):
+        rest = re.sub(rf'@?\b{re.escape(name)}\b', ' ', rest, flags=re.IGNORECASE)
+    # Native "@" mentions arrive as the account's number; drop them too.
+    rest = re.sub(r'@\d+', ' ', rest)
+    return not re.sub(r'[\W_]+', '', rest)
+
+
 def _send_composing_presence(target_jid):
     """Notify the WhatsApp chat that the bot is typing."""
     try:
@@ -425,6 +445,7 @@ def _handle_inbound(data):
     file_name = data.get('file_name')
 
     # If current message doesn't have an attachment but quoted message does, use quoted attachment
+    quoted_media_kind = None
     if not file_path and 'quoted_image_base64' in data:
         from utils.file_utils import save_base64_attachment
         quoted_mime = data.get('quoted_mimetype') or 'image/jpeg'
@@ -436,12 +457,28 @@ def _handle_inbound(data):
         file_path = save_base64_attachment(data['quoted_image_base64'], f'quoted_media.{ext}')
         file_mime_type = quoted_mime
         file_name = f'quoted_media.{ext}'
+        quoted_media_kind = quoted_mime.split('/')[0] if '/' in quoted_mime else 'file'
+        if quoted_mime == 'application/pdf':
+            quoted_media_kind = 'PDF'
 
     # Build enriched content with quoted context if present
-    if quoted_text or data.get('quoted_sender'):
+    if quoted_text or data.get('quoted_sender') or quoted_media_kind:
         quoted_sender = data.get('quoted_sender') or 'User'
-        quoted_header = f"[Quoted message from: {quoted_sender}]"
+        # Say which message the attachment belongs to: without it the model
+        # did not link the image to the quoted message.
+        attached = f", its {quoted_media_kind} is attached" if quoted_media_kind else ""
+        quoted_header = f"[Quoted message from: {quoted_sender}{attached}]"
+        own_text = content
         content = f"{quoted_header}\n{quoted_text}\n\n{content}"
+        # Mentioning the worker on someone's message, with no other text, asks
+        # it to react to that message; without saying so the model answered
+        # an older topic from the history instead.
+        if _only_mentions_a_worker(own_text):
+            about = f" and its {quoted_media_kind}" if quoted_media_kind else ""
+            content += (
+                "\n\n[You were mentioned on the quoted message with no other text: "
+                f"respond to the quoted message{about}, not to earlier topics.]"
+            )
 
     # Anti-hallucination guard: when audio arrives already transcribed, tell the
     # model explicitly. Small models have been observed hallucinating a call to

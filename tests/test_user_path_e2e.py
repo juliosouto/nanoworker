@@ -240,6 +240,37 @@ def _post(env, text, sender="5519900000001", name="Julio", history_only=False,
     return msg_id
 
 
+def test_mention_on_a_quoted_image_responds_to_that_image(env):
+    """Replying "@Rata" alone to someone's photo asks about that photo."""
+    jpg = base64.b64encode(b"\xff\xd8\xff fake jpeg").decode()
+    env.model.script = [_answer("O Cantareira passou de 50%.")]
+    _post(env, f"@{WORKER}", quoted_sender="275603907469434",
+          quoted_text="Obrigado Vitix e Julix", quoted_image_base64=jpg,
+          quoted_mimetype="image/jpeg")
+
+    prompt = _human_input(env.model.calls[0])
+    assert "[Quoted message from: 275603907469434, its image is attached]" in prompt
+    assert "Obrigado Vitix e Julix" in prompt
+    assert "respond to the quoted message and its image, not to earlier topics" in prompt
+    media = [
+        block
+        for m in env.model.calls[0] if isinstance(m, HumanMessage) and isinstance(m.content, list)
+        for block in m.content
+    ]
+    assert media and media[0]["mime_type"] == "image/jpeg"
+
+
+def test_question_on_a_quoted_image_gets_no_extra_hint(env):
+    jpg = base64.b64encode(b"\xff\xd8\xff fake jpeg").decode()
+    env.model.script = [_answer("É uma represa.")]
+    _post(env, f"@{WORKER} que lugar é esse?", quoted_sender="275603907469434",
+          quoted_text="", quoted_image_base64=jpg, quoted_mimetype="image/jpeg")
+
+    prompt = _human_input(env.model.calls[0])
+    assert "its image is attached" in prompt
+    assert "not to earlier topics" not in prompt
+
+
 def _request_text(messages):
     """Text of every human/system message of one model request."""
     out = []
