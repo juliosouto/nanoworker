@@ -30,7 +30,7 @@ ROLLBACK = {
 def main():
     values = ROLLBACK if "--rollback" in sys.argv else ENABLE
 
-    backup = f"{DB_PATH}.bak-{datetime.now():%Y%m%d-%H%M%S}"
+    backup = f"{DB_PATH}.bak-{datetime.now():%Y%m%d-%H%M%S-%f}"
     shutil.copy2(DB_PATH, backup)
     print(f"Backup: {backup}")
 
