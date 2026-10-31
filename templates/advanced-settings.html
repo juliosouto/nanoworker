@@ -51,6 +51,48 @@
             </div>
         </div>
 
+        <!-- Agent Flow Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Agent Flow</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                Graph: a LangGraph flow plans the steps (optional), runs the agent, and a separate evaluator decides whether the answer is done, needs more work, needs the user, or failed. Legacy: the agent judges its own answer through the JSON contract. Requires the LangChain stack.
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Flow</label>
+                    <select id="agentFlowSelect" style="width: 100%; padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); font-size: 0.95rem; outline: none; cursor: pointer; transition: all 0.2s ease;">
+                        <option value="legacy" style="background: #1e1e2e; color: white;" {% if agent_flow == 'legacy' %}selected{% endif %}>Legacy (self-assessed JSON)</option>
+                        <option value="graph" style="background: #1e1e2e; color: white;" {% if agent_flow == 'graph' %}selected{% endif %}>Graph (planner + evaluator)</option>
+                    </select>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Planner</label>
+                    <select id="agentPlannerSelect" style="width: 100%; padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); font-size: 0.95rem; outline: none; cursor: pointer; transition: all 0.2s ease;">
+                        <option value="" style="background: #1e1e2e; color: white;" {% if not agent_planner %}selected{% endif %}>Default (follows Plan Before Execution)</option>
+                        <option value="off" style="background: #1e1e2e; color: white;" {% if agent_planner == 'off' %}selected{% endif %}>Off</option>
+                        <option value="auto" style="background: #1e1e2e; color: white;" {% if agent_planner == 'auto' %}selected{% endif %}>Auto (skips simple requests)</option>
+                        <option value="always" style="background: #1e1e2e; color: white;" {% if agent_planner == 'always' %}selected{% endif %}>Always</option>
+                    </select>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Evaluator model</label>
+                    <select id="agentEvaluatorModelSelect" style="width: 100%; padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); font-size: 0.95rem; outline: none; cursor: pointer; transition: all 0.2s ease;">
+                        <option value="" style="background: #1e1e2e; color: white;" {% if not agent_evaluator_model %}selected{% endif %}>Worker's own models</option>
+                        {% for m in llm_models %}<option value="{{ m }}" style="background: #1e1e2e; color: white;" {% if agent_evaluator_model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                        {% if agent_evaluator_model and agent_evaluator_model not in llm_models %}<option value="{{ agent_evaluator_model }}" style="background: #1e1e2e; color: white;" selected>{{ agent_evaluator_model }} (not enabled)</option>{% endif %}
+                    </select>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Planner model</label>
+                    <select id="agentPlannerModelSelect" style="width: 100%; padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-main); font-size: 0.95rem; outline: none; cursor: pointer; transition: all 0.2s ease;">
+                        <option value="" style="background: #1e1e2e; color: white;" {% if not agent_planner_model %}selected{% endif %}>Worker's own models</option>
+                        {% for m in llm_models %}<option value="{{ m }}" style="background: #1e1e2e; color: white;" {% if agent_planner_model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                        {% if agent_planner_model and agent_planner_model not in llm_models %}<option value="{{ agent_planner_model }}" style="background: #1e1e2e; color: white;" selected>{{ agent_planner_model }} (not enabled)</option>{% endif %}
+                    </select>
+                </div>
+            </div>
+        </div>
+
         <!-- Ad & Tracker Blocker Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
             <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Browser Ad Blocker</h3>

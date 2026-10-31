@@ -16,8 +16,25 @@ tokens spent on aborted turns stay unaccounted.
 
 import logging
 import sqlite3
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
+
+# Agent-flow node whose LLM calls are being made (planner / executor /
+# evaluator). When set, rows are logged under the stack "graph-<stage>" so
+# the dashboard breaks the graph flow's cost down per node.
+_usage_stage: ContextVar = ContextVar("llm_usage_stage", default=None)
+
+
+@contextmanager
+def usage_stage(stage: str):
+    """Tag every usage row logged inside the block with an agent-flow node."""
+    token = _usage_stage.set(stage)
+    try:
+        yield
+    finally:
+        _usage_stage.reset(token)
 
 
 def log_llm_usage(
@@ -44,6 +61,9 @@ def log_llm_usage(
     """
     if input_tokens is None and output_tokens is None:
         return False
+    stage = _usage_stage.get()
+    if stage:
+        stack = f"graph-{stage}"
 
     from database import get_db
 

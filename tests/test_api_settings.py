@@ -251,3 +251,16 @@ def test_save_settings_plan_before_execution(client):
     conn.close()
     assert row is not None
     assert row['value'] == 'true'
+
+
+def test_agent_flow_settings_saved_and_validated(client):
+    response = client.post('/api/settings', json={
+        'agent_flow': 'graph', 'agent_planner': '', 'agent_evaluator_model': 'm',
+        'agent_planner_model': '',
+    })
+    assert response.status_code == 200
+    body = response.get_json()
+    assert {'AGENT_FLOW', 'AGENT_PLANNER', 'AGENT_EVALUATOR_MODEL', 'AGENT_PLANNER_MODEL'} <= set(body['saved'])
+    assert body['ignored_unknown_keys'] == []
+    for bad in ({'agent_flow': 'fast'}, {'agent_planner': 'sometimes'}):
+        assert client.post('/api/settings', json=bad).status_code == 400

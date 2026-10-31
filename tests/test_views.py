@@ -268,3 +268,20 @@ def test_agent_behavior_page_has_plan_toggle(client):
     response = client.get('/settings/agent_behavior')
     assert response.status_code == 200
     assert 'Plan Before Execution' in response.get_data(as_text=True)
+
+
+def test_advanced_settings_agent_flow_card(client, monkeypatch):
+    monkeypatch.delenv('AGENT_FLOW', raising=False)
+    from database import get_db
+    conn = get_db()
+    conn.execute("INSERT INTO llm_config (model_name, provider, enabled) VALUES ('cheap-model', 'openai', 1)")
+    conn.commit()
+    conn.close()
+    for payload in ({'agent_flow': 'graph'}, {'agent_planner': 'auto'},
+                    {'agent_evaluator_model': 'cheap-model'}):
+        assert client.post('/api/settings', json=payload).status_code == 200
+    html = client.get('/settings/advanced').data.decode()
+    assert '<option value="graph" style="background: #1e1e2e; color: white;" selected>' in html
+    assert '<option value="auto" style="background: #1e1e2e; color: white;" selected>' in html
+    assert 'id="agentEvaluatorModelSelect"' in html
+    assert '<option value="cheap-model" style="background: #1e1e2e; color: white;" selected>' in html

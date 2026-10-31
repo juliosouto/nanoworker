@@ -48,6 +48,18 @@ document.addEventListener('DOMContentLoaded', () => {
     setupToggle('toolRelevanceToggle', 'toolRelevanceToggleKnob', 'tool_relevance_filter');
     setupToggle('blockAdsToggle', 'blockAdsToggleKnob', 'block_ads');
 
+    [
+        ['agentFlowSelect', 'agent_flow'],
+        ['agentPlannerSelect', 'agent_planner'],
+        ['agentEvaluatorModelSelect', 'agent_evaluator_model'],
+        ['agentPlannerModelSelect', 'agent_planner_model'],
+    ].forEach(([id, key]) => {
+        const select = document.getElementById(id);
+        if (select) {
+            select.addEventListener('change', (e) => saveSetting(key, e.target.value));
+        }
+    });
+
     const ttsSelect = document.getElementById('ttsModelSelect');
     if (ttsSelect) {
         ttsSelect.addEventListener('change', (e) => {

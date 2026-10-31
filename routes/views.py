@@ -291,8 +291,22 @@ def advanced_settings_page():
     # TOOL_RELEVANCE_FILTER env var (e.g. in a deployed .env, which survives
     # container recreations) therefore also renders the switch as checked,
     # even when the SQLite row was never written.
+    from agent.lc import settings as lc_settings
     from agent.lc.settings import tool_relevance_filter as _tool_relevance_filter
+    # Agent flow card: models for the evaluator/planner selects.
+    conn = get_db()
+    try:
+        llm_models = [r['model_name'] for r in conn.execute(
+            'SELECT model_name FROM llm_config WHERE enabled = 1 ORDER BY model_name'
+        ).fetchall()]
+    finally:
+        conn.close()
     return render_template('advanced-settings.html',
+        agent_flow=lc_settings.agent_flow(),
+        agent_planner=(get_config('AGENT_PLANNER', '') or '').strip().lower(),
+        agent_evaluator_model=lc_settings.evaluator_model(),
+        agent_planner_model=lc_settings.planner_model(),
+        llm_models=llm_models,
         tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
         tool_relevance_filter=_tool_relevance_filter(),
         block_ads=get_config('BLOCK_ADS', 'true').lower() == 'true',

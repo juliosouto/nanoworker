@@ -24,6 +24,7 @@ from typing import Any, List, Optional, TypedDict
 from google.genai import types
 
 from agent.db_feedback import insert_feedback
+from agent.llm_usage import usage_stage
 from agent.stop_check import StopRequestedError, is_stop_requested
 
 logger = logging.getLogger(__name__)
@@ -94,10 +95,11 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
     use_planner = planner_mode == "always" or (planner_mode == "auto" and bool(tool_funcs))
 
     def plan(state: FlowState) -> FlowState:
-        steps = planner.make_plan(
-            user_request, tool_funcs, planner_mode, planner_models,
-            cursor, session_id, message_in_id, is_ide,
-        )
+        with usage_stage("planner"):
+            steps = planner.make_plan(
+                user_request, tool_funcs, planner_mode, planner_models,
+                cursor, session_id, message_in_id, is_ide,
+            )
         if not steps:
             return {"plan": []}
         text = planner.format_plan(steps)
@@ -117,10 +119,11 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         steps: List = []
         token = lc_runner.set_tool_steps_sink(steps)
         try:
-            raw = invoke_llm_with_fallback(
-                history, config_kwargs, state["send_content"], models_to_try,
-                cursor, session_id, message_in_id, is_ide=is_ide, on_complete=emit.callback,
-            )
+            with usage_stage("executor"):
+                raw = invoke_llm_with_fallback(
+                    history, config_kwargs, state["send_content"], models_to_try,
+                    cursor, session_id, message_in_id, is_ide=is_ide, on_complete=emit.callback,
+                )
         finally:
             lc_runner.reset_tool_steps_sink(token)
         return {
@@ -131,10 +134,11 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         }
 
     def evaluate(state: FlowState) -> FlowState:
-        verdict = evaluator.evaluate(
-            user_request, state["answer"], state.get("steps"), evaluator_models,
-            cursor, session_id, message_in_id, is_ide, plan=state.get("plan"),
-        )
+        with usage_stage("evaluator"):
+            verdict = evaluator.evaluate(
+                user_request, state["answer"], state.get("steps"), evaluator_models,
+                cursor, session_id, message_in_id, is_ide, plan=state.get("plan"),
+            )
         return {"verdict": verdict}
 
     def retry(state: FlowState) -> FlowState:

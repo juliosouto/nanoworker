@@ -111,8 +111,20 @@ def save_settings():
         'history_rag_fetch_k': 'HISTORY_RAG_FETCH_K',
         'history_rag_score_threshold': 'HISTORY_RAG_SCORE_THRESHOLD',
         'history_rag_lambda': 'HISTORY_RAG_LAMBDA',
-        'max_download_size_mb': 'MAX_DOWNLOAD_SIZE_MB'
+        'max_download_size_mb': 'MAX_DOWNLOAD_SIZE_MB',
+        'agent_flow': 'AGENT_FLOW',
+        'agent_planner': 'AGENT_PLANNER',
+        'agent_evaluator_model': 'AGENT_EVALUATOR_MODEL',
+        'agent_planner_model': 'AGENT_PLANNER_MODEL'
     }
+
+    allowed_values = {
+        'agent_flow': ('legacy', 'graph'),
+        'agent_planner': ('', 'off', 'auto', 'always'),
+    }
+    for json_key, allowed in allowed_values.items():
+        if data.get(json_key) is not None and data[json_key] not in allowed:
+            return jsonify({"error": f"{json_key} must be one of {list(allowed)}"}), 400
     
     saved_keys = []
 

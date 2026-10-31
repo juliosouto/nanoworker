@@ -75,6 +75,13 @@ class TestLogLlmUsage(UsageDbTestCase):
         self.assertEqual(summary[0]["total_tokens"], 150)
         self.assertEqual(summary[0]["avg_tokens_per_turn"], 150.0)
 
+    def test_usage_stage_tags_the_stack(self):
+        with llm_usage.usage_stage("evaluator"):
+            llm_usage.log_llm_usage("s1", "m1", "legacy", "cheap", 10, 2)
+        llm_usage.log_llm_usage("s1", "m1", "langchain", "big", 100, 20)
+        stacks = {row["stack"] for row in llm_usage.get_usage_summary()}
+        self.assertEqual(stacks, {"graph-evaluator", "langchain"})
+
     def test_skipped_when_both_counts_none(self):
         self.assertFalse(llm_usage.log_llm_usage("s", "m", "legacy", "m", None, None))
         self.assertEqual(llm_usage.get_usage_summary(), [])

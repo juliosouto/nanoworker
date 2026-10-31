@@ -31,7 +31,11 @@ class _FlowCase(unittest.TestCase):
         self.plan_inputs = []
         self.plans = []
 
+        from agent.llm_usage import _usage_stage
+        self.stages = []
+
         def fake_invoke(history, config_kwargs, content, models, *a, **k):
+            self.stages.append(_usage_stage.get())
             self.exec_calls.append(list(content))
             steps = self.tool_steps.get(len(self.exec_calls))
             sink = runner._tool_steps_sink.get()
@@ -41,6 +45,7 @@ class _FlowCase(unittest.TestCase):
 
         def fake_route(model_name, history, cfg, content, *a, summarize=False, **k):
             assert summarize, "planner/evaluator must use the plain-text backend"
+            self.stages.append(_usage_stage.get())
             if "plan the work" in cfg["system_instruction"]:
                 self.plan_inputs.append((model_name, cfg["system_instruction"], content))
                 return self.plans.pop(0)
@@ -199,6 +204,14 @@ class TestPlanner(_FlowCase):
         self.assertEqual(sent[0], "what is the weather?")
         self.assertIn("1. Call weather for Rio", sent[1])
         self.assertIn("PLAN:\n1. Call weather for Rio", self.eval_inputs[0][2])
+
+    def test_usage_is_tagged_per_node(self):
+        self.planner_mode = "always"
+        self.plans = [self.PLAN]
+        self.answers = ["a1", "a2"]
+        self.verdicts = [_verdict("needs_more_work"), _verdict("done")]
+        self.run_flow(3, tools=[weather])
+        self.assertEqual(self.stages, ["planner", "executor", "evaluator", "executor", "evaluator"])
 
     def test_plan_is_kept_in_history_on_retry(self):
         self.planner_mode = "always"
