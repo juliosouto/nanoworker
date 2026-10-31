@@ -106,15 +106,19 @@ def build_system_prompt(
         system_prompt = standard_prompts.apply_image_document_rules(system_prompt)
 
     # 6. JSON schema prompt — only when structured output is NOT native.
-    if not native_structured:
+    # The graph flow judges answers with its own evaluator: no contract.
+    from agent.lc import settings as lc_settings
+    if lc_settings.graph_flow_enabled():
+        schema_prompt = ""
+    elif not native_structured:
         schema_enabled = get_config("PLAN_BEFORE_EXECUTION", "false").lower() == "true"
         schema_prompt = JSON_SCHEMA_PROMPT_WITH_PLAN if schema_enabled else JSON_SCHEMA_PROMPT
     else:
         # The API enforces the field names, not when the request is satisfied.
         schema_prompt = SATISFIED_RULE
-    if system_prompt:
+    if system_prompt and schema_prompt:
         system_prompt = f"{system_prompt}\n\n{schema_prompt}"
-    else:
+    elif schema_prompt:
         system_prompt = schema_prompt
 
     # 7. User memory: every entry, always. These are fixed, mandatory

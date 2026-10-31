@@ -261,7 +261,9 @@ def route_llm_call(
 
     # When route_llm_call is used as a summarizer backend (no contract), skip
     # the native structured-output patch that would otherwise break the call.
-    if not summarize:
+    # The graph flow (AGENT_FLOW=graph) has no contract either: the executor
+    # answers in plain text and a separate evaluator judges it.
+    if not summarize and not lc_settings.graph_flow_enabled():
         has_tools = bool(local_kwargs.get("tools"))
         if lc_outputs.structured_output_enabled(provider, model_name, has_tools=has_tools):
             local_kwargs.update(lc_outputs.build_structured_kwargs(provider))

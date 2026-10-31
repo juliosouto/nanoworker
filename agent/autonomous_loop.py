@@ -214,6 +214,18 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
 
     token = set_stop_check(_stop_requested)
     try:
+        from agent.lc import settings as lc_settings
+        if lc_settings.graph_flow_enabled():
+            from agent.lc.flow import run_agent_flow
+            try:
+                return run_agent_flow(
+                    history, config_kwargs, initial_content, models_to_try, cursor,
+                    session_id, message_in_id, is_ide, autonomous_limit, on_complete=on_complete,
+                )
+            except StopRequestedError:
+                _abort_with_stop_message()
+                return final_response
+
         for iteration in range(autonomous_limit):
             # Check for /stop command between LLM calls
             if _stop_requested():

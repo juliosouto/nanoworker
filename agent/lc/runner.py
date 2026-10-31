@@ -21,6 +21,7 @@ boots fast and importing this module never requires the optional packages.
 """
 
 import logging
+from contextvars import ContextVar
 from typing import Optional
 
 from agent.lc import cache as lc_cache
@@ -31,6 +32,19 @@ from agent.stop_check import StopRequestedError, is_stop_requested, sleep_interr
 from langchain_core.callbacks import BaseCallbackHandler
 
 logger = logging.getLogger(__name__)
+
+# Where the agent flow collects the tool calls of each executor turn so the
+# evaluator can see them (None = nobody is collecting).
+_tool_steps_sink: ContextVar = ContextVar("lc_tool_steps_sink", default=None)
+
+
+def set_tool_steps_sink(sink):
+    """Collect every (action, observation) step into ``sink``; returns a reset token."""
+    return _tool_steps_sink.set(sink)
+
+
+def reset_tool_steps_sink(token):
+    _tool_steps_sink.reset(token)
 
 
 class FeedbackCallbackHandler(BaseCallbackHandler):
@@ -511,6 +525,9 @@ def run_langchain_llm(
         executor, payload, callback, cursor, table, session_id, message_in_id, on_complete
     )
     output = result.get("output", "")
+    sink = _tool_steps_sink.get()
+    if sink is not None:
+        sink.extend(result.get("intermediate_steps") or [])
     if has_tools:
         logger.info(
             "LangChain agent finished: %d tool call(s), max_iterations=%d",

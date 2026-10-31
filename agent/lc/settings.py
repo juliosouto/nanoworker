@@ -34,7 +34,12 @@ Keys:
     AGENT_FLOW             'legacy' (default) | 'graph' - agent flow phase 1:
                            run the tool-calling loop on a LangGraph graph
                            (langchain.agents.create_agent) instead of the
-                           langchain_classic AgentExecutor.
+                           langchain_classic AgentExecutor. Phase 2: the
+                           reflection loop becomes a LangGraph flow with a
+                           separate evaluator, and the executor answers in
+                           plain text (no AgentResponse JSON contract).
+    AGENT_EVALUATOR_MODEL  str (default "") - model that judges each answer in
+                           the graph flow; "" uses the worker's own models.
 
 Every reader degrades to its default when the config table is unavailable,
 so import-time and early-startup paths never break.
@@ -170,6 +175,16 @@ def agent_flow() -> str:
             logger.warning("Unknown AGENT_FLOW=%r; using 'legacy'", raw)
         return "legacy"
     return value
+
+
+def graph_flow_enabled() -> bool:
+    """True when the graph flow runs: needs the LangChain stack too."""
+    return stack_enabled() and agent_flow() == "graph"
+
+
+def evaluator_model() -> str:
+    """Model for the graph flow's evaluator; "" = the worker's own models."""
+    return str(_cfg("AGENT_EVALUATOR_MODEL", "") or "").strip()
 
 
 def tool_relevance_top_k() -> int:
