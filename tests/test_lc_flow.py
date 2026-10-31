@@ -13,6 +13,11 @@ from agent.lc.graph_executor import ToolStep
 from agent.stop_check import StopRequestedError
 
 
+# Long enough not to count as a simple request (planner/evaluator skipped).
+REQUEST = ("what is the weather? I am planning a trip this weekend and want to know "
+           "whether it will rain or stay sunny there")
+
+
 def _verdict(status, **kw):
     return json.dumps({"status": status, **kw})
 
@@ -72,7 +77,7 @@ class _FlowCase(unittest.TestCase):
         self.cursor.fetchone.return_value = None  # no /stop
         self.history = []
 
-    def run_flow(self, limit, content="what is the weather?", models=("m1", "m2"),
+    def run_flow(self, limit, content=REQUEST, models=("m1", "m2"),
                  tools=None, show_plan=True):
         config = {"system_instruction": "sys"}
         if tools:
@@ -199,6 +204,37 @@ def weather(city: str) -> str:
     return "25°C"
 
 
+class TestSimpleRequests(_FlowCase):
+    """Short requests skip the extra planner/evaluator calls."""
+
+    def test_short_request_without_tools_skips_evaluator(self):
+        self.answers = ["Oi! Tudo bem?"]
+        self.assertEqual(self.run_flow(3, content="oi, tudo bem?"), "Oi! Tudo bem?")
+        self.assertEqual(self.eval_inputs, [])
+
+    def test_short_request_with_tool_calls_is_still_evaluated(self):
+        self.tool_steps = {1: [(ToolStep("manage_persistent_memory", {"action": "add"}, "1"),
+                                "Error: This tool is not available for WhatsApp users.")]}
+        self.answers = ["Registrado!", "Não consegui anotar."]
+        self.verdicts = [_verdict("needs_more_work", reason="claims a failed action"), _verdict("done")]
+        out = self.run_flow(3, content="anota que o João me deve 50 reais")
+        self.assertEqual(out, "Não consegui anotar.")
+        self.assertEqual(len(self.eval_inputs), 2)
+
+    def test_auto_planner_skips_short_requests(self):
+        self.planner_mode = "auto"
+        self.answers = ["sunny"]
+        self.run_flow(1, content="clima em Ubatuba?", tools=[weather])
+        self.assertEqual(self.plan_inputs, [])
+
+    def test_always_planner_still_plans_short_requests(self):
+        self.planner_mode = "always"
+        self.plans = [json.dumps({"needs_plan": True, "steps": ["Answer"]})]
+        self.answers = ["sunny"]
+        self.run_flow(1, content="clima em Ubatuba?", tools=[weather])
+        self.assertEqual(len(self.plan_inputs), 1)
+
+
 class TestPlanner(_FlowCase):
     PLAN = json.dumps({"needs_plan": True, "steps": ["Call weather for Rio", "Answer the user"]})
 
@@ -218,7 +254,7 @@ class TestPlanner(_FlowCase):
         self.assertIn("- weather: Current weather for a city.", plan_input)
         self.assertIn("📋 Execution Plan:\n1. Call weather for Rio\n2. Answer the user", self.feedback)
         sent = self.exec_calls[0]
-        self.assertEqual(sent[0], "what is the weather?")
+        self.assertEqual(sent[0], REQUEST)
         self.assertIn("1. Call weather for Rio", sent[1])
         self.assertIn("PLAN:\n1. Call weather for Rio", self.eval_inputs[0][2])
 
@@ -256,16 +292,16 @@ class TestPlanner(_FlowCase):
 
         self.plans = [json.dumps({"needs_plan": False, "steps": ["x"]})]
         self.answers = ["hi!"]
-        self.run_flow(1, content="hello", tools=[weather])
+        self.run_flow(1, tools=[weather])
         self.assertEqual(len(self.plan_inputs), 1)
-        self.assertEqual(self.exec_calls[-1], ["hello"])
+        self.assertEqual(self.exec_calls[-1], [REQUEST])
 
     def test_planner_failure_runs_without_plan(self):
         self.planner_mode = "always"
         self.plans = ["nope", "still nope"]
         self.answers = ["sunny"]
         self.assertEqual(self.run_flow(1, tools=[weather]), "sunny")
-        self.assertEqual(self.exec_calls[0], ["what is the weather?"])
+        self.assertEqual(self.exec_calls[0], [REQUEST])
 
 
 class TestPlannerSettings(unittest.TestCase):

@@ -19,6 +19,8 @@ the number of executor rounds; with 1 the evaluator is skipped entirely.
 """
 
 import logging
+import time
+from contextlib import contextmanager
 from typing import Any, List, Optional, TypedDict
 
 from google.genai import types
@@ -28,6 +30,17 @@ from agent.llm_usage import usage_stage
 from agent.stop_check import StopRequestedError, is_stop_requested
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _stage(name: str):
+    """Usage tagging plus a duration log line for one flow node."""
+    started = time.monotonic()
+    try:
+        with usage_stage(name):
+            yield
+    finally:
+        logger.info("Agent flow %s took %.1fs", name, time.monotonic() - started)
 
 
 class FlowState(TypedDict, total=False):
@@ -54,6 +67,16 @@ def _user_request(initial_content) -> str:
     from agent.lc.runner import _content_to_text
 
     return _content_to_text(initial_content, sep="\n\n")
+
+
+# Requests up to this many words count as simple: no planner in 'auto' mode,
+# and no evaluator for a round that called no tool. Each of those is a full
+# extra model call, which doubled or tripled the wait for a plain "oi".
+_SIMPLE_REQUEST_WORDS = 15
+
+
+def is_simple_request(user_request: str) -> bool:
+    return len((user_request or "").split()) <= _SIMPLE_REQUEST_WORDS
 
 
 def retry_instruction(verdict) -> str:
@@ -92,10 +115,13 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
     from agent.autonomous_loop import _strip_media_parts
 
     tool_funcs = config_kwargs.get("tools") or []
-    use_planner = planner_mode == "always" or (planner_mode == "auto" and bool(tool_funcs))
+    simple = is_simple_request(user_request)
+    use_planner = planner_mode == "always" or (
+        planner_mode == "auto" and bool(tool_funcs) and not simple
+    )
 
     def plan(state: FlowState) -> FlowState:
-        with usage_stage("planner"):
+        with _stage("planner"):
             steps = planner.make_plan(
                 user_request, tool_funcs, planner_mode, planner_models,
                 cursor, session_id, message_in_id, is_ide,
@@ -119,7 +145,7 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         steps: List = []
         token = lc_runner.set_tool_steps_sink(steps)
         try:
-            with usage_stage("executor"):
+            with _stage("executor"):
                 raw = invoke_llm_with_fallback(
                     history, config_kwargs, state["send_content"], models_to_try,
                     cursor, session_id, message_in_id, is_ide=is_ide, on_complete=emit.callback,
@@ -134,7 +160,7 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         }
 
     def evaluate(state: FlowState) -> FlowState:
-        with usage_stage("evaluator"):
+        with _stage("evaluator"):
             verdict = evaluator.evaluate(
                 user_request, state["answer"], state.get("steps"), evaluator_models,
                 cursor, session_id, message_in_id, is_ide, plan=state.get("plan"),
@@ -157,7 +183,14 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         return {"send_content": [types.Part.from_text(text=retry_instruction(verdict))]}
 
     def after_execute(state: FlowState) -> str:
-        return "evaluate" if state["iteration"] < limit else END
+        if state["iteration"] >= limit:
+            return END
+        # A short request answered without tools on the first round (greeting,
+        # quick question): nothing for the evaluator to check, skip the call.
+        # Once the evaluator asked for another round, it keeps checking.
+        if simple and not state.get("steps") and state["iteration"] == 1:
+            return END
+        return "evaluate"
 
     def after_evaluate(state: FlowState) -> str:
         verdict = state.get("verdict")
