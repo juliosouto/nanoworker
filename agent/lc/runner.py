@@ -477,7 +477,13 @@ def run_langchain_llm(
             for mime in skipped
         )
 
-    if has_tools:
+    if has_tools and lc_settings.agent_flow() == "graph":
+        from agent.lc.graph_executor import GraphAgentExecutor
+
+        executor = GraphAgentExecutor(
+            model, lc_tools, system_message, max_iterations, _STOPPED_OUTPUT
+        )
+    elif has_tools:
         agent = create_tool_calling_agent(model, lc_tools, agent_prompt)
         executor = AgentExecutor(
             agent=agent,

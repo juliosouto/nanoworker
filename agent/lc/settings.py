@@ -31,6 +31,10 @@ Keys:
                            affects every BaseChatModel.invoke.
     LC_CACHE_PATH          str (default "llm_cache.sqlite") - phase 5: file used
                            by the SQLite LLM cache when LC_CACHE=true.
+    AGENT_FLOW             'legacy' (default) | 'graph' - agent flow phase 1:
+                           run the tool-calling loop on a LangGraph graph
+                           (langchain.agents.create_agent) instead of the
+                           langchain_classic AgentExecutor.
 
 Every reader degrades to its default when the config table is unavailable,
 so import-time and early-startup paths never break.
@@ -47,6 +51,7 @@ _VALID_COUNTERS = ("tiktoken", "heuristic")
 _VALID_STRUCTURED = ("auto", "off")
 _VALID_EMBEDDINGS = ("auto", "gemini", "openai")
 _VALID_COMPACT = ("on", "off")
+_VALID_AGENT_FLOWS = ("legacy", "graph")
 
 # Values that already triggered the "unknown" warning, so a
 # misconfigured/mocked value is reported once per process, not per call.
@@ -55,6 +60,7 @@ _warned_stack_values = set()
 _warned_structured_values = set()
 _warned_embeddings_values = set()
 _warned_compact_values = set()
+_warned_agent_flow_values = set()
 
 
 def _cfg(key, default=None):
@@ -148,6 +154,22 @@ def agent_max_iterations() -> int:
     1): one tool call already needs two steps, the call and the answer.
     """
     return _cfg_int("LC_AGENT_MAX_ITERATIONS", 25, 2)
+
+
+def agent_flow() -> str:
+    """Which executor runs the tool-calling loop: 'legacy' or 'graph'.
+
+    'graph' uses the LangGraph agent (agent.lc.graph_executor). Unknown values
+    are warned once and fall back to 'legacy'.
+    """
+    raw = os.environ.get("AGENT_FLOW") or _cfg("AGENT_FLOW", "legacy")
+    value = str(raw).strip().lower()
+    if value not in _VALID_AGENT_FLOWS:
+        if raw not in _warned_agent_flow_values:
+            _warned_agent_flow_values.add(raw)
+            logger.warning("Unknown AGENT_FLOW=%r; using 'legacy'", raw)
+        return "legacy"
+    return value
 
 
 def tool_relevance_top_k() -> int:
