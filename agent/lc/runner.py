@@ -97,6 +97,8 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
 
     def on_tool_end(self, output, **kwargs) -> None:
         name = kwargs.get("name") or "tool"
+        # The graph's tool node reports a ToolMessage, AgentExecutor the raw result.
+        output = getattr(output, "content", output)
         logger.info("LangChain agent tool result: %s -> %s", name, str(output)[:300])
         msg = f"⚙️ Executed tools: {name}\nResults:\n- {output}"
         self._feedback(msg)

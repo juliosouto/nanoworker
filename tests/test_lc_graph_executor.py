@@ -99,6 +99,34 @@ class TestGraphExecutorDirect(unittest.TestCase):
         self.assertIn("echoed:2", runner._steps_to_text(result["intermediate_steps"]))
 
 
+class TestGraphToolErrors(unittest.TestCase):
+    def test_tool_error_goes_back_to_the_model(self):
+        def broken_tool(x: str) -> str:
+            """Always fails."""
+            raise RuntimeError("SMTP down")
+
+        model = base.ScriptedToolCallingModel(responses=[
+            AIMessage(content="", tool_calls=[{"name": "broken_tool", "args": {"x": "a"}, "id": "1"}]),
+            AIMessage(content="Could not send: SMTP down."),
+        ])
+        executor = graph_executor.GraphAgentExecutor(
+            model, runner.build_lc_tools([broken_tool]), "sys", 5, runner._STOPPED_OUTPUT
+        )
+        result = executor.invoke({"input": "send it"})
+        self.assertEqual(result["output"], "Could not send: SMTP down.")
+        [(step, observation)] = result["intermediate_steps"]
+        self.assertEqual(observation, "Error executing broken_tool: SMTP down")
+
+    def test_tool_feedback_shows_only_the_result(self):
+        feedback = []
+        handler = runner.FeedbackCallbackHandler(None, "t", "s", "m", True)
+        handler._feedback = feedback.append
+        from langchain_core.messages import ToolMessage
+
+        handler.on_tool_end(ToolMessage(content="31°C", tool_call_id="1"), name="get_weather")
+        self.assertEqual(feedback, ["⚙️ Executed tools: get_weather\nResults:\n- 31°C"])
+
+
 class TestAgentFlowSetting(unittest.TestCase):
     def _flow(self, value):
         with patch.dict("os.environ", {"AGENT_FLOW": value}):

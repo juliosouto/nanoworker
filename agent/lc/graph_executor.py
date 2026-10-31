@@ -17,6 +17,20 @@ Later phases add planner/evaluator nodes around this graph.
 
 from collections import namedtuple
 
+def _tool_error_message(exc, request):
+    """Send a failing tool's error back to the model, like the legacy loops.
+
+    Without this a tool exception aborts the whole run, the model fallback
+    retries it from scratch and runs every tool (e.g. send_email) again.
+    A user /stop keeps propagating.
+    """
+    from agent.stop_check import StopRequestedError
+
+    if isinstance(exc, StopRequestedError):
+        return None
+    return f"Error executing {request.tool_call['name']}: {exc}"
+
+
 # Mirrors the ``AgentAction`` attributes read by ``runner._steps_to_text``.
 ToolStep = namedtuple("ToolStep", ["tool", "tool_input", "tool_call_id"])
 
@@ -55,8 +69,12 @@ class GraphAgentExecutor:
 
     def __init__(self, model, tools, system_message, max_iterations, stopped_output):
         from langchain.agents import create_agent
+        from langchain.agents.middleware import ToolErrorMiddleware
 
-        self._graph = create_agent(model, tools, system_prompt=system_message)
+        self._graph = create_agent(
+            model, tools, system_prompt=system_message,
+            middleware=[ToolErrorMiddleware(_tool_error_message)],
+        )
         # One iteration = a model call that requests tools + the tools node,
         # i.e. two graph steps; the final answer fits in the last model step.
         self._recursion_limit = 2 * max_iterations
