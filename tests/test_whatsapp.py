@@ -733,3 +733,41 @@ def test_send_whatsapp_poll_json_string_options(wa_setup, mocker):
     assert "successfully" in res
     kwargs = mock_post.call_args[1]
     assert kwargs["json"]["options"] == ["Azul", "Vermelho"]
+
+
+def _in_session(channel_id, mocker):
+    """Run as if answering the chat ``channel_id`` (session sid-1)."""
+    from utils.session import current_session_id
+
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = {"channel_id": channel_id}
+    mocker.patch("database.get_db", return_value=conn)
+    token = current_session_id.set("sid-1")
+    return lambda: current_session_id.reset(token)
+
+
+@pytest.mark.parametrize("target", ["5511999999999@lid", "5511999999999", "+55 11999999999"])
+def test_send_whatsapp_message_to_current_chat_is_refused(wa_setup, mocker, target):
+    os_name, wa_module = wa_setup
+    post = mocker.patch("requests.post")
+    reset = _in_session("wa_web:5511999999999@lid", mocker)
+    try:
+        res = wa_module.send_whatsapp_message(target, "Clima em Ubatuba...")
+    finally:
+        reset()
+    assert res.startswith("Error: not sent. This is the current chat")
+    post.assert_not_called()
+
+
+def test_send_whatsapp_message_to_other_chat_still_works(wa_setup, mocker):
+    os_name, wa_module = wa_setup
+    reset = _in_session("wa_web:5511888888888@lid", mocker)
+    mocker.patch.object(wa_module, "_is_allowed_to", return_value=True)
+    mocker.patch("utils.audio_utils.extract_and_generate_audio", return_value=("Hello", None))
+    post = mocker.patch("requests.post", return_value=MagicMock(status_code=200))
+    try:
+        res = wa_module.send_whatsapp_message("5511999999999", "Hello")
+    finally:
+        reset()
+    assert "successfully" in res
+    post.assert_called_once()

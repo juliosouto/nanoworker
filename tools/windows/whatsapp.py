@@ -231,6 +231,32 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
 
 
 
+def _is_current_chat(phone_number) -> bool:
+    """True when ``phone_number`` is the chat the agent is answering right now.
+
+    Its reply already goes there, so a send_whatsapp_message to it shows up
+    as a second, duplicate message.
+    """
+    target = _jid_number(phone_number)
+    if not target or str(phone_number).strip().lower() == "self":
+        return False
+    try:
+        from utils.session import current_session_id
+        session_id = current_session_id.get()
+        if not session_id:
+            return False
+        from database import get_db
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT channel_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        finally:
+            conn.close()
+        return bool(row and row["channel_id"] and _jid_number(row["channel_id"]) == target)
+    except Exception as e:
+        logger.warning(f"Could not resolve the current chat: {e}")
+        return False
+
+
 def send_whatsapp_message(phone_number: str, message: str) -> str:
     """
     Sends a text message to a phone number via WhatsApp.
@@ -250,6 +276,10 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
         A confirmation string indicating success or an error message.
     """
     phone_number = str(phone_number)
+    if _is_current_chat(phone_number):
+        return ("Error: not sent. This is the current chat, where your reply is delivered "
+                "automatically. Do not call send_whatsapp_message for it: put this message "
+                "in your final answer instead.")
     from utils.audio_utils import extract_and_generate_audio
     text_to_send, audio_path = extract_and_generate_audio(message)
     
