@@ -838,3 +838,12 @@ def test_group_message_to_someone_else_is_allowed(wa_setup, mocker):
     finally:
         reset()
     assert "successfully" in res
+
+
+def test_current_chat_is_always_allowed(wa_setup, mocker):
+    """The group the agent is answering is never blocked by the Allowed To list."""
+    os_name, wa_module = wa_setup
+    mocker.patch.object(wa_module, "_is_current_chat", return_value=True)
+    get_db = mocker.patch("database.get_db")
+    assert wa_module._is_allowed_to("5519988789215-1423590162@g.us") is True
+    get_db.assert_not_called()

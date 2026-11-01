@@ -108,3 +108,30 @@ def test_resolve_temp_image_path_rejects_traversal(tmp_path):
         assert _resolve_temp_image_path("../../etc/passwd") is None
         # A non-existent file resolves to None.
         assert _resolve_temp_image_path("nope.png") is None
+
+
+@patch("routes.webhooks.req.post")
+def test_raw_temp_path_in_the_answer_is_sent_as_a_photo(mock_post):
+    """Models sometimes write the screenshot path instead of sending it."""
+    from routes.webhooks import extract_and_send_images
+
+    mock_post.return_value = MagicMock(status_code=200, text="ok")
+    with patch(
+        "routes.webhooks._resolve_temp_image_path",
+        side_effect=lambda f: f"/tmp/files/temp/{f}",
+    ):
+        remaining, sent = extract_and_send_images(
+            "O Atto 8 custa R$ 399.990.\n\n[/app/files/temp/1db04d3a_screenshot.png]",
+            "wa_jid",
+        )
+
+    assert sent == 1
+    assert remaining == "O Atto 8 custa R$ 399.990."
+    assert mock_post.call_args.kwargs["json"]["file_path"] == "/tmp/files/temp/1db04d3a_screenshot.png"
+
+
+def test_other_paths_are_left_in_the_text():
+    from routes.webhooks import extract_and_send_images
+
+    text = "Salvei em /app/files/temp/relatorio.pdf e /home/x/foto.png"
+    assert extract_and_send_images(text, "wa_jid") == (text, 0)

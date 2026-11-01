@@ -19,7 +19,15 @@ BAILEYS_URL = 'http://127.0.0.1:3000'
 # ![imagem gerada](/api/temp/gen_abc123.png). Emitted by the image-generation
 # backend; the web chat / IDE render them natively, and WhatsApp converts them
 # into native media messages.
-_IMAGE_MD_RE = re.compile(r'!\[[^\]]*\]\(/api/temp/([^)\s]+)\)')
+# Images in the answer that become WhatsApp photos: Markdown tags pointing at
+# /api/temp/<file>, and raw temp-dir paths (e.g. "[/app/files/temp/x_screenshot.png]")
+# that models write instead of calling send_whatsapp_file.
+_IMAGE_MD_RE = re.compile(
+    r'!\[[^\]]*\]\(/api/temp/([^)\s]+)\)'
+    r'|[\[`(]?(?:[A-Za-z]:)?[^\s\[\]`()]*[/\\]files[/\\]temp[/\\]'
+    r'([^\s/\\\[\]`()]+\.(?:png|jpe?g|webp|gif))[\]`)]?',
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +87,7 @@ def extract_and_send_images(out_text, target_jid):
 
     sent = 0
     for idx, match in enumerate(matches):
-        filename = match.group(1)
+        filename = match.group(1) or match.group(2)
         try:
             abs_path = _resolve_temp_image_path(filename)
             if not abs_path:

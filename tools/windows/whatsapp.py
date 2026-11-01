@@ -117,6 +117,9 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
     phone_number = str(phone_number)
     if not phone_number or phone_number.lower() == "self":
         return True
+    # The chat the agent is answering: it already talks there.
+    if _is_current_chat(phone_number):
+        return True
 
     import requests
     from database import get_db
@@ -201,7 +204,7 @@ def _is_allowed_to(phone_number: str, allow_mentions_override: bool = False) -> 
                 JOIN sessions s ON s.id = m.session_id
                 WHERE s.channel_id IN ({placeholders})
                   AND (m.sender_id IS NOT NULL OR m.sender_id_alt IS NOT NULL)
-                ORDER BY m.id DESC
+                ORDER BY m.rowid DESC
                 LIMIT 1
                 """,
                 list(candidate_channels),
