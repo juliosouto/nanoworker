@@ -6,6 +6,12 @@ from tools.linux import whatsapp as linux_wa
 from tools.macos import whatsapp as macos_wa
 from tools.windows import whatsapp as windows_wa
 
+@pytest.fixture(autouse=True)
+def _files_are_fake(mocker):
+    """These tests send fake paths; the real image check has its own tests."""
+    mocker.patch("utils.file_utils.prepare_image_for_whatsapp", side_effect=lambda path, mime: (path, mime))
+
+
 @pytest.fixture(params=[
     ("linux", linux_wa),
     ("macos", macos_wa),

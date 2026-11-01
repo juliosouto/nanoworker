@@ -131,3 +131,40 @@ def get_file_tree(dir_path: str, base_dir: str) -> list:
     except Exception as e:
         logging.error(f"Error reading directory {dir_path}: {e}")
     return tree
+
+
+# Image formats WhatsApp shows as a photo. Anything else sent as an image
+# (WEBP, AVIF, SVG, an HTML error page saved as .jpg) arrives as a bubble
+# that fails with "Couldn't download image".
+_WHATSAPP_IMAGE_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png"}
+
+
+def prepare_image_for_whatsapp(file_path: str, mimetype: str):
+    """Check the real content of a file about to be sent to WhatsApp.
+
+    Returns ``(file_path, mimetype)``: an image in another format is converted
+    to JPEG in place (``file_path`` must be a temporary copy); a file without
+    an image extension that holds image bytes is sent as an image. Raises
+    ``ValueError`` when the file claims to be an image but is not one.
+    """
+    from PIL import Image
+
+    claims_image = (mimetype or "").startswith("image/")
+    try:
+        with Image.open(file_path) as img:
+            img.load()
+            fmt = img.format
+            if fmt in _WHATSAPP_IMAGE_FORMATS:
+                return file_path, _WHATSAPP_IMAGE_FORMATS[fmt]
+            img.convert("RGB").save(file_path, "JPEG", quality=90)
+            return file_path, "image/jpeg"
+    except Exception as e:
+        if claims_image:
+            with open(file_path, "rb") as f:
+                head = f.read(200).lstrip().lower()
+            kind = "a web page (HTML)" if head.startswith((b"<!doctype", b"<html", b"<")) else "not an image"
+            raise ValueError(
+                f"the file is {kind}, not a valid image ({e}). The site probably blocked the "
+                "download; try another image URL."
+            ) from e
+        return file_path, mimetype

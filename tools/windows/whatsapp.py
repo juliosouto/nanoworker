@@ -430,6 +430,12 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
             # Fallback: guess an image mimetype from the file extension, otherwise
             # default to a generic document so images are not sent as unknown files.
             mimetype = _guess_image_mimetype(temp_file_path) or "application/octet-stream"
+        if mimetype.startswith("image/") or mimetype == "application/octet-stream":
+            from utils.file_utils import prepare_image_for_whatsapp
+            try:
+                temp_file_path, mimetype = prepare_image_for_whatsapp(temp_file_path, mimetype)
+            except ValueError as e:
+                return f"Error: not sent, {e}"
         
         payload = {
             "file_path": temp_file_path,
