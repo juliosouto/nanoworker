@@ -33,7 +33,10 @@
     .msg-empty { text-align: center; padding: 48px 16px; color: var(--text-muted); }
     @media (max-width: 640px) {
         .msg-row { grid-template-columns: 24px 1fr; }
-        .msg-row .msg-meta-col, .msg-row .msg-del { grid-column: 2; }
+        /* Everything but the checkbox goes in the wide column (the message
+           text used to land in the 24px one, one word per line). */
+        .msg-row > :not(.msg-check) { grid-column: 2; min-width: 0; }
+        .msg-meta-col { overflow-wrap: anywhere; }
     }
 </style>
 

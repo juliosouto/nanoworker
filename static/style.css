@@ -171,6 +171,9 @@ body {
 /* Main Content */
 .main-content {
     flex: 1;
+    /* Without it the flex item grows to its widest content and the page
+       overflows the phone screen. */
+    min-width: 0;
     display: flex;
     flex-direction: column;
 }
