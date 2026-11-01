@@ -326,9 +326,13 @@ def test_group_messages_keep_each_sender_and_mark_the_current_one(env):
     # Each message on its own line, with its own sender.
     assert "[Message from: Vitor (5519911111111)]\nalguém sabe a cotação do dólar?" in prompt
     assert "dólar?\n\n[Message from: Capivara (5519922222222)]" in prompt
-    # The message being answered names who to reply to.
-    assert "[Message from: Julio (5519900000001)] [Current message: reply to Julio]" in prompt
-    assert prompt.rstrip().endswith("me responde a pergunta do Vitor")
+    # Earlier group messages are labeled as context; the message being
+    # answered is delimited and names who to reply to.
+    assert prompt.index("[Earlier messages in this chat, for context only") < prompt.index("Vitor (")
+    assert ("=== CURRENT MESSAGE from Julio: reply to Julio, answer this message only ===\n"
+            "[Message from: Julio (5519900000001)]\nme responde a pergunta do Vitor\n"
+            "=== END OF CURRENT MESSAGE ===") in prompt
+    assert prompt.index("Capivara (") < prompt.index("=== CURRENT MESSAGE")
 
 
 def test_previous_bot_reply_is_an_assistant_turn(env):
@@ -442,7 +446,7 @@ def _slow_reply_to_sender(messages):
 
     time.sleep(MODEL_LATENCY)
     prompt = _human_input(messages)
-    match = re.search(r"\[Current message: reply to ([^\]]+)\]", prompt)
+    match = re.search(r"=== CURRENT MESSAGE from [^:]+: reply to ([^,]+),", prompt)
     return _answer(f"resposta para {match.group(1) if match else '?'}")
 
 

@@ -187,6 +187,25 @@ def _build_history_from_db(cursor, session_id: str, exclude_message_id: str) -> 
     return history
 
 
+# The message the model must answer is delimited explicitly: simpler models
+# answered an earlier message of the history (or of the group messages merged
+# into the same turn) instead of the latest one.
+EARLIER_MESSAGES_HEADER = (
+    "[Earlier messages in this chat, for context only: do not answer them "
+    "unless the current message asks you to]"
+)
+CURRENT_MESSAGE_END = "=== END OF CURRENT MESSAGE ==="
+
+
+def mark_current_message(content: str, sender_label=None) -> str:
+    """Wrap the message being answered between explicit start/end lines."""
+    reply_to = f" from {sender_label}: reply to {sender_label}," if sender_label else ":"
+    return (
+        f"=== CURRENT MESSAGE{reply_to} answer this message only ===\n"
+        f"{content}\n{CURRENT_MESSAGE_END}"
+    )
+
+
 def _build_history_from_message_history(cursor, channel_id: str, exclude_client_message_id=None) -> list:
     """
     Builds the Gemini-format history for WhatsApp channels from the canonical
@@ -511,17 +530,14 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     # vectorized corpus (stored as plain message text).
     rag_query = content
 
+    sender_label = None
     if current_sender_id:
         sender_label = current_sender_name or current_sender_id
         ids = current_sender_id
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
-        # In groups the last history turn (other people's messages) is merged
-        # into this prompt below, so mark which message the reply is for.
-        content = (
-            f"[Message from: {sender_label} ({ids})] "
-            f"[Current message: reply to {sender_label}]\n{content}"
-        )
+        content = f"[Message from: {sender_label} ({ids})]\n{content}"
+    content = mark_current_message(content, sender_label)
 
     # History RAG (WhatsApp channels): retrieve the most relevant vectorized
     # history of this channel and APPEND it to the user's prompt before the
@@ -549,8 +565,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             conn.commit()
 
     if history and history[-1].role == 'user':
+        # Group messages sent since the last reply: they go in the same user
+        # turn, labeled as context so the model does not answer them instead.
         last_user = history.pop()
-        send_content = last_user.parts + send_content
+        send_content = [types.Part.from_text(text=EARLIER_MESSAGES_HEADER)] + last_user.parts + send_content
 
     if cron_models:
         models_to_try = cron_models
