@@ -42,8 +42,8 @@ Keys:
                            the graph flow; "" uses the worker's own models.
     AGENT_PLANNER          'off' | 'auto' | 'always' - phase 3: plan the steps
                            before the first round (graph flow only). 'auto'
-                           lets the planner skip simple requests and needs
-                           tools. Default: 'always' when PLAN_BEFORE_EXECUTION
+                           lets the planner model decide whether a plan is
+                           needed (only when the worker has tools). Default: 'always' when PLAN_BEFORE_EXECUTION
                            is true, else 'off'.
     AGENT_PLANNER_MODEL    str (default "") - model for the planner; "" uses
                            the worker's own models.

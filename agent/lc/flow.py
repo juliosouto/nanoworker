@@ -71,16 +71,6 @@ def _user_request(initial_content) -> str:
     return _content_to_text(initial_content, sep="\n\n")
 
 
-# Requests up to this many words count as simple: no planner in 'auto' mode,
-# and no evaluator for a round that called no tool. Each of those is a full
-# extra model call, which doubled or tripled the wait for a plain "oi".
-_SIMPLE_REQUEST_WORDS = 15
-
-
-def is_simple_request(user_request: str) -> bool:
-    return len((user_request or "").split()) <= _SIMPLE_REQUEST_WORDS
-
-
 def retry_instruction(verdict) -> str:
     """The message sent back to the executor for another round."""
     lines = ["Your previous answer does not fully address the request yet."]
@@ -116,10 +106,8 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
     from agent.llm_router import invoke_llm_with_fallback
 
     tool_funcs = config_kwargs.get("tools") or []
-    simple = is_simple_request(user_request)
-    use_planner = planner_mode == "always" or (
-        planner_mode == "auto" and bool(tool_funcs) and not simple
-    )
+    # In 'auto' the planner model itself decides whether a plan is needed.
+    use_planner = planner_mode == "always" or (planner_mode == "auto" and bool(tool_funcs))
 
     def plan(state: FlowState) -> FlowState:
         report_status(status.PLANNING)
@@ -193,10 +181,10 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
     def after_execute(state: FlowState) -> str:
         if state["iteration"] >= limit:
             return END
-        # A short request answered without tools on the first round (greeting,
-        # quick question): nothing for the evaluator to check, skip the call.
-        # Once the evaluator asked for another round, it keeps checking.
-        if simple and not state.get("steps") and state["iteration"] == 1:
+        # The evaluator checks tool work (claimed actions, ignored results).
+        # A round without tool calls has nothing for it to check, and the
+        # extra model call made plain questions slow.
+        if not state.get("steps"):
             return END
         return "evaluate"
 
