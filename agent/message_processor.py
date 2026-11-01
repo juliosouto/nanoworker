@@ -206,6 +206,52 @@ def mark_current_message(content: str, sender_label=None) -> str:
     )
 
 
+def history_in_system_prompt() -> bool:
+    """HISTORY_IN_SYSTEM_PROMPT: the user turn carries only the message being
+    answered (plus its quoted message and media); the history and the
+    retrieved messages go at the end of the system prompt."""
+    from database import get_config
+
+    return get_config("HISTORY_IN_SYSTEM_PROMPT", "false").lower() == "true"
+
+
+def history_transcript(history: list) -> str:
+    """The history turns as a plain transcript, oldest first."""
+    entries = []
+    for turn in history:
+        texts = [p.text for p in turn.parts if getattr(p, "text", None)]
+        media = sum(1 for p in turn.parts if not getattr(p, "text", None))
+        if media:
+            texts.append(f"[{media} attachment(s) not shown]")
+        text = "\n".join(t.strip() for t in texts if t.strip())
+        if not text:
+            continue
+        if turn.role == "model":
+            entries.append(f"[You]\n{text}")
+        elif text.startswith("[Message from:"):
+            entries.append(text)
+        else:
+            entries.append(f"[User]\n{text}")
+    return "\n\n".join(entries)
+
+
+def context_for_system_prompt(history: list, rag_block: str = "") -> str:
+    """The section appended to the system prompt. It goes last so the fixed
+    part before it stays the same between requests (provider prompt cache)."""
+    sections = []
+    transcript = history_transcript(history)
+    if transcript:
+        sections.append(
+            "# Conversation so far\n"
+            "Messages of this chat before the user's current message, oldest first. "
+            "They are context only: do not answer them; answer only the user's message. "
+            "[You] marks your own earlier replies.\n\n" + transcript
+        )
+    if rag_block:
+        sections.append("# Older messages related to the request\n" + rag_block)
+    return "\n\n".join(sections)
+
+
 def _build_history_from_message_history(cursor, channel_id: str, exclude_client_message_id=None) -> list:
     """
     Builds the Gemini-format history for WhatsApp channels from the canonical
@@ -308,10 +354,8 @@ def _attach_history_rag(cursor, channel_id: str, rag_query: str, content: str,
         )
         if retrieved:
             logger.info("History RAG: attached %d relevant messages to the prompt", len(retrieved))
-            return (
-                f"{content}\n\n{CONTEXT_HEADER}\n"
-                f"{format_history_context(retrieved)}\n{CONTEXT_FOOTER}"
-            )
+            block = f"{CONTEXT_HEADER}\n{format_history_context(retrieved)}\n{CONTEXT_FOOTER}"
+            return f"{content}\n\n{block}" if content else block
         return content
     except Exception as exc:
         logger.warning("History RAG retrieval failed (%s); continuing without context", exc)
@@ -537,14 +581,21 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
-    content = mark_current_message(content, sender_label)
+    separate_context = history_in_system_prompt()
+    if not separate_context:
+        content = mark_current_message(content, sender_label)
 
     # History RAG (WhatsApp channels): retrieve the most relevant vectorized
     # history of this channel and APPEND it to the user's prompt before the
-    # LLM call. Parameters come from the Agent Behavior page; any failure is
+    # LLM call (or to the system prompt with HISTORY_IN_SYSTEM_PROMPT).
+    # Parameters come from the Agent Behavior page; any failure is
     # fail-open (the reply is produced without the extra context).
+    rag_block = ""
     if channel_id and channel_id.startswith(("wa_web:", "whatsapp:")):
-        content = _attach_history_rag(cursor, channel_id, rag_query, content, current_client_message_id)
+        if separate_context:
+            rag_block = _attach_history_rag(cursor, channel_id, rag_query, "", current_client_message_id)
+        else:
+            content = _attach_history_rag(cursor, channel_id, rag_query, content, current_client_message_id)
 
     content = apply_plan_before_execution(content)
 
@@ -564,7 +615,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             cursor.execute("UPDATE messages_in SET gemini_file_uri = ? WHERE id = ?", (new_uri, message_in_id))
             conn.commit()
 
-    if history and history[-1].role == 'user':
+    if history and history[-1].role == 'user' and not separate_context:
         # Group messages sent since the last reply: they go in the same user
         # turn, labeled as context so the model does not answer them instead.
         last_user = history.pop()
@@ -599,6 +650,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             native_structured=native_structured,
             models_to_try=models_to_try,
         )
+        if separate_context:
+            context = context_for_system_prompt(history, rag_block)
+            if context:
+                system_prompt = f"{system_prompt}\n\n{context}"
 
         # Build config kwargs
         tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
@@ -628,6 +683,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         status_token = agent_status.set_status_reporter(status_reporter) if status_reporter else None
         try:
             agent_status.report_status(agent_status.THINKING)
+            if separate_context:
+                history = []  # already in the system prompt
             mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results)
         finally:
             if status_token is not None:

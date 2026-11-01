@@ -46,6 +46,7 @@ function saveSetting(key, isEnabled) {
 document.addEventListener('DOMContentLoaded', () => {
     setupToggle('doubleCheckToggle', 'doubleCheckToggleKnob', 'tool_creator_double_check');
     setupToggle('toolRelevanceToggle', 'toolRelevanceToggleKnob', 'tool_relevance_filter');
+    setupToggle('historyInSystemToggle', 'historyInSystemToggleKnob', 'history_in_system_prompt');
     setupToggle('blockAdsToggle', 'blockAdsToggleKnob', 'block_ads');
 
     [

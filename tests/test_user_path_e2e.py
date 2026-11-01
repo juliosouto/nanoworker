@@ -614,3 +614,49 @@ def test_question_on_a_quoted_video_sends_the_video(env):
         for block in m.content if isinstance(block, dict) and block.get("type") == "media"
     ]
     assert media and media[0]["mime_type"] == "video/mp4"
+
+
+# ---------------------------------------------------------------------------
+# HISTORY_IN_SYSTEM_PROMPT
+# ---------------------------------------------------------------------------
+
+def _system(messages):
+    return next(m.content for m in messages if isinstance(m, SystemMessage))
+
+
+def test_history_in_system_prompt_leaves_only_the_request_in_the_user_turn(env):
+    database.set_config("HISTORY_IN_SYSTEM_PROMPT", "true")
+    _post(env, "alguém sabe a cotação do dólar?", sender="5519911111111", name="Vitor", history_only=True)
+    env.model.script = [_answer("Julio, o dólar está R$ 5,00."), _answer("De nada!")]
+    _post(env, f"@{WORKER} me responde a pergunta do Vitor", name="Julio")
+    _post(env, f"@{WORKER} valeu", name="Julio")
+
+    second = env.model.calls[1]
+    humans = [m for m in second if isinstance(m, HumanMessage)]
+    assert len(humans) == 1 and not any(isinstance(m, AIMessage) for m in second)
+    assert humans[0].content == "[Message from: Julio (5519900000001)]\nvaleu"
+
+    system = _system(second)
+    context = system[system.index("# Conversation so far"):]
+    # The fixed instructions come first; the history is last, in order.
+    assert system.index("# Conversation so far") > len(system) // 2
+    assert (context.index("[Message from: Vitor (5519911111111)]\nalguém sabe a cotação do dólar?")
+            < context.index("me responde a pergunta do Vitor")
+            < context.index("[You]\nJulio, o dólar está R$ 5,00."))
+    assert "valeu" not in context
+
+
+def test_history_in_system_prompt_keeps_the_quoted_message_and_media_with_the_request(env):
+    database.set_config("HISTORY_IN_SYSTEM_PROMPT", "true")
+    jpg = base64.b64encode(b"\xff\xd8\xff fake jpeg").decode()
+    env.model.script = [_answer("É uma represa.")]
+    _post(env, f"@{WORKER} que lugar é esse?", quoted_sender="Alexandre",
+          quoted_text="olha isso", quoted_image_base64=jpg, quoted_mimetype="image/jpeg")
+
+    call = env.model.calls[0]
+    prompt = _human_input(call)
+    assert "[Quoted message from: Alexandre, its image is attached]\nolha isso" in prompt
+    assert "que lugar é esse?" in prompt and "CURRENT MESSAGE" not in prompt
+    media = [b for m in call if isinstance(m, HumanMessage) and isinstance(m.content, list)
+             for b in m.content if isinstance(b, dict) and b.get("type") == "media"]
+    assert media and media[0]["mime_type"] == "image/jpeg"

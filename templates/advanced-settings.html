@@ -51,6 +51,26 @@
             </div>
         </div>
 
+        <!-- History in System Prompt Card -->
+        <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
+            <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">History in System Prompt</h3>
+            <small style="display: block; margin-bottom: 12px; color: var(--text-muted); font-size: 0.8rem;">
+                On: the user's turn carries only the message being answered (with its quoted message and media); the chat history and the messages retrieved by History RAG go at the end of the system prompt, marked as context. Off: the history is sent as chat turns and the current message is delimited in the last one.
+            </small>
+            <div class="settings-form" style="margin-top: auto; display: flex; flex-direction: column;">
+                <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <label style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">History in System Prompt</label>
+                    </div>
+                    <label style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer;">
+                        <input type="checkbox" id="historyInSystemToggle" {% if history_in_system_prompt %}checked{% endif %} style="opacity: 0; width: 0; height: 0;">
+                        <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;" id="historyInSystemToggleKnob"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <!-- Agent Flow Card -->
         <div class="glass-panel" style="display: flex; flex-direction: column; padding: 16px;">
             <h3 style="font-size: 1.1rem; margin-top: 0; margin-bottom: 6px;">Agent Flow</h3>

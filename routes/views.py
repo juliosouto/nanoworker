@@ -309,6 +309,7 @@ def advanced_settings_page():
         llm_models=llm_models,
         tool_creator_double_check=get_config('TOOL_CREATOR_DOUBLE_CHECK', 'false').lower() == 'true',
         tool_relevance_filter=_tool_relevance_filter(),
+        history_in_system_prompt=get_config('HISTORY_IN_SYSTEM_PROMPT', 'false').lower() == 'true',
         block_ads=get_config('BLOCK_ADS', 'true').lower() == 'true',
         tts_model=get_config('TTS_MODEL', 'kokoro'),
         whisper_model=get_config('WHISPER_MODEL', 'small'),
