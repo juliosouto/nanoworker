@@ -114,7 +114,6 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
     from agent.lc import evaluator, planner
     from agent.lc import runner as lc_runner
     from agent.llm_router import invoke_llm_with_fallback
-    from agent.autonomous_loop import _strip_media_parts
 
     tool_funcs = config_kwargs.get("tools") or []
     simple = is_simple_request(user_request)
@@ -179,10 +178,13 @@ def build_flow(*, history, config_kwargs, models_to_try, evaluator_models, curso
         # keep the chat message the same as the legacy loop's.
         logger.info("Agent reflecting (%d/%d): %s", state["iteration"], limit, verdict.reason)
         emit(f"🔄 Agent reflecting (Iteration {state['iteration']}/{limit})...")
-        # Media already seen by the model is not re-sent (same as the legacy loop).
+        # The media of this turn stays in the history: without it the next
+        # round answered "I cannot see the video" about a video it had just
+        # described. Only the turn's own attachments are kept (history replayed
+        # from earlier turns is already text).
         parts = [
             types.Part.from_text(text=p) if isinstance(p, str) else p
-            for p in _strip_media_parts(state["send_content"])
+            for p in state["send_content"]
         ]
         history.append(types.Content(role="user", parts=parts))
         history.append(types.Content(role="model", parts=[types.Part.from_text(text=state["answer"])]))

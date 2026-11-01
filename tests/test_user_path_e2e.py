@@ -593,3 +593,20 @@ def test_prompt_forbids_claiming_actions_not_done(env):
     env.model.script = [_answer("ok")]
     _post(env, f"@{WORKER} oi")
     assert "Never say you did something" in env.model.calls[0][0].content
+
+
+def test_question_on_a_quoted_video_sends_the_video(env):
+    mp4 = base64.b64encode(b"\x00\x00\x00\x18ftypmp42 fake video").decode()
+    env.model.script = [_answer("O vídeo diz que...")]
+    _post(env, f"{WORKER} liste em detalhes todas as mentiras nesse vídeo",
+          quoted_sender="Alexandre", quoted_text="", quoted_image_base64=mp4,
+          quoted_mimetype="video/mp4")
+
+    prompt = _human_input(env.model.calls[0])
+    assert "its video is attached" in prompt
+    media = [
+        block
+        for m in env.model.calls[0] if isinstance(m, HumanMessage) and isinstance(m.content, list)
+        for block in m.content if isinstance(block, dict) and block.get("type") == "media"
+    ]
+    assert media and media[0]["mime_type"] == "video/mp4"

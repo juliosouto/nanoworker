@@ -124,6 +124,23 @@ class TestAgentFlow(_FlowCase):
         self.assertIn("🔄 Agent reflecting (Iteration 1/3)...", self.feedback)
         self.assertFalse(any("no forecast" in f for f in self.feedback))
 
+    def test_retry_keeps_the_turn_attachment(self):
+        """A second round still sees the video the user asked about."""
+        from google.genai import types
+
+        video = types.Part.from_bytes(data=b"fake mp4", mime_type="video/mp4")
+        self.answers = ["Lies: ...", "Lies, in detail: ..."]
+        self.verdicts = [_verdict("needs_more_work", reason="more detail"), _verdict("done")]
+        with patch("agent.autonomous_loop.get_config", return_value="3"):
+            execute_autonomous_loop(
+                self.history, {"system_instruction": "sys"}, [video, REQUEST], ["m1"],
+                self.cursor, "sid", "mid", is_ide=False,
+            )
+        kept = [p for p in self.history[0].parts if getattr(p, "inline_data", None)]
+        self.assertEqual(kept[0].inline_data.mime_type, "video/mp4")
+        _, prompt, _ = self.eval_inputs[0]
+        self.assertIn("never ask for more work only because you cannot see", prompt)
+
     def test_needs_user_input_and_failed_end_the_turn(self):
         for status in ("needs_user_input", "failed"):
             with self.subTest(status=status):

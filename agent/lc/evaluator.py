@@ -61,6 +61,7 @@ Decide which status fits:
 - "failed": a tool or system error that cannot be worked around prevents the request.
 When a plan is given, check it step by step: an unfinished step means "needs_more_work", unless it turned out unnecessary or impossible.
 Also mark "needs_more_work" when the answer claims an action (sent, saved, scheduled, searched...) that no tool result shows.
+Attachments of the request (images, video, audio, documents) were given to the assistant but not to you: trust its description of them and never ask for more work only because you cannot see or verify their content.
 Reply with only a JSON object, no markdown:
 {"status": "<one of the four>", "reason": "<one short sentence>", "missing": ["<what is still missing>"], "next_instruction": "<concrete next step for the assistant, or null>"}"""
 
