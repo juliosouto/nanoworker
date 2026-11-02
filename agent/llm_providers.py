@@ -19,7 +19,7 @@ from agent.openai_tools import (
     execute_openai_compatible_llm,
 )
 from agent.lc import settings as lc_settings
-from agent.stop_check import StopRequestedError, sleep_interruptible
+from agent.stop_check import StopRequestedError, raise_if_stop_requested, sleep_interruptible
 from database import get_config
 
 
@@ -175,6 +175,7 @@ def call_gemini_llm(
     while iteration < max_iterations:
         response = None
         for attempt in range(max_retries):
+            raise_if_stop_requested()
             try:
                 response = chat.send_message(current_content)
                 break

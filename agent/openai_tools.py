@@ -14,7 +14,7 @@ from agent.db_feedback import insert_feedback
 from agent.status import report_status, tool_status
 from agent.lc import settings as lc_settings
 from agent.lc.tools_lc import first_line_description, json_schema_type
-from agent.stop_check import StopRequestedError, sleep_interruptible
+from agent.stop_check import StopRequestedError, raise_if_stop_requested, sleep_interruptible
 from database import get_config
 
 logger = logging.getLogger(__name__)
@@ -366,6 +366,7 @@ def execute_openai_compatible_llm(
         #     A genuine 402 "insufficient credits" (the user's own balance) is NOT
         #     retried here.
         for retry_attempt in range(_API_CALL_MAX_RETRIES):
+            raise_if_stop_requested()
             try:
                 response = client.chat.completions.create(**call_args)
                 break

@@ -63,3 +63,9 @@ def sleep_interruptible(seconds: float, poll_interval: float = 1.0) -> bool:
         time.sleep(chunk)
         remaining -= chunk
     return is_stop_requested()
+
+def raise_if_stop_requested() -> None:
+    """Raises StopRequestedError when /stop was requested. Called right before
+    every LLM request so no new call starts after the user stopped the worker."""
+    if is_stop_requested():
+        raise StopRequestedError()

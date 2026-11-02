@@ -207,10 +207,17 @@ class TestAgentFlow(_FlowCase):
     def test_stop_between_rounds_returns_the_stop_message(self):
         self.answers = ["a1", "a2"]
         self.verdicts = [_verdict("needs_more_work")]
-        self.cursor.fetchone.side_effect = [None, {"id": "stop"}]  # polled once per round
+        polls = iter([[], [{"content": "/stop"}]])  # polled once per round
+        self.cursor.fetchall.side_effect = lambda: next(polls, [{"content": "/stop"}])
         out = self.run_flow(3)
         self.assertIn("/stop", out)
         self.assertEqual(len(self.exec_calls), 1)
+
+    def test_stop_during_the_last_call_drops_its_answer(self):
+        self.answers = ["a1"]
+        polls = iter([[]])  # no stop before the call, stop when it returns
+        self.cursor.fetchall.side_effect = lambda: next(polls, [{"content": "/stop"}])
+        self.assertIn("/stop", self.run_flow(1))
 
     def test_stop_inside_executor_returns_the_stop_message(self):
         with patch("agent.llm_router.invoke_llm_with_fallback", side_effect=StopRequestedError()):

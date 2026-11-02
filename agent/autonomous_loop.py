@@ -162,7 +162,7 @@ def _parse_json_response(raw_response):
     return None
 
 
-def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None, show_plan_in_chat=True):
+def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None, show_plan_in_chat=True, worker_name=None):
     """
     Executes the autonomous reflection loop that re-invokes the LLM
     when the response indicates the user's request is not yet satisfied.
@@ -180,6 +180,8 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
         show_plan_in_chat (bool): Whether the "execution_plan" field from the model's
             JSON output should be surfaced to the user (as a separate feedback message).
             When False, the plan is discarded silently and never reaches the user.
+        worker_name (str, optional): The worker answering this message. A newer
+            "<worker> /stop" stops it; a plain "/stop" stops every worker.
 
     Returns:
         str: The final response text.
@@ -203,13 +205,11 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
     table_in = "ide_messages_in" if is_ide else "messages_in"
 
     def _stop_requested() -> bool:
-        """True when a newer /stop command has been issued for this message.
+        """True when a newer /stop command has been issued for this worker.
         Polled while retries are sleeping so the wait is interruptible."""
-        cursor.execute(f'''
-            SELECT id FROM {table_in} 
-            WHERE session_id = ? AND LOWER(TRIM(content)) = '/stop' AND rowid > (SELECT rowid FROM {table_in} WHERE id = ?)
-        ''', (session_id, message_in_id))
-        return cursor.fetchone() is not None
+        from utils.message_utils import newer_stop_requested
+
+        return newer_stop_requested(cursor, table_in, session_id, message_in_id, worker_name)
 
     def _abort_with_stop_message():
         """Stops the loop cleanly with the /stop confirmation when requested."""
@@ -222,7 +222,7 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
         if lc_settings.graph_flow_enabled():
             from agent.lc.flow import run_agent_flow
             try:
-                return run_agent_flow(
+                final_response = run_agent_flow(
                     history, config_kwargs, initial_content, models_to_try, cursor,
                     session_id, message_in_id, is_ide, autonomous_limit, on_complete=on_complete,
                     show_plan_in_chat=show_plan_in_chat,
@@ -230,6 +230,10 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
             except StopRequestedError:
                 _abort_with_stop_message()
                 return final_response
+            # A /stop that arrived during the last model call drops its answer.
+            if _stop_requested():
+                _abort_with_stop_message()
+            return final_response
 
         for iteration in range(autonomous_limit):
             # Check for /stop command between LLM calls
@@ -316,6 +320,10 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
             else:
                 final_response = mock_response_raw
                 break
+
+        # A /stop that arrived during the last model call drops its answer.
+        if _stop_requested():
+            _abort_with_stop_message()
     finally:
         reset_stop_check(token)
 

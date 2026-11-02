@@ -7,7 +7,7 @@ import logging
 
 from agent.db_feedback import insert_feedback
 from agent.openai_tools import reset_has_fallback_model, set_has_fallback_model
-from agent.stop_check import StopRequestedError
+from agent.stop_check import StopRequestedError, raise_if_stop_requested
 import agent.llm_providers as _providers
 import agent.lc.settings as lc_settings
 from agent.lc.tokens import count_tokens
@@ -194,6 +194,8 @@ def route_llm_call(
     Returns:
         str: Response processed by the selected model.
     """
+    # No new model call starts after the user stopped this worker.
+    raise_if_stop_requested()
     table = "ide_messages_out" if is_ide else "messages_out"
 
     from database import get_db, decrypt_value

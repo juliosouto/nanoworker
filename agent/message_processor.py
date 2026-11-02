@@ -16,7 +16,9 @@ from agent.stop_check import StopRequestedError
 from database import get_config, get_db
 from tools import get_permitted_tools
 from utils.message_utils import (
+    newer_stop_requested,
     resolve_worker_from_content,
+    stop_command_worker,
     clean_mention,
     apply_plan_before_execution,
 )
@@ -468,15 +470,16 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     """
     original_content = content
 
-    # Fast-path for /stop command
-    if original_content.strip().lower() == '/stop':
+    # Fast-path for /stop and "<worker> /stop": never reaches the LLM.
+    stop_target = stop_command_worker(original_content)
+    if stop_target is not None:
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
         conn.commit()
         conn.close()
         
-        stop_response = "🛑 Comando de parada recebido."
+        stop_response = f"🛑 {stop_target} parado." if stop_target else "🛑 Comando de parada recebido."
         message_out_id = f"msg-out-{uuid.uuid4().hex[:8]}"
         try:
             cursor = get_db().cursor()
@@ -566,6 +569,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             if pref_models:
                 cron_models = pref_models
 
+    worker_name = worker['worker_name'] if worker else None
+
+    # A stop for this worker that arrived while this message waited: skip it.
+    if newer_stop_requested(cursor, 'messages_in', session_id, message_in_id, worker_name):
+        cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
+        conn.commit()
+        conn.close()
+        return message_in_id, "Skipped: worker stopped by /stop."
+
     # Clean worker mention from content
     content = clean_mention(original_content)
 
@@ -632,7 +644,6 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         include_tool_rules = tools_enabled
 
         # Build system prompt
-        worker_name = worker['worker_name'] if worker else None
         # Fase 1: decide whether the first model enforces the JSON contract
         # natively (structured output) so the builder can omit the prose block.
         from agent.lc import outputs as lc_outputs
@@ -685,7 +696,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             agent_status.report_status(agent_status.THINKING)
             if separate_context:
                 history = []  # already in the system prompt
-            mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results)
+            mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name)
         finally:
             if status_token is not None:
                 agent_status.reset_status_reporter(status_token)
@@ -736,7 +747,7 @@ def process_ide_message(message_in_id, session_id, content, on_complete=None):
     Runs the LLM agent for IDE messages, using ide_messages_in/out tables.
     """
     # Fast-path for /stop command
-    if content.strip().lower() == '/stop':
+    if stop_command_worker(content) is not None:
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('UPDATE ide_messages_in SET processed = 2 WHERE id = ?', (message_in_id,))

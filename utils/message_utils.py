@@ -215,6 +215,57 @@ def resolve_worker_from_content(content):
 
     return get_default_worker(workers)
 
+def stop_command_worker(content):
+    """
+    Parses a stop command: "/stop" or "<worker> /stop" (the "@" is optional).
+
+    Returns None when `content` is not a stop command, "" for a plain "/stop"
+    (stops every worker) and the lowercased worker name for "<worker> /stop".
+    """
+    if not content:
+        return None
+    text = content.strip()
+    # The command may follow a "[Quoted message from: ...]" block.
+    if text.lower().startswith("[quoted message from:") and "\n\n" in text:
+        text = text.split("\n\n", 1)[1].strip()
+    if not text.lower().endswith("/stop"):
+        return None
+    target = text[:-len("/stop")].strip().rstrip(",:").strip().lstrip("@").strip().lower()
+    if not target:
+        return ""
+
+    from database import get_db
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT worker_name FROM workers_config')
+    names = [(r['worker_name'] or '').strip().lower() for r in cursor.fetchall()]
+    conn.close()
+    target_no_spaces = re.sub(r"\s+", "", target)
+    for name in names:
+        if name and target_no_spaces == re.sub(r"\s+", "", name):
+            return name
+    return None
+
+def newer_stop_requested(cursor, table_in, session_id, message_in_id, worker_name=None):
+    """
+    True when a stop command for this worker arrived in the session after
+    `message_in_id`. A plain "/stop" stops every worker; "<worker> /stop" only
+    that worker. Without a known worker, any stop command counts.
+    """
+    cursor.execute(
+        f"SELECT content FROM {table_in} WHERE session_id = ? AND content LIKE '%/stop%' "
+        f"AND rowid > (SELECT rowid FROM {table_in} WHERE id = ?)",
+        (session_id, message_in_id),
+    )
+    worker = (worker_name or '').strip().lower()
+    for row in cursor.fetchall():
+        target = stop_command_worker(row['content'])
+        if target is None:
+            continue
+        if target == "" or not worker or target == worker:
+            return True
+    return False
+
 def should_process_wa_message(channel_base, sender_id, content="", is_group=False, sender_id_alt=None, return_reason=False, mention_data=None):
     """
     Determines if a WhatsApp message should be processed based on config.

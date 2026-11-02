@@ -98,6 +98,15 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         self._feedback(f"⚙️ Executing local tool: {name}...")
         report_status(tool_status(name))
 
+    def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
+        # No new model call inside the agent loop after a /stop.
+        if is_stop_requested():
+            raise StopRequestedError()
+
+    def on_llm_start(self, serialized, prompts, **kwargs) -> None:
+        if is_stop_requested():
+            raise StopRequestedError()
+
     def on_tool_end(self, output, **kwargs) -> None:
         name = kwargs.get("name") or "tool"
         # The graph's tool node reports a ToolMessage, AgentExecutor the raw result.

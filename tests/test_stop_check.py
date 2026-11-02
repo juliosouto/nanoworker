@@ -48,7 +48,8 @@ def test_gemini_429_aborts_on_stop(mock_client_cls, mock_get_config):
     err_429 = "429 RESOURCE_EXHAUSTED. Quota exceeded GenerateContentInputTokensPerModelPerMinute-FreeTier"
     mock_chat.send_message.side_effect = Exception(err_429)
 
-    token = set_stop_check(lambda: True)  # user issued /stop
+    checks = iter([False])  # the first call starts, then the user issues /stop
+    token = set_stop_check(lambda: next(checks, True))
     try:
         with patch("agent.llm_providers.time.sleep", return_value=None), \
              patch("agent.llm_providers.time.time", return_value=30.0), \
@@ -70,7 +71,8 @@ def test_openai_429_aborts_on_stop(mock_get_config):
         "429 RESOURCE_EXHAUSTED. rate limit exceeded"
     )
 
-    token = set_stop_check(lambda: True)
+    checks = iter([False])  # the first call starts, then the user issues /stop
+    token = set_stop_check(lambda: next(checks, True))
     try:
         with pytest.raises(StopRequestedError):
             execute_openai_compatible_llm(
@@ -106,3 +108,73 @@ def test_fallback_does_not_run_after_stop(mock_insert_feedback, mock_route):
 
     # No "Changing to model-b" feedback is emitted: the fallback chain is aborted.
     assert not any("Changing to" in line for line in model_call_lines)
+
+# --- "<worker> /stop" -------------------------------------------------------
+
+def _workers_db(names):
+    db = MagicMock()
+    db.cursor.return_value.fetchall.return_value = [{"worker_name": n} for n in names]
+    return db
+
+
+@pytest.mark.parametrize("content, expected", [
+    ("/stop", ""),
+    ("  /STOP ", ""),
+    ("Nano /stop", "nano"),
+    ("@nano /stop", "nano"),
+    ("@Mini Max, /stop", "mini max"),
+    ("[Quoted message from: Ana]\n> oi\n\n@Nano /stop", "nano"),
+    ("Fulano /stop", None),
+    ("Nano pare", None),
+    ("Nano /stop agora", None),
+    ("", None),
+])
+def test_stop_command_worker(content, expected):
+    from utils.message_utils import stop_command_worker
+
+    with patch("database.get_db", return_value=_workers_db(["Nano", "Mini Max"])):
+        assert stop_command_worker(content) == expected
+
+
+@pytest.mark.parametrize("newer, worker, expected", [
+    (["Nano /stop"], "Nano", True),
+    (["@mini /stop"], "Nano", False),  # another worker's stop
+    (["/stop"], "Nano", True),  # plain /stop stops every worker
+    (["Nano, tudo bem? /stop é um comando"], "Nano", False),
+    (["@mini /stop"], None, True),  # unknown worker: any stop counts
+    ([], "Nano", False),
+])
+def test_newer_stop_requested_filters_by_worker(newer, worker, expected):
+    from utils.message_utils import newer_stop_requested
+
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [{"content": c} for c in newer]
+    with patch("database.get_db", return_value=_workers_db(["Nano", "Mini"])):
+        assert newer_stop_requested(cursor, "messages_in", "s", "m", worker) is expected
+
+
+@patch("database.get_db")
+def test_route_llm_call_never_starts_after_stop(mock_get_db):
+    from agent.llm_router import route_llm_call
+
+    token = set_stop_check(lambda: True)
+    try:
+        with pytest.raises(StopRequestedError):
+            route_llm_call("m", [], {}, "hi", MagicMock(), "s", "m", False)
+    finally:
+        reset_stop_check(token)
+    mock_get_db.assert_not_called()  # aborted before touching any provider
+
+
+def test_process_message_stop_command_skips_the_llm():
+    from agent import message_processor as mp
+
+    db = MagicMock()
+    with patch.object(mp, "stop_command_worker", return_value="nano"), \
+         patch.object(mp, "get_db", return_value=db), \
+         patch.object(mp, "execute_autonomous_loop") as loop, \
+         patch.object(mp.time, "sleep") as sleep:
+        _, reply = mp.process_message("m1", "s1", "Nano /stop")
+    assert reply == "🛑 nano parado."
+    loop.assert_not_called()
+    sleep.assert_not_called()
