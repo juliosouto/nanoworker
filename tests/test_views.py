@@ -217,8 +217,15 @@ def test_llm_models_page(client):
     assert response.status_code == 200
 
 def test_workers_page(client):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO workers_config (worker_name, worker_model) VALUES ('Nano', 'gpt-4')")
+    conn.commit()
+    conn.close()
+
     response = client.get('/workers')
     assert response.status_code == 200
+    assert b'duplicateWorkerById(' in response.data
 
 def test_cron_jobs_page(client):
     response = client.get('/cron')

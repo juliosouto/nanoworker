@@ -37,6 +37,29 @@ function editWorkerById(id) {
     }
 }
 
+function duplicateWorkerById(id) {
+    if (!window.APP_STATE || !window.APP_STATE.registeredWorkers) return;
+    const worker = window.APP_STATE.registeredWorkers.find(w => w.id === id);
+    if (worker) {
+        currentEditWorkerId = null;
+        // The name is how users mention a worker, so the copy starts without
+        // one; it is never the default either (only one worker can be).
+        document.getElementById('worker_name').value = '';
+        document.getElementById('worker_model').value = worker.worker_model;
+        document.getElementById('worker_instructions').value = worker.worker_instructions || '';
+        document.getElementById('worker_temperature').value = worker.temperature == null ? '' : worker.temperature;
+        document.getElementById('is_default').checked = false;
+        document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
+        document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
+        document.getElementById('show_tools_results').checked = worker.show_tools_results === undefined ? true : !!worker.show_tools_results;
+        document.getElementById('modalTitle').innerText = 'Duplicate Worker';
+        openWorkerModal();
+        document.getElementById('worker_name').focus();
+    } else {
+        showToast('Worker not found for duplication.');
+    }
+}
+
 function saveWorker() {
     const payload = {
         worker_name: document.getElementById('worker_name').value,
