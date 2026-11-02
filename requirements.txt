@@ -27,6 +27,7 @@ cryptography
 openai
 trafilatura
 curl_cffi
+yt-dlp
 pypdf
 ddgs
 langdetect
