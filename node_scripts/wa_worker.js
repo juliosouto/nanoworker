@@ -710,7 +710,9 @@ app.post('/delete', async (req, res) => {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
     }
 
-    const { message_id, jid } = req.body;
+    // from_me=false + participant (the sender) deletes someone else's message
+    // in a group, which only works when this account is a group admin.
+    const { message_id, jid, from_me, participant } = req.body;
     if (!message_id) {
         return res.status(400).json({ error: 'Missing message_id parameter' });
     }
@@ -719,17 +721,39 @@ app.post('/delete', async (req, res) => {
 
     try {
         console.log(`[Baileys Outbound] Deleting message ${message_id} in ${targetJid}`);
-        await sock.sendMessage(targetJid, {
-            delete: {
-                remoteJid: targetJid,
-                id: message_id,
-                fromMe: true
-            }
-        });
+        const key = {
+            remoteJid: targetJid,
+            id: message_id,
+            fromMe: from_me !== false
+        };
+        if (participant) {
+            key.participant = participant;
+        }
+        await sock.sendMessage(targetJid, { delete: key });
         res.json({ status: 'deleted', target: targetJid, message_id });
     } catch (err) {
         console.error(`Failed to delete message ${message_id} via Baileys:`, err);
         res.status(500).json({ error: 'Failed to delete message', details: err.message || err.toString() });
+    }
+});
+
+app.post('/group_subject', async (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+
+    const { jid, subject } = req.body;
+    if (!jid || !subject) {
+        return res.status(400).json({ error: 'Missing jid or subject parameter' });
+    }
+
+    try {
+        console.log(`[Baileys Outbound] Renaming group ${jid} to: ${subject}`);
+        await sock.groupUpdateSubject(jid, subject);
+        res.json({ status: 'renamed', target: jid, subject });
+    } catch (err) {
+        console.error(`Failed to rename group ${jid} via Baileys:`, err);
+        res.status(500).json({ error: 'Failed to rename group', details: err.message || err.toString() });
     }
 });
 

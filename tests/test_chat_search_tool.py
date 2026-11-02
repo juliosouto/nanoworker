@@ -115,7 +115,13 @@ def test_no_match(chat):
     assert _tool()("inexistente") == "No matching messages found in this chat."
 
 
-def test_tool_is_registered():
+@pytest.mark.parametrize("os_folder", OS_FOLDERS)
+def test_tool_is_loaded_on_every_os(os_folder):
+    import os
     import tools
 
-    assert "search_chat_history" in {f.__name__ for f in tools.AVAILABLE_TOOLS}
+    with patch.object(tools, "AVAILABLE_TOOLS", []):
+        tools._load_tools_from_directory(
+            os.path.join(os.path.dirname(tools.__file__), os_folder), f"tools.{os_folder}"
+        )
+        assert "search_chat_history" in {f.__name__ for f in tools.AVAILABLE_TOOLS}

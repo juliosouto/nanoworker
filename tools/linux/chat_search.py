@@ -44,7 +44,7 @@ def _format(result) -> str:
     text = " ".join(str(payload.get("content") or "").split())
     if len(text) > _MAX_CHARS_PER_MESSAGE:
         text = text[:_MAX_CHARS_PER_MESSAGE] + "…"
-    return f"[{when}] {who}: {text}"
+    return f"#{result.get('id')} [{when}] {who}: {text}"
 
 
 def search_chat_history(query: str = "", sender: str = "", since: str = "", until: str = "",
@@ -59,7 +59,7 @@ def search_chat_history(query: str = "", sender: str = "", since: str = "", unti
         limit (int): How many messages to return (default 10, max 50).
 
     Returns:
-        str: One line per message ('[date hh:mm] Sender: text'), best match first (newest first without a query), or an error message.
+        str: One line per message ('#id [date hh:mm] Sender: text'; the #id is what delete_whatsapp_messages takes), best match first (newest first without a query), or an error message.
     """
     try:
         limit = int(limit)
