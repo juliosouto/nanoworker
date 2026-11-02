@@ -459,6 +459,7 @@ def run_langchain_llm(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
         thinking_config=thinking_config,
+        extra_body=config_kwargs.get("openai_extra_body"),
         **_build_structured_kwargs(config_kwargs, has_tools),
     )
 

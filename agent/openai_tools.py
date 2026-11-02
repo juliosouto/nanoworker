@@ -252,6 +252,8 @@ def execute_openai_compatible_llm(
     # Fase 1: structured output contract injected by route_llm_call for
     # providers that support the native response_format parameter.
     response_format = config_kwargs.pop("lc_openai_response_format", None)
+    # Provider-specific body fields, e.g. turning reasoning off (thinking_control).
+    extra_body = config_kwargs.pop("openai_extra_body", None)
 
     if "system_instruction" in config_kwargs:
         messages.append(
@@ -355,6 +357,8 @@ def execute_openai_compatible_llm(
         # reasoning models (o1/o3), which reject response_format on some gateways.
         if response_format and not is_reasoning:
             call_args["response_format"] = response_format
+        if extra_body:
+            call_args["extra_body"] = extra_body
 
         # Call the API, retrying transient errors with real-time feedback before
         # giving up and letting the model fallback chain take over. Covers:

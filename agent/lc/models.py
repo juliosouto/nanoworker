@@ -136,6 +136,7 @@ def make_chat_model(
     gemini_json_mime: bool = False,
     gemini_json_schema: Optional[dict] = None,
     has_tools: bool = False,
+    extra_body: Optional[dict] = None,
 ):
     """Build the LangChain chat model for a resolved model/provider pair.
 
@@ -157,6 +158,8 @@ def make_chat_model(
             (Gemini rejects response_schema together with function calling).
         has_tools: whether tool calling is enabled for this call (controls the
             Gemini schema drop rule).
+        extra_body: provider-specific request body fields (e.g. reasoning off,
+            see ``agent.thinking_control``); OpenAI-compatible and Groq only.
 
     Returns:
         BaseChatModel: the configured chat model.
@@ -178,13 +181,16 @@ def make_chat_model(
             has_tools,
         )
     if resolved == "groq":
-        return _make_groq(model_name, api_key, temperature, max_output_tokens, response_format)
+        return _make_groq(
+            model_name, api_key, temperature, max_output_tokens, response_format, extra_body
+        )
     if resolved == "ollama":
         return _make_ollama(model_name, temperature, max_output_tokens, response_format)
     # 'openai', qwen/openrouter/nvidia (fixed base URL) and any future
     # OpenAI-compatible provider share the ChatOpenAI builder.
     return _make_openai_compat(
-        model_name, resolved, api_key, temperature, max_output_tokens, response_format
+        model_name, resolved, api_key, temperature, max_output_tokens, response_format,
+        extra_body,
     )
 
 
@@ -237,7 +243,8 @@ def _cloudflare_base_url() -> str:
 
 
 def _make_openai_compat(
-    model_name, provider, api_key, temperature, max_output_tokens, response_format
+    model_name, provider, api_key, temperature, max_output_tokens, response_format,
+    extra_body=None,
 ):
     if not api_key:
         raise ValueError(f"API Key for {provider} model is not set.")
@@ -269,11 +276,14 @@ def _make_openai_compat(
         kwargs["max_tokens"] = int(max_output_tokens)
     if response_format is not None:
         kwargs["response_format"] = response_format
+    if extra_body:
+        kwargs["extra_body"] = extra_body
     kwargs.update(_request_limits())
     return ChatOpenAI(**kwargs)
 
 
-def _make_groq(model_name, api_key, temperature, max_output_tokens, response_format):
+def _make_groq(model_name, api_key, temperature, max_output_tokens, response_format,
+               extra_body=None):
     if not api_key:
         raise ValueError("API Key for Groq model is not set.")
 
@@ -292,8 +302,17 @@ def _make_groq(model_name, api_key, temperature, max_output_tokens, response_for
     }
     # ChatGroq has no first-class response_format field; route it through
     # model_kwargs so it reaches the API verbatim (json_schema / json_object).
+    # ChatGroq rejects its own fields (e.g. reasoning_effort) inside model_kwargs.
+    model_kwargs = {}
+    for key, value in (extra_body or {}).items():
+        if key in ChatGroq.model_fields:
+            kwargs[key] = value
+        else:
+            model_kwargs[key] = value
     if response_format is not None:
-        kwargs["model_kwargs"] = {"response_format": response_format}
+        model_kwargs["response_format"] = response_format
+    if model_kwargs:
+        kwargs["model_kwargs"] = model_kwargs
     return ChatGroq(**kwargs)
 
 

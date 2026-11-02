@@ -176,6 +176,36 @@ def route_llm_call(
     on_complete=None,
     summarize: bool = False,
 ) -> str:
+    """Routes the call (see ``_route_llm_call``). A Gemini model that rejects
+    thinking_level=MINIMAL (sent when thinking is off) is retried once with LOW."""
+    from agent import thinking_control
+
+    args = (model_name, history, config_kwargs, content, cursor, session_id,
+            message_in_id, is_ide, on_complete, summarize)
+    try:
+        return _route_llm_call(*args)
+    except StopRequestedError:
+        raise
+    except Exception as e:
+        if not (thinking_control.is_minimal_level_error(e)
+                and thinking_control.mark_minimal_unsupported(model_name)):
+            raise
+        logger.warning("Model %s rejected thinking level MINIMAL; retrying with LOW", model_name)
+        return _route_llm_call(*args)
+
+
+def _route_llm_call(
+    model_name: str,
+    history: list,
+    config_kwargs: dict,
+    content,
+    cursor,
+    session_id: str,
+    message_in_id: str,
+    is_ide: bool,
+    on_complete=None,
+    summarize: bool = False,
+) -> str:
     """
     Routes the LLM call to the appropriate provider (Qwen, Groq, OpenAI, or Gemini)
     based on the configurations stored in the database for the requested model.
@@ -255,6 +285,13 @@ def route_llm_call(
     local_kwargs = config_kwargs.copy()
     if not model_thinking:
         local_kwargs.pop("thinking_config", None)
+    elif "thinking_config" not in local_kwargs:
+        # Thinking is off for this call (worker setting, or an internal call
+        # such as the planner/evaluator): say so explicitly, since many models
+        # think by default.
+        from agent.thinking_control import thinking_off_kwargs
+
+        local_kwargs.update(thinking_off_kwargs(provider, model_name))
 
     # Fase 1: enforce the AgentResponse JSON contract natively when the
     # LangChain stack is active and the provider supports structured output.
