@@ -14,8 +14,8 @@ Design notes:
 """
 import json
 import logging
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, replace
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,46 @@ def get_settings() -> HistoryRagSettings:
         score_threshold=_float("HISTORY_RAG_SCORE_THRESHOLD", 0.3, 0.0, 1.0),
         lambda_mult=_float("HISTORY_RAG_LAMBDA", 0.5, 0.0, 1.0),
     )
+
+
+@dataclass
+class HistoryFilters:
+    """Optional narrowing of a history search (the agent's search tool).
+
+    ``sender`` matches part of the sender name or id, case-insensitively;
+    ``since``/``until`` are inclusive ``YYYY-MM-DD`` dates (msg_date).
+    """
+    sender: Optional[str] = None
+    since: Optional[str] = None
+    until: Optional[str] = None
+
+    def matches(self, payload) -> bool:
+        if self.sender:
+            needle = self.sender.casefold()
+            who = f"{payload.get('sender_name') or ''} {payload.get('sender_id') or ''}"
+            if needle not in who.casefold():
+                return False
+        date = payload.get("msg_date") or ""
+        if self.since and date < self.since:
+            return False
+        if self.until and date > self.until:
+            return False
+        return True
+
+    def sql(self, alias="h"):
+        """(SQL fragment starting with AND, params) for message_history."""
+        sql, params = "", []
+        if self.sender:
+            sql += f" AND (LOWER({alias}.sender_name) LIKE ? OR LOWER({alias}.sender_id) LIKE ?)"
+            needle = f"%{self.sender.lower()}%"
+            params += [needle, needle]
+        if self.since:
+            sql += f" AND {alias}.msg_date >= ?"
+            params.append(self.since)
+        if self.until:
+            sql += f" AND {alias}.msg_date <= ?"
+            params.append(self.until)
+        return sql, params
 
 
 def _payload_from_row(row) -> dict:
@@ -226,7 +266,7 @@ def _fts_query_for(query):
 
 
 def _semantic_leg(conn, channel_id, query_vector, fetch_k, exclude_id=None,
-                  cutoff_ts=None, max_k=None):
+                  cutoff_ts=None, max_k=None, filters: HistoryFilters | None = None):
     """Semantic (KNN) leg: returns (candidates, ranked_ids) with ``fetch_k``
     rows that survive the exclusions.
 
@@ -259,6 +299,8 @@ def _semantic_leg(conn, channel_id, query_vector, fetch_k, exclude_id=None,
                 payload = {}
             if cutoff_ts is not None and (payload.get("msg_ts") or 0) >= cutoff_ts:
                 continue  # already verbatim in the recent-window context
+            if filters is not None and not filters.matches(payload):
+                continue
             candidates[row["id"]] = {
                 "payload": payload,
                 "vector": row["vector"],
@@ -271,7 +313,8 @@ def _semantic_leg(conn, channel_id, query_vector, fetch_k, exclude_id=None,
         k = min(k * 2, limit)
 
 
-def _bm25_search(conn, fts_query, channel_id, exclude_id=None, cutoff_ts=None, limit=20):
+def _bm25_search(conn, fts_query, channel_id, exclude_id=None, cutoff_ts=None, limit=20,
+                 filters: HistoryFilters | None = None):
     """BM25 keyword leg (FTS5, porter + unicode61). Returns message_history
     ids, best-first (most negative bm25 first). The JOIN carries the channel
     scope plus the same exclusion/cutoff filters the semantic leg applies."""
@@ -289,6 +332,10 @@ def _bm25_search(conn, fts_query, channel_id, exclude_id=None, cutoff_ts=None, l
     if cutoff_ts is not None:
         sql += ' AND h.msg_timestamp < ?'
         params.append(cutoff_ts)
+    if filters is not None:
+        filter_sql, filter_params = filters.sql("h")
+        sql += filter_sql
+        params += filter_params
     sql += ' ORDER BY bm25(message_history_fts) LIMIT ?'
     params.append(limit)
     return [row["rowid"] for row in conn.execute(sql, params).fetchall()]
@@ -305,7 +352,8 @@ def _rrf_fuse(ranked_lists, rrf_k: int = 60) -> dict:
 
 
 def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None,
-                              settings: HistoryRagSettings | None = None) -> list:
+                              settings: HistoryRagSettings | None = None,
+                              filters: HistoryFilters | None = None) -> list:
     """
     HYBRID retrieval over the channel history: the semantic vector leg
     (sqlite-vec, cosine) is fused with the BM25 keyword leg (FTS5) via
@@ -372,6 +420,7 @@ def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None
             semantic_candidates, semantic_ranked = _semantic_leg(
                 conn, channel_id, query_vector, settings.fetch_k,
                 exclude_id=exclude_id, cutoff_ts=cutoff_ts, max_k=vec_count,
+                filters=filters,
             )
 
         if fts_query is not None:
@@ -379,7 +428,7 @@ def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None
                 bm25_ranked = _bm25_search(
                     conn, fts_query, channel_id,
                     exclude_id=exclude_id, cutoff_ts=cutoff_ts,
-                    limit=settings.fetch_k,
+                    limit=settings.fetch_k, filters=filters,
                 )
             except Exception as exc:
                 logger.warning("History RAG: BM25 leg failed (%s); semantic-only", exc)
@@ -431,6 +480,67 @@ def retrieve_relevant_history(query, channel_id, exclude_id=None, cutoff_ts=None
         }
         for c in picked
     ]
+
+
+_HISTORY_COLUMNS = """
+    id, channel_id, content, sender_id, sender_name, is_bot,
+    msg_timestamp, msg_date, msg_hour, msg_minute, msg_second
+"""
+
+
+def search_history(query, channel_id, filters: HistoryFilters | None = None,
+                   limit: int = 10, exclude_id=None) -> list:
+    """On-demand history search for the agent's tool, in one chat.
+
+    With a query: the hybrid retriever when the chat is on the RAG allowlist
+    (best match first), otherwise the BM25 keyword index alone, which covers
+    every chat. Without a query: the newest messages matching ``filters``.
+    Returns ``[{"id", "score", "payload"}]`` like ``retrieve_relevant_history``.
+    """
+    filters = filters or HistoryFilters()
+    if (query or "").strip():
+        settings = get_settings()
+        if settings.enabled and channel_allowed(channel_id):
+            # Fusion order, not MMR/threshold: the agent asked for matches.
+            tuned = replace(settings, search_type="similarity", k=limit,
+                            fetch_k=max(settings.fetch_k, limit * 3))
+            return retrieve_relevant_history(query, channel_id, exclude_id=exclude_id,
+                                             settings=tuned, filters=filters)
+        fts_query = _fts_query_for(query)
+        if fts_query is None:
+            return []
+
+    from database import get_db
+
+    conn = get_db()
+    try:
+        if (query or "").strip():
+            ids = _bm25_search(conn, fts_query, channel_id, exclude_id=exclude_id,
+                               limit=limit, filters=filters)
+            if not ids:
+                return []
+            placeholders = ",".join("?" * len(ids))
+            rows = {
+                row["id"]: row for row in conn.execute(
+                    f"SELECT {_HISTORY_COLUMNS} FROM message_history WHERE id IN ({placeholders})",
+                    ids,
+                )
+            }
+            ordered = [rows[rid] for rid in ids if rid in rows]
+        else:
+            filter_sql, params = filters.sql("h")
+            sql = f"SELECT {_HISTORY_COLUMNS} FROM message_history h WHERE h.channel_id = ?"
+            params = [channel_id] + params
+            sql += filter_sql
+            if exclude_id is not None:
+                sql += " AND h.id != ?"
+                params.append(exclude_id)
+            sql += " ORDER BY h.msg_timestamp DESC, h.id DESC LIMIT ?"
+            params.append(limit)
+            ordered = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    return [{"id": row["id"], "score": None, "payload": _payload_from_row(row)} for row in ordered]
 
 
 def _mmr_select(candidates, settings) -> list:
