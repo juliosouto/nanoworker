@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 _YOUTUBE_HOSTS = ("youtube.com", "youtu.be")
+# Free proxies fail often: try this many before the direct connection.
+_PROXY_ATTEMPTS = 3
 
 
 def _is_youtube(url) -> bool:
@@ -25,7 +27,7 @@ def _files_dir(category):
 
 
 def download_youtube_video(url: str, audio_only: bool = False, max_height: int = 720) -> str:
-    """Downloads a YouTube video as MP4 (or only its audio as MP3) to the local disk.
+    """Downloads a YouTube video as MP4 (or only its audio as MP3) to the local disk. The tool connects to a proxy by itself (switching proxies when one fails), then disconnects: do NOT call manage_proxy around it. After it returns, carry on with what the user asked (e.g. send the file with send_whatsapp_file).
 
     Args:
         url (str): The YouTube video URL (youtube.com or youtu.be).
@@ -76,13 +78,36 @@ def download_youtube_video(url: str, audio_only: bool = False, max_height: int =
         )
         options["merge_output_format"] = "mp4"
 
+    from utils.proxy_manager import disable_proxy, enable_proxy, get_current_proxy
+
+    # A proxy the agent turned on before stays on; one this tool turns on is
+    # turned off before returning.
+    proxy_was_on = get_current_proxy() is not None
+    errors = []
+    info = path = None
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(info)
-    except Exception as e:
-        logger.warning(f"YouTube download failed for {url}: {e}")
-        return f"Error downloading the video: {e}"
+        # One fresh proxy per attempt, then the direct connection as last resort.
+        for attempt in range(_PROXY_ATTEMPTS + 1):
+            proxy = None
+            if attempt < _PROXY_ATTEMPTS:
+                proxy = get_current_proxy() if proxy_was_on and attempt == 0 else enable_proxy()
+                if not proxy:
+                    errors.append("no working proxy found")
+                    continue
+            try:
+                with yt_dlp.YoutubeDL({**options, "proxy": proxy or ""}) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    path = ydl.prepare_filename(info)
+                break
+            except Exception as e:
+                logger.warning(f"YouTube download failed for {url} via {proxy or 'direct connection'}: {e}")
+                errors.append(f"{proxy or 'direct'}: {e}")
+    finally:
+        if not proxy_was_on:
+            disable_proxy()
+
+    if path is None:
+        return "Error downloading the video (all proxies and the direct connection failed): " + " | ".join(errors[-2:])
 
     # The postprocessors change the extension (merge to mp4, audio to mp3).
     path = os.path.splitext(path)[0] + (".mp3" if audio_only else ".mp4")
