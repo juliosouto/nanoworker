@@ -60,8 +60,13 @@ def usage_worker(name):
 
 @contextmanager
 def call_context():
-    """A fresh context for one route_llm_call (see :func:`set_call_info`)."""
-    token = _call_context.set({})
+    """A fresh context for one route_llm_call (see :func:`set_call_info`).
+
+    A call made inside another one (e.g. fetch_news summarizing articles in
+    the middle of a turn) keeps the outer call's prompt, so its cost is
+    counted in the user's prompt that caused it."""
+    parent = _call_context.get() or {}
+    token = _call_context.set({"prompt": parent.get("prompt")})
     try:
         yield
     finally:
@@ -71,8 +76,11 @@ def call_context():
 def set_call_info(**info) -> None:
     """Fill the current call context (provider, model, session_id...)."""
     ctx = _call_context.get()
-    if ctx is not None:
-        ctx.update(info)
+    if ctx is None:
+        return
+    ctx.update(info)
+    if ctx.get("prompt") is None and info.get("message_in_id"):
+        ctx["prompt"] = (info.get("session_id"), info["message_in_id"])
 
 
 @contextmanager
@@ -362,9 +370,10 @@ def log_llm_call(stack: str, **fields) -> int:
     """
     try:
         ctx = _call_context.get() or {}
+        session_id, message_in_id = ctx.get("prompt") or (None, None)
         row = {
-            "session_id": ctx.get("session_id"),
-            "message_in_id": ctx.get("message_in_id"),
+            "session_id": session_id,
+            "message_in_id": message_in_id,
             "provider": ctx.get("provider"),
             "model": ctx.get("model"),
             "worker": _usage_worker.get(),
@@ -524,3 +533,129 @@ def fill_from_generation(row_id, generation_id, api_key, delays=_GENERATION_DELA
             logger.warning("llm_calls: could not store generation %s (%s)", generation_id, e)
             return False
     return False
+
+
+# ---------------------------------------------------------------------------
+# Costs page (/costs): llm_calls grouped by the user's prompt.
+# ---------------------------------------------------------------------------
+_PROMPT_GROUP_SQL = """
+    SELECT c.message_in_id,
+           MAX(c.session_id) AS session_id,
+           MIN(c.created_at) AS started_at,
+           MAX(c.worker) AS worker,
+           GROUP_CONCAT(DISTINCT c.model) AS models,
+           COUNT(*) AS calls,
+           SUM(c.cost IS NULL) AS calls_without_cost,
+           SUM(c.cost) AS cost,
+           COALESCE(SUM(c.input_tokens), 0) AS input_tokens,
+           COALESCE(SUM(c.output_tokens), 0) AS output_tokens,
+           COALESCE(SUM(c.reasoning_tokens), 0) AS reasoning_tokens,
+           COALESCE(SUM(c.cached_tokens), 0) AS cached_tokens,
+           COALESCE(SUM(c.tool_calls), 0) AS tool_calls,
+           SUM(c.latency_ms) AS latency_ms
+    FROM llm_calls c
+    WHERE c.created_at >= datetime('now', '-' || ? || ' days')
+      AND c.message_in_id IS NOT NULL
+    GROUP BY c.message_in_id
+"""
+
+
+def get_prompt_costs(days=7, page=1, per_page=50, query=None) -> dict:
+    """Prompts of the last ``days`` days, newest first, with the summed cost
+    and tokens of every model call each one caused, plus period totals."""
+    from database import get_db
+
+    window = _days_since(days)
+    page = max(1, int(page or 1))
+    per_page = max(1, min(200, int(per_page or 50)))
+    like = f"%{query.strip()}%" if query and query.strip() else None
+    base = f"""
+        WITH p AS ({_PROMPT_GROUP_SQL})
+        SELECT p.*,
+               COALESCE(mi.content, imi.content) AS prompt,
+               s.channel_id AS channel_id
+        FROM p
+        LEFT JOIN messages_in mi ON mi.id = p.message_in_id
+        LEFT JOIN ide_messages_in imi ON imi.id = p.message_in_id
+        LEFT JOIN sessions s ON s.id = p.session_id
+        WHERE (? IS NULL OR COALESCE(mi.content, imi.content, '') LIKE ?
+               OR p.worker LIKE ? OR p.models LIKE ?)
+    """
+    params = (window, like, like, like, like)
+    try:
+        conn = get_db()
+        try:
+            total = conn.execute(f"SELECT COUNT(*) FROM ({base})", params).fetchone()[0]
+            rows = conn.execute(
+                f"{base} ORDER BY p.started_at DESC LIMIT ? OFFSET ?",
+                params + (per_page, (page - 1) * per_page),
+            ).fetchall()
+            totals = conn.execute(
+                """
+                SELECT COUNT(*) AS calls,
+                       COUNT(DISTINCT message_in_id) AS prompts,
+                       SUM(cost) AS cost,
+                       SUM(cost IS NULL) AS calls_without_cost,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens
+                FROM llm_calls
+                WHERE created_at >= datetime('now', '-' || ? || ' days')
+                """,
+                (window,),
+            ).fetchone()
+            by_model = conn.execute(
+                """
+                SELECT COALESCE(model, '(unknown)') AS model,
+                       COUNT(*) AS calls,
+                       SUM(cost) AS cost,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens
+                FROM llm_calls
+                WHERE created_at >= datetime('now', '-' || ? || ' days')
+                GROUP BY COALESCE(model, '(unknown)')
+                ORDER BY COALESCE(SUM(cost), 0) DESC, calls DESC
+                """,
+                (window,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError) as e:
+        logger.warning("llm_calls costs unavailable (%s)", e)
+        return {"days": window, "page": page, "per_page": per_page, "total": 0,
+                "prompts": [], "totals": {}, "by_model": []}
+    return {
+        "days": window,
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "prompts": [dict(r) for r in rows],
+        "totals": dict(totals) if totals else {},
+        "by_model": [dict(r) for r in by_model],
+    }
+
+
+def get_prompt_calls(message_in_id) -> list:
+    """Every model call of one prompt, in order."""
+    from database import get_db
+
+    try:
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, worker, stack, stage, provider, model,
+                       response_model, upstream_provider, generation_id,
+                       input_tokens, output_tokens, cached_tokens,
+                       cache_write_tokens, reasoning_tokens, total_tokens,
+                       cost, upstream_cost, is_byok, finish_reason, tool_calls,
+                       latency_ms
+                FROM llm_calls WHERE message_in_id = ? ORDER BY id
+                """,
+                (message_in_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError) as e:
+        logger.warning("llm_calls unavailable (%s)", e)
+        return []
+    return [dict(r) for r in rows]

@@ -1,5 +1,6 @@
 def register_routes(app):
     from .api_chat import api_chat_bp
+    from .api_costs import api_costs_bp
     from .api_cron import api_cron_bp
     from .api_files import api_files_bp
     from .api_llm import api_llm_bp
@@ -22,3 +23,4 @@ def register_routes(app):
     app.register_blueprint(api_cron_bp)
     app.register_blueprint(api_memory_bp)
     app.register_blueprint(api_messages_bp)
+    app.register_blueprint(api_costs_bp)

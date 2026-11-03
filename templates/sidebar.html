@@ -49,6 +49,8 @@
                 </li>
                 <li {% if request.endpoint in ['messages_page', 'views.messages_page'] %}class="active" {% endif %}><a href="/messages">Messages</a>
                 </li>
+                <li {% if request.endpoint in ['costs_page', 'views.costs_page'] %}class="active" {% endif %}><a href="/costs">Costs</a>
+                </li>
                 <br>
                 <li {% if request.endpoint=='settings_page' %}class="active" {% endif %}><a
                         href="/settings">Settings</a></li>

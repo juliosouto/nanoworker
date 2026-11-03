@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}NanoWorker - Costs{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/config.css') }}">
+
+<style>
+    .cost-toolbar { display: flex; flex-direction: row; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+    .cost-toolbar .cost-field { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
+    .cost-toolbar .cost-field.grow { flex: 1 1 240px; }
+    .cost-toolbar label { font-size: 0.8rem; color: var(--text-muted); }
+    .cost-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+    .cost-stat { border: 1px solid var(--border-color); border-radius: 12px; background: rgba(0,0,0,0.2); padding: 14px 16px; }
+    .cost-stat .label { font-size: 0.78rem; color: var(--text-muted); }
+    .cost-stat .value { font-size: 1.35rem; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .cost-stat .hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+    .cost-list { border: 1px solid var(--border-color); border-radius: 12px; background: rgba(0,0,0,0.2); overflow: hidden; }
+    .cost-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 110px 100px 110px; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border-color); align-items: start; cursor: pointer; }
+    .cost-row:first-child { border-top: 0; }
+    .cost-row:hover { background: rgba(255,255,255,0.03); }
+    .cost-head { cursor: default; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; background: rgba(255,255,255,0.04); }
+    .cost-head:hover { background: rgba(255,255,255,0.04); }
+    .cost-meta { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; overflow-wrap: anywhere; }
+    .cost-prompt { white-space: pre-wrap; word-break: break-word; max-height: 4.5em; overflow: hidden; font-size: 0.9rem; }
+    .cost-num { text-align: right; font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+    .cost-money { font-weight: 600; }
+    .cost-detail { grid-column: 1 / -1; cursor: default; overflow-x: auto; }
+    .cost-detail table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .cost-detail th, .cost-detail td { padding: 6px 8px; border-bottom: 1px solid var(--border-color); text-align: left; white-space: nowrap; }
+    .cost-detail th { color: var(--text-muted); font-weight: 500; }
+    .cost-detail td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .cost-badge { overflow-wrap: anywhere; font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-color); color: var(--text-muted); display: inline-block; margin: 2px 4px 0 0; }
+    .cost-empty { text-align: center; padding: 48px 16px; color: var(--text-muted); }
+    .cost-btn { border: 1px solid var(--border-color); background: rgba(255,255,255,0.04); color: inherit; border-radius: 8px; padding: 6px 12px; font-size: 0.85rem; }
+    .cost-btn:disabled { opacity: 0.45; }
+    .cost-models { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .cost-models th, .cost-models td { padding: 8px 12px; border-bottom: 1px solid var(--border-color); text-align: left; }
+    .cost-models th { color: var(--text-muted); font-weight: 500; font-size: 0.78rem; }
+    .cost-models td.n, .cost-models th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    @media (max-width: 1100px) {
+        .cost-row { grid-template-columns: minmax(0, 1fr) auto; }
+        .cost-row > .cost-prompt-col { grid-column: 1 / -1; order: -1; }
+        .cost-head { display: none; }
+        .cost-col-tokens, .cost-col-calls { display: none; }
+    }
+</style>
+
+<div style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+        <h2 style="font-weight: 600; margin: 0;">Costs</h2>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">Cost per user prompt (OpenRouter reports cost; other providers show tokens only)</span>
+    </div>
+
+    <div class="glass-panel cost-toolbar">
+        <div class="cost-field grow">
+            <label for="costSearch">Search</label>
+            <input id="costSearch" class="premium-input" type="search" placeholder="Prompt text, worker or model…" autocomplete="off">
+        </div>
+        <div class="cost-field">
+            <label for="costDays">Period</label>
+            <select id="costDays" class="premium-select">
+                <option value="1">Last 24 hours</option>
+                <option value="7" selected>Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="cost-stats" id="costStats"></div>
+
+    <div id="costResults"></div>
+
+    <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
+        <button type="button" class="cost-btn" id="costPrev">&larr; Previous</button>
+        <span id="costPageInfo" style="color: var(--text-muted); font-size: 0.9rem;"></span>
+        <button type="button" class="cost-btn" id="costNext">Next &rarr;</button>
+    </div>
+
+    <div class="glass-panel" style="padding: 0; overflow-x: auto;">
+        <div style="padding: 14px 16px 6px; font-weight: 600;">By model</div>
+        <table class="cost-models" id="costModels"></table>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/costs.js') }}"></script>
+{% endblock %}

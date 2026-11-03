@@ -169,3 +169,55 @@ def test_router_sets_the_call_context():
     assert seen["provider"] == "openrouter" and seen["model"] == "openrouter/x/y"
     assert (seen["session_id"], seen["message_in_id"]) == ("s9", "m9")
     assert llm_usage._call_context.get() is None
+
+
+def test_nested_calls_count_in_the_outer_prompt():
+    with llm_usage.call_context():
+        llm_usage.set_call_info(provider="openrouter", model="big", session_id="s1", message_in_id="m1")
+        with llm_usage.call_context():  # e.g. fetch_news summarizing an article
+            llm_usage.set_call_info(provider="google", model="cheap",
+                                    session_id="news_internal", message_in_id="news_step3")
+            llm_usage.log_llm_call("legacy", input_tokens=10)
+        llm_usage.log_llm_call("langchain", input_tokens=20)
+    rows = _rows()
+    assert [(r["model"], r["session_id"], r["message_in_id"]) for r in rows] == [
+        ("cheap", "s1", "m1"), ("big", "s1", "m1")]
+
+
+def _seed_prompt(msg_id, content, calls):
+    from database import get_db
+
+    conn = get_db()
+    conn.execute("INSERT INTO messages_in (id, session_id, content) VALUES (?, 's1', ?)", (msg_id, content))
+    conn.commit()
+    conn.close()
+    for model, cost, tokens in calls:
+        with llm_usage.call_context():
+            llm_usage.set_call_info(provider="openrouter", model=model, session_id="s1", message_in_id=msg_id)
+            llm_usage.log_llm_call("langchain", input_tokens=tokens, output_tokens=1, cost=cost)
+
+
+def test_prompt_costs_group_calls_per_prompt():
+    _seed_prompt("m1", "pegue as notícias do g1", [("a/x", 0.01, 100), ("a/x", 0.02, 200), ("b/y", None, 50)])
+    _seed_prompt("m2", "bom dia", [("a/x", 0.005, 10)])
+    data = llm_usage.get_prompt_costs(days=7)
+    assert data["total"] == 2
+    by_id = {p["message_in_id"]: p for p in data["prompts"]}
+    news = by_id["m1"]
+    assert news["prompt"] == "pegue as notícias do g1"
+    assert news["calls"] == 3 and news["calls_without_cost"] == 1
+    assert news["cost"] == pytest.approx(0.03) and news["input_tokens"] == 350
+    assert data["totals"]["prompts"] == 2 and data["totals"]["cost"] == pytest.approx(0.035)
+    assert data["by_model"][0]["model"] == "a/x"
+    assert llm_usage.get_prompt_costs(days=7, query="notícias")["total"] == 1
+    assert [c["model"] for c in llm_usage.get_prompt_calls("m1")] == ["a/x", "a/x", "b/y"]
+
+
+def test_costs_api_and_page(client):
+    _seed_prompt("m1", "oi", [("a/x", 0.01, 100)])
+    data = client.get("/api/costs/prompts?days=7").get_json()
+    assert data["prompts"][0]["message_in_id"] == "m1"
+    calls = client.get("/api/costs/prompts/m1/calls").get_json()["calls"]
+    assert len(calls) == 1 and calls[0]["cost"] == pytest.approx(0.01)
+    page = client.get("/costs")
+    assert page.status_code == 200 and b"costs.js" in page.data and b'href="/costs"' in page.data
