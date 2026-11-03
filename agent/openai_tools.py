@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import re
+import time
 from contextvars import ContextVar
 
 from agent import status
@@ -363,6 +364,7 @@ def execute_openai_compatible_llm(
         #     retried here.
         for retry_attempt in range(_API_CALL_MAX_RETRIES):
             raise_if_stop_requested()
+            call_started = time.monotonic()
             try:
                 response = client.chat.completions.create(**call_args)
                 break
@@ -435,6 +437,11 @@ def execute_openai_compatible_llm(
                         pass
                 if sleep_interruptible(wait_seconds):
                     raise StopRequestedError()
+
+        # One llm_calls row per API call (cost analysis).
+        from agent.llm_usage import log_openai_response
+
+        log_openai_response(response, int((time.monotonic() - call_started) * 1000))
 
         # Fase 6: accumulate this iteration's usage before any early exit.
         try:

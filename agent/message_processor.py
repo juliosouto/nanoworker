@@ -698,7 +698,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             agent_status.report_status(agent_status.THINKING)
             if separate_context:
                 history = []  # already in the system prompt
-            mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name)
+            from agent.llm_usage import usage_worker
+
+            with usage_worker(worker_name):
+                mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name)
         finally:
             if status_token is not None:
                 agent_status.reset_status_reporter(status_token)

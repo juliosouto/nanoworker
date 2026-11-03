@@ -180,18 +180,22 @@ def route_llm_call(
     thinking_level=MINIMAL (sent when thinking is off) is retried once with LOW."""
     from agent import thinking_control
 
+    from agent import llm_usage
+
     args = (model_name, history, config_kwargs, content, cursor, session_id,
             message_in_id, is_ide, on_complete, summarize)
-    try:
-        return _route_llm_call(*args)
-    except StopRequestedError:
-        raise
-    except Exception as e:
-        if not (thinking_control.is_minimal_level_error(e)
-                and thinking_control.mark_minimal_unsupported(model_name)):
+    # Per-call usage rows read the provider/model/ids from this context.
+    with llm_usage.call_context():
+        try:
+            return _route_llm_call(*args)
+        except StopRequestedError:
             raise
-        logger.warning("Model %s rejected thinking level MINIMAL; retrying with LOW", model_name)
-        return _route_llm_call(*args)
+        except Exception as e:
+            if not (thinking_control.is_minimal_level_error(e)
+                    and thinking_control.mark_minimal_unsupported(model_name)):
+                raise
+            logger.warning("Model %s rejected thinking level MINIMAL; retrying with LOW", model_name)
+            return _route_llm_call(*args)
 
 
 def _route_llm_call(
@@ -281,6 +285,11 @@ def _route_llm_call(
             image_input = bool(row["image_input"])
         except (KeyError, IndexError, TypeError):
             image_input = None
+
+    from agent.llm_usage import set_call_info
+
+    set_call_info(provider=provider, model=model_name, session_id=session_id,
+                  message_in_id=message_in_id, api_key=api_key)
 
     local_kwargs = config_kwargs.copy()
     # The worker's thinking level; internal calls (planner, evaluator...) have

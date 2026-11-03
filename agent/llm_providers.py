@@ -176,6 +176,7 @@ def call_gemini_llm(
         response = None
         for attempt in range(max_retries):
             raise_if_stop_requested()
+            call_started = time.monotonic()
             try:
                 response = chat.send_message(current_content)
                 break
@@ -239,6 +240,11 @@ def call_gemini_llm(
 
         if not response:
             break  # All retries failed
+
+        # One llm_calls row per API call (cost analysis).
+        from agent.llm_usage import log_gemini_response
+
+        log_gemini_response(response, int((time.monotonic() - call_started) * 1000))
 
         # Fase 6: accumulate this iteration's usage before any early exit.
         try:

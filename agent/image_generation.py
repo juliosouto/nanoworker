@@ -129,6 +129,9 @@ def _log_usage(session_id, message_in_id, model_name, usage):
 
         if not usage or not isinstance(usage, dict):
             return
+        from agent.llm_usage import log_llm_call, usage_fields
+
+        log_llm_call("legacy", **usage_fields(usage))
         usage_in = int(usage.get("prompt_tokens") or 0)
         usage_out = int(usage.get("completion_tokens") or 0)
         if usage_in or usage_out:

@@ -21,6 +21,7 @@ boots fast and importing this module never requires the optional packages.
 """
 
 import logging
+import time
 from contextvars import ContextVar
 from typing import Optional
 
@@ -77,6 +78,8 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         self.usage_output_tokens = 0
         self.usage_calls = 0
         self.tool_calls = 0
+        # run_id -> monotonic start of each model call (latency per call).
+        self._call_started = {}
 
     # -- helpers ---------------------------------------------------------
     def _feedback(self, text: str) -> None:
@@ -102,10 +105,12 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         # No new model call inside the agent loop after a /stop.
         if is_stop_requested():
             raise StopRequestedError()
+        self._call_started[kwargs.get("run_id")] = time.monotonic()
 
     def on_llm_start(self, serialized, prompts, **kwargs) -> None:
         if is_stop_requested():
             raise StopRequestedError()
+        self._call_started[kwargs.get("run_id")] = time.monotonic()
 
     def on_tool_end(self, output, **kwargs) -> None:
         name = kwargs.get("name") or "tool"
@@ -146,6 +151,13 @@ class FeedbackCallbackHandler(BaseCallbackHandler):
         except Exception:
             # Usage accounting must never break the agent turn.
             pass
+        # One llm_calls row per model call (cost analysis); fail-safe.
+        from agent.llm_usage import log_langchain_result
+
+        started = self._call_started.pop(kwargs.get("run_id"), None)
+        log_langchain_result(
+            response, int((time.monotonic() - started) * 1000) if started else None
+        )
 
 
 def _content_to_text(content, sep: str = " ") -> str:

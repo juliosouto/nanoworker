@@ -1070,6 +1070,46 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_llm_usage_stack_created ON llm_usage (stack, created_at)
     ''')
 
+    # One row per model API call, with everything the provider reports, for
+    # cost analysis (agent/llm_usage.py). cost is in the provider's unit
+    # (OpenRouter: credits = USD); NULL when the provider does not report it.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS llm_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        session_id TEXT,
+        message_in_id TEXT,
+        worker TEXT,
+        stack TEXT,
+        stage TEXT,
+        provider TEXT,
+        model TEXT,
+        response_model TEXT,
+        upstream_provider TEXT,
+        generation_id TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cached_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        reasoning_tokens INTEGER,
+        total_tokens INTEGER,
+        cost REAL,
+        upstream_cost REAL,
+        is_byok INTEGER,
+        finish_reason TEXT,
+        tool_calls INTEGER,
+        latency_ms INTEGER,
+        usage_json TEXT,
+        generation_json TEXT
+    )
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls (created_at)
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_llm_calls_model_created ON llm_calls (model, created_at)
+    ''')
+
     conn.commit()
     conn.close()
 
