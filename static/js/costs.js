@@ -1,5 +1,6 @@
 (function () {
     const PER_PAGE = 50;
+    const REFRESH_MS = 10000;
     const state = { days: 7, query: '', page: 1, totalPages: 1, open: new Set() };
     const els = {
         search: document.getElementById('costSearch'),
@@ -103,7 +104,8 @@
         return `<table><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows}</table>`;
     }
 
-    async function toggleDetail(row) {
+    // quiet: an auto refresh re-opening a detail, so no "Loading…" flash.
+    async function toggleDetail(row, quiet) {
         const detail = row.querySelector('.cost-detail');
         const id = row.dataset.id;
         if (detail.style.display !== 'none') {
@@ -113,7 +115,7 @@
         }
         state.open.add(id);
         detail.style.display = 'block';
-        detail.innerHTML = '<div class="cost-meta">Loading…</div>';
+        if (!quiet) detail.innerHTML = '<div class="cost-meta">Loading…</div>';
         try {
             const res = await fetch(`/api/costs/prompts/${encodeURIComponent(id)}/calls`);
             const data = await res.json();
@@ -123,17 +125,27 @@
         }
     }
 
-    async function load() {
+    // quiet: auto refresh, which keeps the current list on screen until the
+    // new data arrives (and keeps it if the request fails).
+    async function load(quiet) {
         const params = new URLSearchParams({ days: state.days, page: state.page, per_page: PER_PAGE });
         if (state.query) params.set('q', state.query);
-        els.results.innerHTML = '<div class="cost-empty">Loading…</div>';
+        if (!quiet) els.results.innerHTML = '<div class="cost-empty">Loading…</div>';
         let data;
         try {
             const res = await fetch('/api/costs/prompts?' + params);
             data = await res.json();
         } catch (e) {
-            els.results.innerHTML = '<div class="cost-empty">Could not load the costs.</div>';
+            if (!quiet) els.results.innerHTML = '<div class="cost-empty">Could not load the costs.</div>';
             return;
+        }
+        // Prompts whose detail is open get theirs again without flashing.
+        const details = {};
+        if (quiet) {
+            els.results.querySelectorAll('.cost-row[data-id]').forEach((row) => {
+                const detail = row.querySelector('.cost-detail');
+                if (state.open.has(row.dataset.id)) details[row.dataset.id] = detail.innerHTML;
+            });
         }
         renderStats(data.totals || {}, data.days);
         renderModels(data.by_model || []);
@@ -153,9 +165,27 @@
                 if (e.target.closest('.cost-detail')) return;
                 toggleDetail(row);
             });
-            if (state.open.has(row.dataset.id)) toggleDetail(row);
+            if (state.open.has(row.dataset.id)) {
+                state.open.delete(row.dataset.id);
+                const previous = details[row.dataset.id];
+                if (previous) row.querySelector('.cost-detail').innerHTML = previous;
+                toggleDetail(row, Boolean(previous));
+            }
         });
     }
+
+    // Auto refresh every 10s while the page is visible and focused; catch up
+    // at once when the user comes back to it.
+    let lastLoad = Date.now();
+    function refreshIfFocused() {
+        if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+        lastLoad = Date.now();
+        load(true);
+    }
+    setInterval(refreshIfFocused, REFRESH_MS);
+    window.addEventListener('focus', () => {
+        if (Date.now() - lastLoad >= REFRESH_MS) refreshIfFocused();
+    });
 
     let searchTimer = null;
     els.search.addEventListener('input', () => {
