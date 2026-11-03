@@ -817,6 +817,12 @@ app.post('/send_file', async (req, res) => {
                 mimetype: mimetype,
                 fileName: file_name || 'video'
             };
+        } else if ((mimetype && mimetype.startsWith('audio/')) || /\.(ogg|opus|mp3|m4a|aac|wav)$/i.test(file_path)) {
+            // .ogg/.opus go as a voice note (PTT); other audio as a playable audio message
+            const isVoice = /\.(ogg|opus)$/i.test(file_path) || (mimetype || '').includes('ogg') || (mimetype || '').includes('opus');
+            messagePayload = isVoice
+                ? { audio: fileBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }
+                : { audio: fileBuffer, mimetype: mimetype && mimetype.startsWith('audio/') ? mimetype : 'audio/mpeg' };
         } else {
             messagePayload = {
                 document: fileBuffer,
@@ -825,7 +831,7 @@ app.post('/send_file', async (req, res) => {
             };
         }
 
-        if (caption) {
+        if (caption && !messagePayload.audio) {
             messagePayload.caption = caption;
         }
 
