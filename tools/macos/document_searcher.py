@@ -4,10 +4,10 @@ from utils.message_utils import format_document_search_results
 
 def search_documents_data_in_database(query: str = None, limit: int = 10) -> dict:
     """
-    Searches for extracted data from documents in the database.
-    
+    Searches the data extracted from saved documents (receipts, invoices, contracts...) by a term in the file name, category, extracted data or metadata; when answering, list every key and value of each result, one per line.
+
     Args:
-        query (str, optional): General search term (searches in file name, category, extracted data, and metadata).
+        query (str, optional): Search term; empty lists the latest documents.
         limit (int, optional): Limit of returned results (default 10).
         
     Returns:

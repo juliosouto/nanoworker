@@ -111,6 +111,37 @@ def first_line_description(func: Callable) -> str:
     return f"Executes {func.__name__}"
 
 
+def param_description(doc: str, name: str) -> str:
+    """Description of parameter ``name`` from the docstring.
+
+    Reads the parameter's entry (``name: ...`` or ``name (type): ...``) with
+    its indented continuation lines, so multi-line entries reach the model
+    whole. Falls back to the first line that mentions the name, then to
+    "Parameter {name}".
+    """
+    lines = inspect.cleandoc(doc or "").splitlines()
+    entry = re.compile(rf"^(\s*){re.escape(name)}\s*(\([^)]*\))?\s*:\s*(.*)$")
+    for i, line in enumerate(lines):
+        match = entry.match(line)
+        if not match:
+            continue
+        indent = len(match.group(1))
+        parts = [match.group(3).strip()]
+        for following in lines[i + 1:]:
+            if not following.strip() or len(following) - len(following.lstrip()) <= indent:
+                break
+            parts.append(following.strip())
+        text = " ".join(p for p in parts if p)
+        if text:
+            return text
+    for line in lines:
+        if f"{name}:" in line or f"{name} " in line:
+            parts = line.split(":", 1)
+            if len(parts) > 1 and parts[1].strip():
+                return parts[1].strip()
+    return f"Parameter {name}"
+
+
 def tool_param_schema(func: Callable) -> Dict[str, Any]:
     """JSON schema properties for the parameters of ``func`` (legacy parity).
 
@@ -129,14 +160,7 @@ def tool_param_schema(func: Callable) -> Dict[str, Any]:
 
         json_type, item_type = json_schema_type(param.annotation)
 
-        param_desc = f"Parameter {name}"
-        if doc:
-            for line in doc.splitlines():
-                if f"{name}:" in line or f"{name} " in line:
-                    parts = line.split(":", 1)
-                    if len(parts) > 1:
-                        param_desc = parts[1].strip()
-                        break
+        param_desc = param_description(doc, name)
 
         prop: Dict[str, Any] = {"type": json_type, "description": param_desc}
 

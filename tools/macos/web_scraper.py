@@ -6,8 +6,10 @@ from playwright.sync_api import sync_playwright
 
 def extract_webpage_text(url: str) -> str:
     """
-    Extracts the main text content from a web page URL.
-    Use this tool whenever the user asks for information from a specific web page.
+    Extracts the main text of a web page; use it whenever the user asks for information from a specific page.
+
+    Args:
+        url: The full page URL (http:// or https://).
     """
     try:
         # First attempt: curl_cffi with impersonate

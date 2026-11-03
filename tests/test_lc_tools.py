@@ -11,6 +11,7 @@ from agent.lc import (
     tool_param_schema,
     tool_result_max_chars,
 )
+from agent.lc.tools_lc import param_description
 from agent.lc.tokens import count_tokens
 from agent.llm_providers import call_gemini_llm
 from agent.openai_tools import convert_to_openai_tool
@@ -496,3 +497,29 @@ class TestParameterizedAnnotations:
         out = lc_tool(self._func()).run({"question": "Q", "options": "A, B"})
         assert out.startswith("Error: invalid arguments for send_poll:")
         assert "call it again" in out
+
+
+class TestParamDescription(unittest.TestCase):
+    DOC = """Gets the weather for a city: now or later.
+
+    Args:
+        city (str): City name, ideally with state.
+        action: One of:
+            - 'a': first.
+            - 'b': second.
+        width: Target width. If height is omitted, it is scaled.
+        height: Target height.
+        empty:
+    """
+
+    def test_reads_the_entry_not_a_line_that_mentions_the_name(self):
+        self.assertEqual(param_description(self.DOC, "city"), "City name, ideally with state.")
+        self.assertEqual(param_description(self.DOC, "height"), "Target height.")
+
+    def test_joins_continuation_lines(self):
+        self.assertEqual(param_description(self.DOC, "action"), "One of: - 'a': first. - 'b': second.")
+
+    def test_fallbacks(self):
+        self.assertEqual(param_description(self.DOC, "empty"), "Parameter empty")
+        self.assertEqual(param_description("Does it.\n\nThe speed value: fast", "speed"), "fast")
+        self.assertEqual(param_description("", "x"), "Parameter x")

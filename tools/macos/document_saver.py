@@ -6,8 +6,7 @@ from database import get_db
 
 def save_extracted_document(category: str, extracted_data: dict, additional_metadata: dict = None, file_path: str = None) -> str:
     """
-    Saves a document (PDF or image) to bin/docs/ using a hash of its content for the name,
-    and stores the extracted data in the database.
+    Saves a received document (PDF or image) under bin/docs/ and stores the data extracted from it in the database; with several documents, call it once per document passing its file_path.
     
     Args:
         category (str): The category of the document (e.g., 'invoice', 'receipt', 'contract').

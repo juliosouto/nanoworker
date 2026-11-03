@@ -312,7 +312,7 @@ _PRIVATE_REPLY_ERROR = (
 
 def send_whatsapp_message(phone_number: str, message: str) -> str:
     """
-    Sends a text message to a phone number via WhatsApp.
+    Sends a text message via WhatsApp to a DIFFERENT chat than the current one; never use it to answer the current conversation, because your final answer is already delivered there automatically.
     DO NOT use this tool to reply to the current active conversation. Your text responses are automatically sent back to the current chat!
     ONLY use this tool if you explicitly need to initiate a new message to a DIFFERENT phone number.
 
@@ -384,7 +384,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> str:
 
 def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> str:
     """
-    Sends a local file to a phone number via WhatsApp.
+    Sends a local file via WhatsApp: pass the EXACT absolute path returned by the tool that created or downloaded it, and the chat id from your context (the group id when the request came from a group).
     Use this tool whenever you need to send a requested file or document to someone on WhatsApp.
 
     Args:
@@ -486,7 +486,7 @@ def send_whatsapp_file(phone_number: str, file_path: str, caption: str = "") -> 
 
 def send_whatsapp_poll(phone_number: str, question: str, options: list[str], multiple_choice: bool = False) -> str:
     """
-    Sends a poll for voting to a phone number or group via WhatsApp.
+    Sends a poll via WhatsApp to a chat (the group id from your context when the request came from a group).
 
     Args:
         phone_number: The recipient's phone number, group JID, or chat address.

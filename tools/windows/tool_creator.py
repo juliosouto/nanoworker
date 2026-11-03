@@ -2,7 +2,7 @@ import os
 
 def create_self_developed_tool(tool_name: str, code: str) -> str:
     """
-    You can use this tool to autonomously create new tools.
+    Creates a new tool for yourself from Python code; the code needs type hints on every parameter and the return value plus a Google-style docstring whose first line says what the tool does and when to use it (functions starting with _ are ignored).
     You have full access to the terminal, file system, etc., within the project folder.
     Provide the Python code for the new tool.
     The tool will be automatically saved to /tools/self-developed/windows/tool_name.py.

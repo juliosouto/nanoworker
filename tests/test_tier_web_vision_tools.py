@@ -170,7 +170,7 @@ def test_linux_browser_scroll_wrapper(mocker):
     mocker.patch("utils.security_utils.get_config", return_value="true")
     mock_bm = MagicMock()
     mock_bm.scroll.return_value = "Scrolled by 800 pixels"
-    mocker.patch("tools.linux.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.linux.browser._get_browser_manager", return_value=mock_bm)
 
     assert lb.browser_scroll(800) == "Scrolled by 800 pixels"
     mock_bm.scroll.assert_called_once_with(800)
@@ -182,7 +182,7 @@ def test_linux_browser_pdf_wrapper(mocker):
     mocker.patch("tools.linux.browser.get_temp_file_path", return_value="/tmp/page.pdf")
     mock_bm = MagicMock()
     mock_bm.save_as_pdf.return_value = "PDF saved to /tmp/page.pdf"
-    mocker.patch("tools.linux.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.linux.browser._get_browser_manager", return_value=mock_bm)
 
     assert lb.browser_pdf() == "PDF saved to /tmp/page.pdf"
     mock_bm.save_as_pdf.assert_called_once_with("/tmp/page.pdf")

@@ -2,7 +2,7 @@ from utils.proxy_manager import enable_proxy, disable_proxy, status_proxy
 
 def manage_proxy(action: str) -> str:
     """
-    Manages the Global Proxy interceptor that affects all HTTP requests made by the agent.
+    Turns the global proxy for all of the agent's HTTP requests on ('enable': a new free proxy), off ('disable') or reports it ('status'); use it to get around IP blocks or rate limits.
     Use this to bypass IP blocks, API rate limits, or web scraping blocks.
     
     Args:

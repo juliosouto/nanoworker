@@ -13,7 +13,7 @@ from agent import status
 from agent.db_feedback import insert_feedback
 from agent.status import report_status, tool_status
 from agent.lc import settings as lc_settings
-from agent.lc.tools_lc import first_line_description, json_schema_type
+from agent.lc.tools_lc import first_line_description, json_schema_type, param_description
 from agent.stop_check import StopRequestedError, raise_if_stop_requested, sleep_interruptible
 from database import get_config
 
@@ -167,15 +167,7 @@ def convert_to_openai_tool(func) -> dict:
 
         param_type, item_type = json_schema_type(param.annotation)
 
-        # Simple extraction of parameter description from docstring if present
-        param_desc = f"Parameter {param_name}"
-        if doc:
-            for line in doc.split("\n"):
-                if f"{param_name}:" in line or f"{param_name} " in line:
-                    parts = line.split(":", 1)
-                    if len(parts) > 1:
-                        param_desc = parts[1].strip()
-                        break
+        param_desc = param_description(doc, param_name)
 
         properties[param_name] = {"type": param_type, "description": param_desc}
         if param_type == "array":

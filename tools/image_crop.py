@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @require_permission('PERM_FS')
 def crop_image(image_path: str, left: int, top: int, right: int, bottom: int, output_path: str = None) -> str:
     """
-    Crops a local image file to the region defined by pixel coordinates and saves a new PNG file.
+    Crops a local image to a pixel box (left/top = upper-left corner, right/bottom = lower-right corner, measured from the image's top-left) and saves a new PNG, returning its absolute path.
     Use this tool to cut out a specific area of an image or screenshot (e.g. after browser_screenshot
     or download_file_from_url). Coordinates are PIXELS measured from the top-left corner of the image:
     left/top are the upper-left corner of the crop and right/bottom are the lower-right corner.
@@ -98,7 +98,7 @@ def crop_image(image_path: str, left: int, top: int, right: int, bottom: int, ou
 @require_permission('PERM_FS')
 def crop_image(image_path: str, left: int, top: int, right: int, bottom: int, output_path: str = None) -> str:
     """
-    Crops a local image file to the region defined by pixel coordinates and saves a new PNG file.
+    Crops a local image to a pixel box (left/top = upper-left corner, right/bottom = lower-right corner, measured from the image's top-left) and saves a new PNG, returning its absolute path.
     Use this tool to cut out a specific area of an image or screenshot (e.g. after browser_screenshot
     or download_file_from_url). Coordinates are PIXELS measured from the top-left corner of the image:
     left/top are the upper-left corner of the crop and right/bottom are the lower-right corner.

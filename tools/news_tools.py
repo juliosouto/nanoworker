@@ -161,11 +161,21 @@ def _coerce_source(value):
     if not raw_name:
         return None
     canonical = _preset_source_lookup(raw_name)
+    if not canonical and _looks_like_domain(raw_name):
+        # A site given by its address ("poder360.com.br", "https://g1.globo.com/"):
+        # search only inside it, under the preset name when it is a known one.
+        domain = re.sub(r"^(https?://)?(www\.)?", "", raw_name.lower()).rstrip("/")
+        known = next((n for n, p in _PRESET_SOURCES.items() if p["domain"] == domain), "")
+        return {"name": known or domain, "domain": domain}
     preset = _PRESET_SOURCES.get(canonical, {})
     return {
         "name": canonical or raw_name,
         "domain": preset.get("domain", ""),
     }
+
+
+def _looks_like_domain(value: str) -> bool:
+    return bool(re.fullmatch(r"(https?://)?[\w-]+(\.[\w-]+)+(/[\w./-]*)?", value.strip(), re.IGNORECASE))
 
 
 def _coerce_topic(value):
@@ -399,20 +409,26 @@ def _summarize_article_with_llm(title: str, text: str, source: str, target_chars
 @require_permission('PERM_WEB_SEARCH')
 def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_chars: int = 0) -> str:
     """
-    Executes a complete multi-step news briefing pipeline:
-    1. Searches live news for configured topics & sources without RSS reliance.
-    2. Scrapes the full webpage text for each article.
-    3. Summarizes each article using an internal LLM call to match target length.
-    4. Compiles and returns the finalized, structured news digest ready for presentation.
+    Gets recent news as a ready-made digest (title, source, date, summary, link) to send as is; slow, so call it ONCE per request with all filters, and when the user names a site or subject pass sources (prefer the domain, e.g. 'g1.globo.com') and topics (e.g. 'principais notícias do dia'), otherwise it uses the configured ones (by default tech topics).
 
     Args:
-        topics: Optional comma-separated topic names to override (e.g. "Tecnologia,Startups").
-        sources: Optional comma-separated source names to override (e.g. "G1,CNN Brasil").
-        max_news: Optional override for total news count in the final digest.
-        summary_chars: Optional override for character length per summary.
+        topics: Comma-separated subjects to search for, e.g. "principais notícias
+            do dia" or "Economia,Política". Empty = the configured topics
+            (by default Tecnologia, Programação and Startups), so pass it
+            whenever the user asks for anything else, such as the day's top news.
+        sources: Comma-separated sites to search in. Prefer the site's domain
+            ("g1.globo.com", "poder360.com.br"): a domain limits the search to
+            that site. Known names also work (G1, CNN Brasil, CNN EUA, Reuters,
+            BBC Brasil, BBC News, Gazeta do Povo, Revista Oeste, Folha de
+            S.Paulo, Estadão, UOL, The Verge, TechCrunch); any other name is
+            only a search term and does not restrict the site.
+            Empty = every configured source.
+        max_news: Number of articles in the digest (1-30); 0 = configured amount.
+        summary_chars: Approximate length of each summary (100-1000); 0 = configured.
 
     Returns:
-        str: The final structured news briefing with titles, dates, sources, summaries, and links.
+        str: The digest, ready to be sent as is (or trimmed), or a message
+        saying that no news was found.
     """
     try:
         cfg = _effective_config()

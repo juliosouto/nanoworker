@@ -17,7 +17,7 @@ def test_linux_browser_screenshot_returns_saved_path(mocker, perm_enabled):
     mocker.patch("tools.linux.browser.get_temp_file_path", return_value="/tmp/shot.png")
     mock_bm = MagicMock()
     mock_bm.take_screenshot.return_value = "Screenshot saved to /tmp/shot.png"
-    mocker.patch("tools.linux.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.linux.browser._get_browser_manager", return_value=mock_bm)
 
     result = linux_browser.browser_screenshot(full_page=True)
 
@@ -29,7 +29,7 @@ def test_linux_browser_screenshot_passes_through_error(mocker, perm_enabled):
     mocker.patch("tools.linux.browser.get_temp_file_path", return_value="/tmp/shot.png")
     mock_bm = MagicMock()
     mock_bm.take_screenshot.return_value = "Error taking screenshot: no page open"
-    mocker.patch("tools.linux.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.linux.browser._get_browser_manager", return_value=mock_bm)
 
     result = linux_browser.browser_screenshot()
     assert result.startswith("Error taking screenshot")
@@ -46,7 +46,7 @@ def test_macos_browser_screenshot_returns_saved_path(mocker, perm_enabled):
     mocker.patch("tools.macos.browser.get_temp_file_path", return_value="/tmp/shot.png")
     mock_bm = MagicMock()
     mock_bm.take_screenshot.return_value = "Screenshot saved to /tmp/shot.png"
-    mocker.patch("tools.macos.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.macos.browser._get_browser_manager", return_value=mock_bm)
 
     result = macos_browser.browser_screenshot()
     assert result == "Screenshot saved to /tmp/shot.png"
@@ -99,9 +99,9 @@ def test_browser_record_video_cross_platform(mocker, perm_enabled):
     mock_bm = MagicMock()
     mock_bm.record_navigation.return_value = "Browser video recorded and saved to /tmp/test_rec.webm"
 
-    mocker.patch("tools.linux.browser.get_browser_manager", return_value=mock_bm)
-    mocker.patch("tools.macos.browser.get_browser_manager", return_value=mock_bm)
-    mocker.patch("tools.windows.browser.get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.linux.browser._get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.macos.browser._get_browser_manager", return_value=mock_bm)
+    mocker.patch("tools.windows.browser._get_browser_manager", return_value=mock_bm)
 
     # Test Linux
     res_linux = linux_browser.browser_record_video(url="https://example.com", duration_seconds=3)

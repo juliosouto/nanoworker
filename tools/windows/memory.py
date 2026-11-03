@@ -7,7 +7,7 @@ from utils.session import current_session_id
 
 def manage_persistent_memory(action: str, memory_text: Optional[str] = None, memory_id: Optional[int] = None) -> str:
     """
-    Manages persistent memory for the user (database).
+    Adds, updates, deletes or lists the user's persistent memories (facts to remember in future conversations); each memory is one short sentence of at most 150 characters.
     This tool allows the assistant to "remember", update, list, or delete things for future interactions.
     
     The instruction MUST be a short and concise sentence perfectly summarizing the information.

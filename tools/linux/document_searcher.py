@@ -3,25 +3,12 @@ from database import get_db
 
 def search_documents_data_in_database(query: str = None, limit: int = 10) -> dict:
     """
-    Searches for extracted data from documents in the database. Use filters only if explicitly requested by user.
-    MANDATORY: LLM must always return all keys-values in extracted_data and metadata fields, one pair per line (separated by \n).
-    Example:
-        McDonald's:
-        2x Ttu1Car PrCP (27.45 each)
-        Subtotal: 54.90
-        Total: 54.90
-        Paid with
-        American Express: **** **** **** 3942
-        54.90
+    Searches the data extracted from saved documents (receipts, invoices, contracts...) by a term in the file name, category, extracted data or metadata; when answering, list every key and value of each result, one per line.
 
     Args:
-        query (str, optional): General search term (searches in file name, category, extracted data, and metadata).
-        category (str, optional): Specific category to filter by (e.g., 'invoice', 'receipt', 'contract').
-        start_date (str, optional): Start date in 'YYYY-MM-DD' format.
-        end_date (str, optional): End date in 'YYYY-MM-DD' format.
-        advanced_filters (dict, optional): Dictionary with exact keys and values to search within the extracted data. E.g., {"cnpj": "123456"}.
+        query (str, optional): Search term; empty lists the latest documents.
         limit (int, optional): Limit of returned results (default 10).
-        
+
     Returns:
         dict: A dictionary containing the search results or an error message.
     """

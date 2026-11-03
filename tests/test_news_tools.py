@@ -279,3 +279,23 @@ def test_tools_management_page_renders_news_card_and_schema(client):
     assert "Fetch News" in html
     assert "summary_chars" in html
     assert "dynamic_list" in html
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("G1", {"name": "G1", "domain": "g1.globo.com"}),
+    ("poder360.com.br", {"name": "poder360.com.br", "domain": "poder360.com.br"}),
+    ("https://www.g1.globo.com/", {"name": "G1", "domain": "g1.globo.com"}),
+    ("Poder360", {"name": "Poder360", "domain": ""}),
+])
+def test_sources_accept_domains(value, expected):
+    assert news_tools._coerce_source(value) == expected
+
+
+def test_fetch_news_searches_only_the_requested_site(mocker):
+    mocker.patch("utils.security_utils.get_config", return_value="true")
+    mocker.patch("tools.news_tools.get_tool_config", return_value={})
+    search = mocker.patch.object(news_tools, "_search_news_candidates", return_value=[])
+    fetch_news(topics="principais notícias do dia", sources="poder360.com.br")
+    sources, topics, _ = search.call_args.args
+    assert sources == [{"name": "poder360.com.br", "domain": "poder360.com.br"}]
+    assert [t["name"] for t in topics] == ["principais notícias do dia"]

@@ -20,7 +20,7 @@ _MIME_BY_EXT = {
 @require_permission('PERM_FS')
 def analyze_image(image_path: str, question: str = "Describe this image in detail.") -> str:
     """
-    Analyzes a local image with the vision model and answers a question about it.
+    Looks at a local image with the vision model and answers a question about it (describe a screenshot, read text in it, check a crop).
     Use this tool when you need to SEE an image: describe screenshots, verify a crop_image/browser_screenshot
     result, read text inside images, or answer questions about visual content.
     
