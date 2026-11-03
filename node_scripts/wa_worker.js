@@ -705,6 +705,32 @@ app.post('/send', async (req, res) => {
     }
 });
 
+const bareNumber = (value) => String(value || '').split('@')[0].split(':')[0];
+
+// Full JID of a group member from a bare number (LID or phone): the
+// participant of a message key must be a JID, and the wrong one makes
+// WhatsApp ignore a revoke without any error.
+async function resolveGroupParticipant(groupJid, participant, participantAlt) {
+    if (String(participant).includes('@')) {
+        return participant;
+    }
+    const wanted = new Set([bareNumber(participant), bareNumber(participantAlt)].filter(Boolean));
+    let metadata = null;
+    try {
+        metadata = await sock.groupMetadata(groupJid);
+    } catch (err) {
+        console.warn(`[Baileys Outbound] Could not read group ${groupJid} metadata: ${err.message}`);
+    }
+    for (const member of (metadata && metadata.participants) || []) {
+        const ids = [member.id, member.lid, member.phoneNumber].filter(Boolean);
+        if (ids.some((id) => wanted.has(bareNumber(id)))) {
+            return member.id;
+        }
+    }
+    const suffix = metadata && metadata.addressingMode === 'pn' ? 's.whatsapp.net' : 'lid';
+    return `${bareNumber(participant)}@${suffix}`;
+}
+
 app.post('/delete', async (req, res) => {
     if (!sock || !ownJid) {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });
@@ -712,7 +738,9 @@ app.post('/delete', async (req, res) => {
 
     // from_me=false + participant (the sender) deletes someone else's message
     // in a group, which only works when this account is a group admin.
-    const { message_id, jid, from_me, participant } = req.body;
+    // participant/participant_alt may be bare numbers (as message_history
+    // stores them): they are resolved to the member's JID in the group.
+    const { message_id, jid, from_me, participant, participant_alt } = req.body;
     if (!message_id) {
         return res.status(400).json({ error: 'Missing message_id parameter' });
     }
@@ -727,7 +755,7 @@ app.post('/delete', async (req, res) => {
             fromMe: from_me !== false
         };
         if (participant) {
-            key.participant = participant;
+            key.participant = await resolveGroupParticipant(targetJid, participant, participant_alt);
         }
         await sock.sendMessage(targetJid, { delete: key });
         res.json({ status: 'deleted', target: targetJid, message_id });

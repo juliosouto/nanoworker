@@ -82,7 +82,7 @@ def delete_whatsapp_messages(message_ids: list[int]) -> str:
         message_ids (list[int]): Ids of the messages to delete (max 20), as shown by search_chat_history (e.g. 1234 for '#1234').
 
     Returns:
-        str: One line per message saying whether it was deleted, or an error message.
+        str: One line per message saying whether the delete was sent, or an error message. WhatsApp does not confirm deletions: tell the user the delete was requested, not that it is certainly gone.
     """
     if not isinstance(message_ids, (list, tuple)):
         message_ids = [message_ids]
@@ -108,7 +108,7 @@ def delete_whatsapp_messages(message_ids: list[int]) -> str:
             placeholders = ",".join("?" * len(ids))
             rows = {
                 row["id"]: row for row in conn.execute(
-                    f"SELECT id, message_id, sender_id, from_me, is_bot FROM message_history "
+                    f"SELECT id, message_id, sender_id, sender_id_alt, from_me, is_bot FROM message_history "
                     f"WHERE channel_id = ? AND id IN ({placeholders})",
                     [channel] + ids,
                 )
@@ -128,7 +128,11 @@ def delete_whatsapp_messages(message_ids: list[int]) -> str:
         from_me = bool(row["from_me"] or row["is_bot"])
         payload = {"jid": jid, "message_id": row["message_id"], "from_me": from_me}
         if not from_me and jid.endswith("@g.us") and row["sender_id"]:
+            # Bare numbers: the worker resolves them to the member's JID.
             payload["participant"] = row["sender_id"]
+            if row["sender_id_alt"]:
+                payload["participant_alt"] = row["sender_id_alt"]
         ok, error = _post("/delete", payload)
-        lines.append(f"#{row_id}: deleted." if ok else f"#{row_id}: error - {error}")
+        # WhatsApp gives no confirmation of a revoke, only that it was sent.
+        lines.append(f"#{row_id}: delete sent." if ok else f"#{row_id}: error - {error}")
     return "\n".join(lines)

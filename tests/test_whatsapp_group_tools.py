@@ -35,14 +35,16 @@ def worker():
 def chat():
     init_db()
     ids = {}
+    # Bare numbers, as the worker stores them (sender_id is LID or phone).
     for key, channel, sender, from_me, is_bot in (
-        ("ana", GROUP, "ana@s.whatsapp.net", 0, 0),
-        ("bot", GROUP, "bot@s.whatsapp.net", 0, 1),
-        ("other", OTHER, "ze@s.whatsapp.net", 0, 0),
+        ("ana", GROUP, "82613863739600", 0, 0),
+        ("bot", GROUP, "5511000000000", 0, 1),
+        ("other", OTHER, "5511999999999", 0, 0),
     ):
         ids[key] = insert_message_history(
             message_id=f"WA-{key}", channel_id=channel, remote_jid=channel.split(":", 1)[1],
-            is_group=1, sender_id=sender, sender_name=key, from_me=from_me, is_bot=is_bot,
+            is_group=1, sender_id=sender, sender_id_alt="555192752006" if key == "ana" else None,
+            sender_name=key, from_me=from_me, is_bot=is_bot,
             content=f"mensagem {key}", msg_timestamp=1793534400,
         )
     with patch("tools.chat_history._current_channel", return_value=(GROUP, None)):
@@ -85,11 +87,11 @@ def test_rename_worker_error(chat):
 @pytest.mark.parametrize("os_folder", OS_FOLDERS)
 def test_delete_others_and_own_messages(chat, worker, os_folder):
     out = _module(os_folder).delete_whatsapp_messages([chat["ana"], f"#{chat['bot']}"])
-    assert out.splitlines() == [f"#{chat['ana']}: deleted.", f"#{chat['bot']}: deleted."]
+    assert out.splitlines() == [f"#{chat['ana']}: delete sent.", f"#{chat['bot']}: delete sent."]
     jid = "120363000000000000@g.us"
     assert worker == [
         ("delete", {"jid": jid, "message_id": "WA-ana", "from_me": False,
-                    "participant": "ana@s.whatsapp.net"}),
+                    "participant": "82613863739600", "participant_alt": "555192752006"}),
         ("delete", {"jid": jid, "message_id": "WA-bot", "from_me": True}),
     ]
 
