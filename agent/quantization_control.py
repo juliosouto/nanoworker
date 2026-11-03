@@ -3,8 +3,10 @@
 The worker keeps an ordered list (first = preferred). OpenRouter's
 ``provider.quantizations`` only filters, it does not rank, so the model's
 endpoints are read from OpenRouter's public API and sent as ``provider.order``
-sorted by that list. ``quantizations`` still restricts the fallbacks to the
-listed levels. Other providers have no such switch and get nothing.
+sorted by that list, cheapest first within each level. ``quantizations``
+still restricts the fallbacks to the listed levels. Endpoints of a special
+service tier (flex, priority...) are left out, as OpenRouter's default
+routing does. Other providers have no such switch and get nothing.
 """
 
 import json
@@ -52,8 +54,16 @@ def parse_quantizations(value):
     return result
 
 
+def _price(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
 def _model_endpoints(model_id):
-    """[(endpoint slug, quantization)] for the model, cached; [] when unknown."""
+    """[(endpoint slug, quantization, (input price, output price))] of the
+    model's standard-tier endpoints, cached; [] when unknown."""
     with _endpoints_lock:
         cached = _endpoints_cache.get(model_id)
         if cached and time.time() - cached[0] < _ENDPOINTS_TTL:
@@ -64,8 +74,14 @@ def _model_endpoints(model_id):
             with urllib.request.urlopen(url, timeout=10) as response:
                 data = json.load(response).get("data") or {}
             endpoints = [
-                (e["tag"], str(e.get("quantization") or "unknown").lower())
-                for e in data.get("endpoints") or [] if e.get("tag")
+                (
+                    e["tag"],
+                    str(e.get("quantization") or "unknown").lower(),
+                    (_price((e.get("pricing") or {}).get("prompt")),
+                     _price((e.get("pricing") or {}).get("completion"))),
+                )
+                for e in data.get("endpoints") or []
+                if e.get("tag") and e.get("service_tier") in (None, "", "standard")
             ]
         except Exception as e:
             logger.warning(f"Could not read OpenRouter's endpoints for {model_id}: {e}")
@@ -92,7 +108,9 @@ def quantization_kwargs(provider, model_name, quantizations) -> dict:
     lower = (model_name or "").lower()
     model_id = model_name[len("openrouter/"):] if lower.startswith("openrouter/") else model_name
     routing = {"quantizations": preferred}
-    ranked = [(r, slug) for slug, q in _model_endpoints(model_id)
+    # Preferred level first; within a level, cheapest input first (agent
+    # turns are mostly input tokens), then cheapest output.
+    ranked = [((r, price), slug) for slug, q, price in _model_endpoints(model_id)
               if (r := _rank(q, preferred)) is not None]
     if ranked:
         routing["order"] = [slug for _, slug in sorted(ranked, key=lambda x: x[0])]

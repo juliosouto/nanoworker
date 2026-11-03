@@ -224,6 +224,23 @@ def llm_request_timeout() -> int:
     return _cfg_int("LLM_REQUEST_TIMEOUT", 45, 5)
 
 
+_OPENROUTER_SORTS = ("price", "throughput", "latency")
+
+
+def openrouter_provider_sort() -> str:
+    """provider.sort sent on every OpenRouter call: 'price' (default, the
+    cheapest provider of the model first), 'throughput', 'latency', or ''
+    when OPENROUTER_PROVIDER_SORT is 'off' (OpenRouter's default routing)."""
+    raw = os.environ.get("OPENROUTER_PROVIDER_SORT") or _cfg("OPENROUTER_PROVIDER_SORT", "price")
+    value = str(raw).strip().lower()
+    if value in _OPENROUTER_SORTS:
+        return value
+    if value not in ("off", "none", "default", ""):
+        logger.warning("Unknown OPENROUTER_PROVIDER_SORT %r; using price", raw)
+        return "price"
+    return ""
+
+
 def tool_relevance_top_k() -> int:
     """How many tools the tool RAG keeps before adding their module siblings."""
     return _cfg_int("TOOL_RELEVANCE_TOP_K", 15, 1)

@@ -312,6 +312,15 @@ def _route_llm_call(
         if routing:
             local_kwargs["openai_extra_body"] = {**(local_kwargs.get("openai_extra_body") or {}), **routing}
 
+    # OpenRouter: cheapest provider of the model first (OPENROUTER_PROVIDER_SORT).
+    from agent.lc.models import resolve_provider
+
+    sort = lc_settings.openrouter_provider_sort()
+    if sort and resolve_provider(provider, model_name) == "openrouter":
+        body = dict(local_kwargs.get("openai_extra_body") or {})
+        body["provider"] = {**(body.get("provider") or {}), "sort": sort}
+        local_kwargs["openai_extra_body"] = body
+
     # Fase 1: enforce the AgentResponse JSON contract natively when the
     # LangChain stack is active and the provider supports structured output.
     # local_kwargs is a per-model copy, so these additions never leak into the

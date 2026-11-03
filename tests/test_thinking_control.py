@@ -90,6 +90,7 @@ def _route(provider, thinking, config_kwargs, model="openrouter/x/y"):
     with patch("database.get_db", return_value=conn), \
             patch.object(router.lc_settings, "stack_enabled", return_value=False), \
             patch.object(router.lc_settings, "graph_flow_enabled", return_value=True), \
+            patch.object(router.lc_settings, "openrouter_provider_sort", return_value=""), \
             patch.object(tc, "_openrouter_reasoning_info", return_value=None), \
             patch("agent.llm_providers.call_openrouter_llm", return_value="ok") as call:
         router.route_llm_call(model, [], config_kwargs, "oi", MagicMock(), "s", "m", is_ide=False)
