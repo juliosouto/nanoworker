@@ -283,15 +283,16 @@ def _route_llm_call(
             image_input = None
 
     local_kwargs = config_kwargs.copy()
+    # The worker's thinking level; internal calls (planner, evaluator...) have
+    # none and run with thinking off.
+    thinking_level = local_kwargs.pop("thinking_level", None)
     if not model_thinking:
         local_kwargs.pop("thinking_config", None)
     elif "thinking_config" not in local_kwargs:
-        # Thinking is off for this call (worker setting, or an internal call
-        # such as the planner/evaluator): say so explicitly, since many models
-        # think by default.
-        from agent.thinking_control import thinking_off_kwargs
+        # Sent even when disabled: many models think by default.
+        from agent.thinking_control import thinking_kwargs
 
-        local_kwargs.update(thinking_off_kwargs(provider, model_name))
+        local_kwargs.update(thinking_kwargs(provider, model_name, thinking_level))
 
     # Fase 1: enforce the AgentResponse JSON contract natively when the
     # LangChain stack is active and the provider supports structured output.

@@ -176,6 +176,17 @@ def _parse_temperature(value):
         return None
     return temperature
 
+def _thinking_level(data):
+    """The worker's thinking level from the request, or None when invalid.
+    Clients that only send the old thinking_enabled flag still work."""
+    from agent.thinking_control import THINKING_LEVELS, normalize_level
+
+    if 'thinking_level' in data:
+        level = str(data.get('thinking_level') or '').strip().lower()
+        return level if level in THINKING_LEVELS else None
+    return normalize_level(None, bool(data.get('thinking_enabled')))
+
+
 @api_llm_bp.route('/api/workers', methods=['POST'])
 def add_worker():
     data = request.json
@@ -183,7 +194,10 @@ def add_worker():
         return jsonify({"error": "Missing worker_name or worker_model"}), 400
         
     is_default = 1 if data.get('is_default') else 0
-    thinking_enabled = 1 if data.get('thinking_enabled') else 0
+    thinking_level = _thinking_level(data)
+    if thinking_level is None:
+        return jsonify({"error": "thinking_level must be one of: disabled, minimal, low, medium, high"}), 400
+    thinking_enabled = 0 if thinking_level == 'disabled' else 1
     tools_enabled = 0 if data.get('tools_enabled') is False else 1
     show_tools_results = 0 if data.get('show_tools_results') is False else 1
     temperature = _parse_temperature(data.get('temperature'))
@@ -195,8 +209,8 @@ def add_worker():
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0')
         cursor.execute('''
-            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, show_tools_results, temperature))
+            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature))
         conn.commit()
         return jsonify({"status": "success", "message": "Worker added"})
     except Exception as e:
@@ -211,7 +225,10 @@ def update_worker(worker_id):
         return jsonify({"error": "Missing worker_name or worker_model"}), 400
         
     is_default = 1 if data.get('is_default') else 0
-    thinking_enabled = 1 if data.get('thinking_enabled') else 0
+    thinking_level = _thinking_level(data)
+    if thinking_level is None:
+        return jsonify({"error": "thinking_level must be one of: disabled, minimal, low, medium, high"}), 400
+    thinking_enabled = 0 if thinking_level == 'disabled' else 1
     tools_enabled = 0 if data.get('tools_enabled') is False else 1
     show_tools_results = 0 if data.get('show_tools_results') is False else 1
     temperature = _parse_temperature(data.get('temperature'))
@@ -223,8 +240,8 @@ def update_worker(worker_id):
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0 WHERE id != ?', (worker_id,))
         cursor.execute('''
-            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, tools_enabled = ?, show_tools_results = ?, temperature = ? WHERE id = ?
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, tools_enabled, show_tools_results, temperature, worker_id))
+            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, thinking_level = ?, tools_enabled = ?, show_tools_results = ?, temperature = ? WHERE id = ?
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature, worker_id))
         conn.commit()
         if cursor.rowcount == 0:
             return jsonify({"error": "Worker not found"}), 404

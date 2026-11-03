@@ -398,7 +398,7 @@ def _resolve_cron_worker_preferences():
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, tools_enabled, show_tools_results, temperature FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature FROM workers_config')
     workers = [dict(w) for w in cursor.fetchall()]
     conn.close()
 
@@ -686,6 +686,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             thinking_enabled=thinking_enabled,
             show_tools_results=show_tools_results,
             temperature=worker.get('temperature') if worker else None,
+            thinking_level=worker.get('thinking_level') if worker else None,
         )
 
         # Live status (one reply edited at each step) when the channel supports it.

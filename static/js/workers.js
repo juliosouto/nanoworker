@@ -1,6 +1,11 @@
 let currentEditWorkerId = null;
 let workerToDeleteId = null;
 
+// Workers saved before thinking levels existed only have thinking_enabled.
+function workerThinkingLevel(worker) {
+    return worker.thinking_level || (worker.thinking_enabled ? 'medium' : 'disabled');
+}
+
 function openWorkerModal() {
     document.getElementById('workerModal').style.display = 'flex';
 }
@@ -9,7 +14,7 @@ function closeWorkerModal() {
     document.getElementById('workerModal').style.display = 'none';
     document.getElementById('workerForm').reset();
     document.getElementById('is_default').checked = false;
-    document.getElementById('thinking_enabled').checked = false;
+    document.getElementById('thinking_level').value = 'disabled';
     document.getElementById('tools_enabled').checked = true;
     document.getElementById('show_tools_results').checked = false;
     document.getElementById('worker_temperature').value = '';
@@ -27,7 +32,7 @@ function editWorkerById(id) {
         document.getElementById('worker_instructions').value = worker.worker_instructions || '';
         document.getElementById('worker_temperature').value = worker.temperature == null ? '' : worker.temperature;
         document.getElementById('is_default').checked = !!worker.is_default;
-        document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
+        document.getElementById('thinking_level').value = workerThinkingLevel(worker);
         document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
         document.getElementById('show_tools_results').checked = worker.show_tools_results === undefined ? true : !!worker.show_tools_results;
         document.getElementById('modalTitle').innerText = 'Edit Worker';
@@ -49,7 +54,7 @@ function duplicateWorkerById(id) {
         document.getElementById('worker_instructions').value = worker.worker_instructions || '';
         document.getElementById('worker_temperature').value = worker.temperature == null ? '' : worker.temperature;
         document.getElementById('is_default').checked = false;
-        document.getElementById('thinking_enabled').checked = !!worker.thinking_enabled;
+        document.getElementById('thinking_level').value = workerThinkingLevel(worker);
         document.getElementById('tools_enabled').checked = worker.tools_enabled === undefined ? true : !!worker.tools_enabled;
         document.getElementById('show_tools_results').checked = worker.show_tools_results === undefined ? true : !!worker.show_tools_results;
         document.getElementById('modalTitle').innerText = 'Duplicate Worker';
@@ -67,7 +72,7 @@ function saveWorker() {
         worker_instructions: document.getElementById('worker_instructions').value,
         temperature: document.getElementById('worker_temperature').value === '' ? null : parseFloat(document.getElementById('worker_temperature').value),
         is_default: document.getElementById('is_default').checked,
-        thinking_enabled: document.getElementById('thinking_enabled').checked,
+        thinking_level: document.getElementById('thinking_level').value,
         tools_enabled: document.getElementById('tools_enabled').checked,
         show_tools_results: document.getElementById('show_tools_results').checked
     };

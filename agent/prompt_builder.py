@@ -230,6 +230,7 @@ def build_config_kwargs(
     thinking_enabled: bool = False,
     show_tools_results: bool = True,
     temperature: float = None,
+    thinking_level: str = None,
 ) -> dict:
     """
     Builds the config_kwargs dict for LLM calls.
@@ -237,10 +238,12 @@ def build_config_kwargs(
     Arguments:
         system_prompt (str): The assembled system prompt.
         tools (list, optional): List of tool functions to provide.
-        thinking_enabled (bool): Whether to enable thinking mode.
+        thinking_enabled (bool): Legacy on/off flag, used when thinking_level is unset.
         show_tools_results (bool): Whether to stream tool execution results to the client.
         temperature (float, optional): Sampling temperature (0..2). When None, the
             provider-specific default is kept (Gemini uses 2.0, OpenAI-compatible 1.0).
+        thinking_level (str, optional): disabled, minimal, low, medium or high;
+            route_llm_call turns it into each provider's settings.
 
     Returns:
         dict: Configuration kwargs for the LLM call.
@@ -258,7 +261,8 @@ def build_config_kwargs(
     if system_prompt:
         config_kwargs["system_instruction"] = system_prompt
 
-    if thinking_enabled:
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
+    from agent.thinking_control import normalize_level
+
+    config_kwargs["thinking_level"] = normalize_level(thinking_level, thinking_enabled)
 
     return config_kwargs

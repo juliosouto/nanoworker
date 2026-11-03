@@ -950,6 +950,7 @@ def init_db():
         worker_instructions TEXT,
         is_default BOOLEAN DEFAULT 0,
         thinking_enabled BOOLEAN DEFAULT 0,
+        thinking_level TEXT DEFAULT 'disabled',
         tools_enabled BOOLEAN DEFAULT 1,
         show_tools_results BOOLEAN DEFAULT 1,
         temperature REAL
@@ -958,6 +959,16 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE workers_config ADD COLUMN thinking_enabled BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    try:
+        cursor.execute("ALTER TABLE workers_config ADD COLUMN thinking_level TEXT")
+        # Workers saved with the old on/off switch keep thinking on.
+        cursor.execute(
+            "UPDATE workers_config SET thinking_level = "
+            "CASE WHEN thinking_enabled = 1 THEN 'medium' ELSE 'disabled' END"
+        )
     except sqlite3.OperationalError:
         pass  # Column already exists
 

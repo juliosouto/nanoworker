@@ -101,7 +101,13 @@ def test_router_sends_thinking_off_when_the_worker_disables_it():
     assert sent["openai_extra_body"] == {"reasoning": {"enabled": False}}
 
 
-def test_router_leaves_thinking_on_when_the_worker_enables_it():
+def test_router_applies_the_worker_level():
+    sent = _route("openrouter", 1, {"thinking_level": "high"})
+    assert sent["openai_extra_body"] == {"reasoning": {"effort": "high"}}
+    assert "thinking_level" not in sent
+
+
+def test_router_keeps_an_explicit_thinking_config():
     sent = _route("openrouter", 1, {"thinking_config": types.ThinkingConfig(thinking_budget=8000)})
     assert "openai_extra_body" not in sent
 
@@ -161,3 +167,44 @@ def test_langchain_models_get_extra_body():
     groq = make_chat_model("qwen/qwen3-32b", provider="groq", api_key="k",
                            extra_body={"reasoning_effort": "none"})
     assert groq.reasoning_effort == "none"
+
+
+def test_gemini_levels():
+    on = lambda model, level: tc.thinking_kwargs("google", model, level)["thinking_config"]
+    assert on("gemini-2.5-flash", "low").thinking_budget == 2048
+    assert on("gemini-2.5-flash", "high").thinking_budget == 24576
+    assert on("gemini-3-flash-preview", "medium").thinking_level == types.ThinkingLevel.MEDIUM
+    assert on("gemini-3.1-pro-preview", "minimal").thinking_level == types.ThinkingLevel.LOW
+
+
+def test_openrouter_level_uses_the_nearest_supported_effort():
+    info = {"mandatory": False, "supported_efforts": ["high", "low", "none"]}
+    with patch.object(tc, "_openrouter_reasoning_info", return_value=info):
+        assert tc.thinking_kwargs("openrouter", "openrouter/a/b", "medium") == {
+            "openai_extra_body": {"reasoning": {"effort": "high"}}}
+        assert tc.thinking_kwargs("openrouter", "openrouter/a/b", "minimal") == {
+            "openai_extra_body": {"reasoning": {"effort": "low"}}}
+
+
+def test_openai_compatible_levels_on():
+    assert tc.thinking_kwargs("qwen", "qwen-plus", "low") == {"openai_extra_body": {"enable_thinking": True}}
+    assert tc.thinking_kwargs("nvidia", "nvidia/openai/gpt-oss-20b", "high") == {
+        "openai_extra_body": {"reasoning_effort": "high"}}
+    assert tc.thinking_kwargs("groq", "qwen/qwen3-32b", "medium") == {
+        "openai_extra_body": {"reasoning_effort": "default"}}
+
+
+@pytest.mark.parametrize("level, enabled, expected", [
+    ("high", False, "high"), ("HIGH ", False, "high"), (None, True, "medium"),
+    ("", False, "disabled"), ("weird", True, "medium"),
+])
+def test_normalize_level(level, enabled, expected):
+    assert tc.normalize_level(level, enabled) == expected
+
+
+def test_config_kwargs_carry_the_level():
+    from agent.prompt_builder import build_config_kwargs
+
+    assert build_config_kwargs("p", thinking_level="low")["thinking_level"] == "low"
+    assert build_config_kwargs("p", thinking_enabled=True)["thinking_level"] == "medium"
+    assert build_config_kwargs("p")["thinking_level"] == "disabled"

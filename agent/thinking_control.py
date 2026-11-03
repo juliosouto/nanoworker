@@ -1,11 +1,12 @@
-"""Explicitly turns thinking/reasoning off when the worker has it disabled.
+"""Applies the worker's thinking level to each provider's request.
 
-Sending nothing leaves the model's default, and many models think by default
-(Gemini 2.5 Flash, Gemini 3, Qwen3, DeepSeek, Nemotron...). ``thinking_off_kwargs``
-returns the config_kwargs entries that switch it off (or to the lowest level
-the model allows) for the resolved provider:
+Levels: disabled, minimal, low, medium, high. ``disabled`` is sent explicitly
+(off switch, or the lowest level the model allows): sending nothing leaves the
+model's default, and many models think by default (Gemini 2.5 Flash, Gemini 3,
+Qwen3, DeepSeek, Nemotron...). ``thinking_kwargs`` returns the config_kwargs
+entries for the resolved provider:
 
-- Gemini: ``thinking_config`` (budget 0 on 2.5, MINIMAL/LOW level on 3+);
+- Gemini: ``thinking_config`` (budget on 2.5, thinking_level on 3+);
 - OpenAI-compatible providers: ``openai_extra_body``, merged into the request
   body by both the legacy loop and the LangChain ChatOpenAI/ChatGroq models.
 """
@@ -17,6 +18,13 @@ import time
 import urllib.request
 
 logger = logging.getLogger(__name__)
+
+THINKING_LEVELS = ("disabled", "minimal", "low", "medium", "high")
+# Level used for workers saved before levels existed (thinking_enabled=1).
+LEGACY_ENABLED_LEVEL = "medium"
+
+# Gemini 2.5 thinking budgets per level (2.5 Pro cannot go below 128).
+_GEMINI_25_BUDGETS = {"minimal": 512, "low": 2048, "medium": 8192, "high": 24576}
 
 # Gemini 3+ models that rejected thinking_level=MINIMAL; they get LOW instead.
 _MINIMAL_UNSUPPORTED = set()
@@ -30,27 +38,36 @@ _openrouter_lock = threading.Lock()
 _EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
+def normalize_level(level, thinking_enabled=False) -> str:
+    """A valid level; unknown or empty values fall back to the legacy flag."""
+    value = str(level or "").strip().lower()
+    if value in THINKING_LEVELS:
+        return value
+    return LEGACY_ENABLED_LEVEL if thinking_enabled else "disabled"
+
+
 def _strip(model_name, prefix):
     lower = (model_name or "").lower()
     return model_name[len(prefix):] if lower.startswith(prefix) else model_name
 
 
-def _gemini_thinking_off(model_name):
+def _gemini_config(model_name, level):
     from google.genai import types
 
     name = (model_name or "").lower().split("/")[-1]
-    if not name.startswith("gemini"):
-        return None  # Gemma and other Google models have no thinking switch.
+    if not name.startswith("gemini") or name.startswith(("gemini-1", "gemini-2.0")):
+        return None  # Gemma and older models have no thinking switch.
     if name.startswith("gemini-2.5"):
-        # 2.5 Pro cannot turn thinking off; 128 is its minimum budget.
-        return types.ThinkingConfig(thinking_budget=128 if "pro" in name else 0)
-    if name.startswith(("gemini-1", "gemini-2.0")):
-        return None
-    # Gemini 3+ cannot turn thinking off: use the lowest level. Pro models and
-    # the ones that rejected MINIMAL get LOW.
-    if "pro" in name or model_name in _MINIMAL_UNSUPPORTED:
-        return types.ThinkingConfig(thinking_level="LOW")
-    return types.ThinkingConfig(thinking_level="MINIMAL")
+        if level == "disabled":
+            # 2.5 Pro cannot turn thinking off; 128 is its minimum budget.
+            return types.ThinkingConfig(thinking_budget=128 if "pro" in name else 0)
+        return types.ThinkingConfig(thinking_budget=_GEMINI_25_BUDGETS[level])
+    # Gemini 3+ cannot turn thinking off: "disabled" is the lowest level. Pro
+    # models and the ones that rejected MINIMAL get LOW instead of MINIMAL.
+    wanted = "minimal" if level == "disabled" else level
+    if wanted == "minimal" and ("pro" in name or model_name in _MINIMAL_UNSUPPORTED):
+        wanted = "low"
+    return types.ThinkingConfig(thinking_level=wanted.upper())
 
 
 def is_minimal_level_error(error) -> bool:
@@ -85,49 +102,68 @@ def _openrouter_reasoning_info(model_id):
         return _openrouter_cache["models"].get(model_id)
 
 
-def _openrouter_reasoning_off(model_name):
+def _openrouter_reasoning(model_name, level):
     model_id = _strip(model_name, "openrouter/")
     info = _openrouter_reasoning_info(model_id) or {}
     efforts = [e for e in _EFFORT_ORDER if e in (info.get("supported_efforts") or [])]
-    if info.get("mandatory"):
-        # Cannot be disabled ("none" is rejected): ask for the lowest effort.
-        lowest = next((e for e in efforts if e != "none"), None)
-        return {"reasoning": {"effort": lowest}} if lowest else None
-    if "none" in efforts:
-        return {"reasoning": {"effort": "none"}}
-    return {"reasoning": {"enabled": False}}
+    if level == "disabled":
+        if info.get("mandatory"):
+            # Cannot be disabled ("none" is rejected): ask for the lowest effort.
+            lowest = next((e for e in efforts if e != "none"), None)
+            return {"reasoning": {"effort": lowest}} if lowest else None
+        if "none" in efforts:
+            return {"reasoning": {"effort": "none"}}
+        return {"reasoning": {"enabled": False}}
+    if efforts:
+        # The requested effort, or the nearest one above it the model has.
+        rank = _EFFORT_ORDER.index(level)
+        above = [e for e in efforts if _EFFORT_ORDER.index(e) >= rank]
+        level = above[0] if above else efforts[-1]
+    return {"reasoning": {"effort": level}}
 
 
-def thinking_off_kwargs(provider, model_name) -> dict:
-    """config_kwargs entries that turn thinking off for this model ({} if none)."""
+def _gpt_oss_effort(level):
+    """gpt-oss always reasons: low/medium/high only."""
+    return "low" if level in ("disabled", "minimal") else level
+
+
+def thinking_kwargs(provider, model_name, level) -> dict:
+    """config_kwargs entries that apply ``level`` to this model ({} if none)."""
     from agent.lc.models import resolve_provider
 
+    level = normalize_level(level)
     resolved = resolve_provider(provider, model_name)
     lower = (model_name or "").lower()
+    on = level != "disabled"
     try:
         if resolved == "gemini":
-            config = _gemini_thinking_off(model_name)
+            config = _gemini_config(model_name, level)
             return {"thinking_config": config} if config is not None else {}
         if resolved == "openrouter":
-            body = _openrouter_reasoning_off(model_name)
+            body = _openrouter_reasoning(model_name, level)
         elif resolved == "qwen":
-            body = {"enable_thinking": False}
+            body = {"enable_thinking": on}
         elif resolved in ("nvidia", "cloudflare"):
             # vLLM/SGLang chat templates: Qwen3/GLM read enable_thinking,
             # DeepSeek V3.1+ reads thinking; unknown keys are ignored.
-            body = {"chat_template_kwargs": {"enable_thinking": False, "thinking": False}}
+            body = {"chat_template_kwargs": {"enable_thinking": on, "thinking": on}}
             if "gpt-oss" in lower:
-                body = {"reasoning_effort": "low"}  # gpt-oss always reasons
+                body = {"reasoning_effort": _gpt_oss_effort(level)}
         elif resolved == "groq":
             if "qwen" in lower:
-                body = {"reasoning_effort": "none"}
+                body = {"reasoning_effort": "default" if on else "none"}
             elif "gpt-oss" in lower:
-                body = {"reasoning_effort": "low"}
+                body = {"reasoning_effort": _gpt_oss_effort(level)}
             else:
                 body = None
         else:
             body = None
     except Exception as e:
-        logger.warning(f"Could not build the thinking-off settings for {model_name}: {e}")
+        logger.warning(f"Could not build the thinking settings for {model_name}: {e}")
         return {}
     return {"openai_extra_body": body} if body else {}
+
+
+def thinking_off_kwargs(provider, model_name) -> dict:
+    """config_kwargs entries that turn thinking off for this model ({} if none)."""
+    return thinking_kwargs(provider, model_name, "disabled")

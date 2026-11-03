@@ -199,6 +199,48 @@ def test_add_worker_success(client):
     assert response.status_code == 200
     assert response.get_json()['status'] == 'success'
 
+def _saved_thinking(name):
+    from database import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT thinking_level, thinking_enabled FROM workers_config WHERE worker_name = ?", (name,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row["thinking_level"], row["thinking_enabled"]
+
+
+def test_add_worker_thinking_level(client):
+    payload = {'worker_name': 'Lvl', 'worker_model': 'TestModel', 'thinking_level': 'high'}
+    assert client.post('/api/workers', json=payload).status_code == 200
+    assert _saved_thinking('Lvl') == ('high', 1)
+
+
+def test_add_worker_legacy_thinking_flag(client):
+    payload = {'worker_name': 'Old', 'worker_model': 'TestModel', 'thinking_enabled': True}
+    assert client.post('/api/workers', json=payload).status_code == 200
+    assert _saved_thinking('Old') == ('medium', 1)
+
+
+def test_add_worker_invalid_thinking_level(client):
+    payload = {'worker_name': 'Bad', 'worker_model': 'TestModel', 'thinking_level': 'turbo'}
+    assert client.post('/api/workers', json=payload).status_code == 400
+
+
+def test_update_worker_thinking_level(client):
+    client.post('/api/workers', json={'worker_name': 'Upd', 'worker_model': 'TestModel', 'thinking_level': 'low'})
+    from database import get_db
+
+    conn = get_db()
+    worker_id = conn.execute("SELECT id FROM workers_config WHERE worker_name = 'Upd'").fetchone()["id"]
+    conn.close()
+    payload = {'worker_name': 'Upd', 'worker_model': 'TestModel', 'thinking_level': 'disabled'}
+    assert client.put(f'/api/workers/{worker_id}', json=payload).status_code == 200
+    assert _saved_thinking('Upd') == ('disabled', 0)
+
+
 def test_add_worker_missing_fields(client):
     response = client.post('/api/workers', json={'worker_name': 'FailWorker'})
     assert response.status_code == 400

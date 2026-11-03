@@ -61,8 +61,9 @@
                         </td>
                         <td style="padding: 16px; color: #3498db; font-weight: 500;">{{ w.worker_model }}</td>
                         <td style="padding: 16px;">
-                            {% if w.thinking_enabled %}
-                            <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Enabled</span>
+                            {% set level = w.thinking_level or ('medium' if w.thinking_enabled else 'disabled') %}
+                            {% if level != 'disabled' %}
+                            <span style="background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">{{ level|capitalize }}</span>
                             {% else %}
                             <span style="background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500;">Disabled</span>
                             {% endif %}
@@ -173,8 +174,9 @@
                 </div>
 
                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                    <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 6px; font-weight: 500; background: {% if w.thinking_enabled %}rgba(52, 152, 219, 0.15); color: #3498db;{% else %}rgba(255,255,255,0.06); color: var(--text-muted);{% endif %}">
-                        Thinking: {{ 'Enabled' if w.thinking_enabled else 'Disabled' }}
+                    {% set level = w.thinking_level or ('medium' if w.thinking_enabled else 'disabled') %}
+                    <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 6px; font-weight: 500; background: {% if level != 'disabled' %}rgba(52, 152, 219, 0.15); color: #3498db;{% else %}rgba(255,255,255,0.06); color: var(--text-muted);{% endif %}">
+                        Thinking: {{ level|capitalize }}
                     </span>
                     <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 6px; font-weight: 500; background: {% if w.tools_enabled %}rgba(46, 204, 113, 0.15); color: #2ecc71;{% else %}rgba(255,255,255,0.06); color: var(--text-muted);{% endif %}">
                         Tools: {{ 'Enabled' if w.tools_enabled else 'Disabled' }}
@@ -250,12 +252,25 @@
                     placeholder="Default (Gemini: 2.0, OpenAI-compatible: 1.0)" style="-moz-appearance: textfield;">
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
-                    <input type="checkbox" id="thinking_enabled" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;">
-                    <span style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Enable Thinking (step-by-step reasoning)</span>
-                </label>
+            <div class="premium-input-container" style="margin-bottom: 20px;">
+                <label class="premium-label" for="thinking_level">Thinking</label>
+                <div class="premium-select-wrapper"
+                    style="position: relative; border-radius: 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1);">
+                    <select id="thinking_level" class="premium-input"
+                        style="appearance: none; -webkit-appearance: none; background: transparent; border: none; padding-right: 36px; cursor: pointer; width: 100%;">
+                        <option value="disabled" selected style="background: #1e1e24;">Disabled</option>
+                        <option value="minimal" style="background: #1e1e24;">Minimal</option>
+                        <option value="low" style="background: #1e1e24;">Low</option>
+                        <option value="medium" style="background: #1e1e24;">Medium</option>
+                        <option value="high" style="background: #1e1e24;">High</option>
+                    </select>
+                    <div
+                        style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); border: 5px solid transparent; border-top-color: var(--text-muted, #a0a0a0); pointer-events: none;">
+                    </div>
+                </div>
+            </div>
 
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;">
                 <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
                     <input type="checkbox" id="tools_enabled" style="cursor: pointer; width: 16px; height: 16px; flex-shrink: 0;" checked>
                     <span style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Enable Tools (allow database, terminal, browser, etc.)</span>
