@@ -231,6 +231,7 @@ def build_config_kwargs(
     show_tools_results: bool = True,
     temperature: float = None,
     thinking_level: str = None,
+    quantizations=None,
 ) -> dict:
     """
     Builds the config_kwargs dict for LLM calls.
@@ -244,6 +245,8 @@ def build_config_kwargs(
             provider-specific default is kept (Gemini uses 2.0, OpenAI-compatible 1.0).
         thinking_level (str, optional): disabled, minimal, low, medium or high;
             route_llm_call turns it into each provider's settings.
+        quantizations (list or JSON text, optional): Allowed quantizations, most
+            preferred first; route_llm_call applies them on OpenRouter.
 
     Returns:
         dict: Configuration kwargs for the LLM call.
@@ -264,5 +267,11 @@ def build_config_kwargs(
     from agent.thinking_control import normalize_level
 
     config_kwargs["thinking_level"] = normalize_level(thinking_level, thinking_enabled)
+
+    from agent.quantization_control import parse_quantizations
+
+    preferred = parse_quantizations(quantizations)
+    if preferred:
+        config_kwargs["quantizations"] = preferred
 
     return config_kwargs

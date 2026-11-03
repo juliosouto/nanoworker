@@ -951,6 +951,7 @@ def init_db():
         is_default BOOLEAN DEFAULT 0,
         thinking_enabled BOOLEAN DEFAULT 0,
         thinking_level TEXT DEFAULT 'disabled',
+        quantizations TEXT,
         tools_enabled BOOLEAN DEFAULT 1,
         show_tools_results BOOLEAN DEFAULT 1,
         temperature REAL
@@ -969,6 +970,12 @@ def init_db():
             "UPDATE workers_config SET thinking_level = "
             "CASE WHEN thinking_enabled = 1 THEN 'medium' ELSE 'disabled' END"
         )
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    try:
+        # JSON list of allowed quantizations, most preferred first.
+        cursor.execute("ALTER TABLE workers_config ADD COLUMN quantizations TEXT")
     except sqlite3.OperationalError:
         pass  # Column already exists
 

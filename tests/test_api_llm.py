@@ -241,6 +241,36 @@ def test_update_worker_thinking_level(client):
     assert _saved_thinking('Upd') == ('disabled', 0)
 
 
+def _saved_quantizations(name):
+    from database import get_db
+
+    conn = get_db()
+    try:
+        return conn.execute(
+            "SELECT quantizations FROM workers_config WHERE worker_name = ?", (name,)
+        ).fetchone()["quantizations"]
+    finally:
+        conn.close()
+
+
+def test_add_worker_quantizations_keep_their_order(client):
+    payload = {'worker_name': 'Quant', 'worker_model': 'TestModel', 'quantizations': ['fp8', 'BF16', 'fp8', 'int4']}
+    assert client.post('/api/workers', json=payload).status_code == 200
+    assert _saved_quantizations('Quant') == '["fp8", "bf16", "int4"]'
+
+
+def test_add_worker_without_quantizations(client):
+    payload = {'worker_name': 'NoQuant', 'worker_model': 'TestModel', 'quantizations': []}
+    assert client.post('/api/workers', json=payload).status_code == 200
+    assert _saved_quantizations('NoQuant') is None
+
+
+@pytest.mark.parametrize('value', [['fp8', 'q4_k_m'], 'fp8', {'a': 1}])
+def test_add_worker_invalid_quantizations(client, value):
+    payload = {'worker_name': 'BadQuant', 'worker_model': 'TestModel', 'quantizations': value}
+    assert client.post('/api/workers', json=payload).status_code == 400
+
+
 def test_add_worker_missing_fields(client):
     response = client.post('/api/workers', json={'worker_name': 'FailWorker'})
     assert response.status_code == 400

@@ -1,3 +1,5 @@
+import json
+
 from flask import Blueprint, jsonify, request
 
 from database import encrypt_value, get_db
@@ -187,6 +189,16 @@ def _thinking_level(data):
     return normalize_level(None, bool(data.get('thinking_enabled')))
 
 
+def _quantizations(data):
+    """(JSON text or None, error) for the worker's ordered quantization list."""
+    from agent.quantization_control import QUANTIZATIONS, parse_quantizations
+
+    preferred = parse_quantizations(data.get('quantizations'))
+    if preferred is None:
+        return None, "quantizations must be a list with values from: " + ", ".join(QUANTIZATIONS)
+    return (json.dumps(preferred) if preferred else None), None
+
+
 @api_llm_bp.route('/api/workers', methods=['POST'])
 def add_worker():
     data = request.json
@@ -203,14 +215,17 @@ def add_worker():
     temperature = _parse_temperature(data.get('temperature'))
     if 'temperature' in data and temperature is None:
         return jsonify({"error": "temperature must be a number between 0 and 2"}), 400
+    quantizations, error = _quantizations(data)
+    if error:
+        return jsonify({"error": error}), 400
     conn = get_db()
     cursor = conn.cursor()
     try:
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0')
         cursor.execute('''
-            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature))
+            INSERT INTO workers_config (worker_name, worker_model, worker_instructions, is_default, thinking_enabled, thinking_level, quantizations, tools_enabled, show_tools_results, temperature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, thinking_level, quantizations, tools_enabled, show_tools_results, temperature))
         conn.commit()
         return jsonify({"status": "success", "message": "Worker added"})
     except Exception as e:
@@ -234,14 +249,17 @@ def update_worker(worker_id):
     temperature = _parse_temperature(data.get('temperature'))
     if 'temperature' in data and temperature is None:
         return jsonify({"error": "temperature must be a number between 0 and 2"}), 400
+    quantizations, error = _quantizations(data)
+    if error:
+        return jsonify({"error": error}), 400
     conn = get_db()
     cursor = conn.cursor()
     try:
         if is_default:
             cursor.execute('UPDATE workers_config SET is_default = 0 WHERE id != ?', (worker_id,))
         cursor.execute('''
-            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, thinking_level = ?, tools_enabled = ?, show_tools_results = ?, temperature = ? WHERE id = ?
-        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature, worker_id))
+            UPDATE workers_config SET worker_name = ?, worker_model = ?, worker_instructions = ?, is_default = ?, thinking_enabled = ?, thinking_level = ?, quantizations = ?, tools_enabled = ?, show_tools_results = ?, temperature = ? WHERE id = ?
+        ''', (data.get('worker_name'), data.get('worker_model'), data.get('worker_instructions'), is_default, thinking_enabled, thinking_level, quantizations, tools_enabled, show_tools_results, temperature, worker_id))
         conn.commit()
         if cursor.rowcount == 0:
             return jsonify({"error": "Worker not found"}), 404

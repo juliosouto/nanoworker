@@ -494,16 +494,19 @@ def llm_models_page():
 def workers_page():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, thinking_level, tools_enabled, show_tools_results, temperature FROM workers_config')
+    cursor.execute('SELECT id, worker_name, worker_model, worker_instructions, is_default, thinking_enabled, thinking_level, quantizations, tools_enabled, show_tools_results, temperature FROM workers_config')
     workers = cursor.fetchall()
     
     cursor.execute('SELECT model_name, provider FROM llm_config WHERE enabled = 1')
     models = cursor.fetchall()
     conn.close()
 
+    from agent.quantization_control import QUANTIZATIONS
+
     worker_list = [dict(w) for w in workers]
     model_list = [dict(m) for m in models]
-    return render_template('workers.html', workers=worker_list, models=model_list)
+    return render_template('workers.html', workers=worker_list, models=model_list,
+                           quantizations=list(QUANTIZATIONS))
 
 @views_bp.route('/cron')
 def cron_jobs_page():

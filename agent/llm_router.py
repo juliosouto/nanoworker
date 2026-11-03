@@ -294,6 +294,15 @@ def _route_llm_call(
 
         local_kwargs.update(thinking_kwargs(provider, model_name, thinking_level))
 
+    # The worker's quantization preference (OpenRouter only).
+    quantizations = local_kwargs.pop("quantizations", None)
+    if quantizations:
+        from agent.quantization_control import quantization_kwargs
+
+        routing = quantization_kwargs(provider, model_name, quantizations)
+        if routing:
+            local_kwargs["openai_extra_body"] = {**(local_kwargs.get("openai_extra_body") or {}), **routing}
+
     # Fase 1: enforce the AgentResponse JSON contract natively when the
     # LangChain stack is active and the provider supports structured output.
     # local_kwargs is a per-model copy, so these additions never leak into the
