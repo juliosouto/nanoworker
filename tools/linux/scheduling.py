@@ -67,7 +67,7 @@ def schedule_task(description: str, prompt: str, cron_expression: Optional[str] 
 
 def list_scheduled_tasks() -> str:
     """
-    Lists all active scheduled tasks for the current session. Use this to check if a task is already scheduled before creating a new one.
+    Lists the active cron jobs (scheduled tasks) of the current chat. Use this to check if a cron job already exists before creating, rewriting or deleting one.
     """
     conn = get_db()
     cursor = conn.cursor()
@@ -96,7 +96,7 @@ def list_scheduled_tasks() -> str:
 
 def delete_scheduled_task(job_id: str) -> str:
     """
-    Cancels/Deletes a scheduled task by ID.
+    Cancels/deletes a cron job (scheduled task) by ID. To rewrite a cron job, delete it and create a new one with schedule_task.
     
     Args:
         job_id: The ID of the job to cancel (e.g. job-12345678).
