@@ -9,7 +9,7 @@ from database import get_db
 
 def schedule_task(description: str, prompt: str, cron_expression: Optional[str] = None, process_after: Optional[str] = None, max_executions: Optional[int] = None) -> str:
     """
-    Schedules a task to be processed in the future or periodically.
+    Creates a cron job / scheduled task: runs a prompt later or periodically (reminders, recurring reports, monitoring a chat every N minutes). This is how you create, rewrite or replace cron jobs; there is no server crontab or SSH involved.
     
     Args:
         description: A short summary of what this job does.

@@ -299,6 +299,14 @@ def _is_whatsapp_tool(func) -> bool:
     return getattr(func, "__module__", "").endswith(".whatsapp")
 
 
+def _is_always_kept_tool(func) -> bool:
+    """WhatsApp tools plus the scheduling ones: "cron job" or "monitor every 5
+    min" rarely embeds close to "schedule a task", and without them the agent
+    believes it needs SSH to a server crontab."""
+    module = getattr(func, "__module__", "")
+    return module.endswith(".whatsapp") or module.endswith(".scheduling")
+
+
 def _tool_query(history: list, message: str) -> str:
     """Text the tool relevance filter matches tools against.
 
@@ -675,7 +683,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
             tools = filter_tools_by_relevance(
                 tools, _tool_query(history, rag_query),
-                always_keep=_is_whatsapp_tool if (is_wa_group or is_wa_private) else None,
+                always_keep=_is_always_kept_tool if (is_wa_group or is_wa_private) else None,
             )
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True

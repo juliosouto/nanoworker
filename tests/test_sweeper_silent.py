@@ -32,3 +32,14 @@ def test_baileys_callback_silent_and_progress_send_nothing():
 def test_baileys_callback_sends_real_answer():
     calls = _post_calls("Apaguei a mensagem.")
     assert calls[0].kwargs["json"] == {"text": "Apaguei a mensagem.", "jid": "1@g.us"}
+
+
+def test_scheduling_and_whatsapp_tools_survive_the_relevance_filter():
+    from agent.message_processor import _is_always_kept_tool
+    from tools.linux import scheduling, whatsapp
+    from tools import weather
+
+    assert _is_always_kept_tool(scheduling.schedule_task)
+    assert _is_always_kept_tool(scheduling.delete_scheduled_task)
+    assert _is_always_kept_tool(whatsapp.send_whatsapp_file)
+    assert not _is_always_kept_tool(weather.get_weather)
