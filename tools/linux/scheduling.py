@@ -13,7 +13,7 @@ def schedule_task(description: str, prompt: str, cron_expression: Optional[str] 
     
     Args:
         description: A short summary of what this job does.
-        prompt: The instruction or task description for the agent to execute when the time comes.
+        prompt: The instruction for the agent to execute when the time comes. For checks/monitoring, say when to write to the chat (e.g. 'if X sent a message, delete it and tell the group; otherwise stay silent'); runs with nothing to report send no message.
         cron_expression: A standard cron expression (e.g. "0 9 * * 1-5" for weekdays at 9am). If provided, the task will repeat.
         process_after: An ISO formatted timestamp (e.g., "2023-12-31 23:59:59") for a one-shot task. 
                        If both are provided, cron_expression takes precedence for the first execution.

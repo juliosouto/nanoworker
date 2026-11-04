@@ -10,6 +10,31 @@ from database import get_db
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('sweeper')
 
+# A scheduled run answers exactly this when it has nothing to tell the chat
+# (e.g. a monitoring check that found nothing); the callbacks then send nothing.
+SILENT_TOKEN = "NO_REPLY"
+
+
+def strip_silent_token(text: str) -> str:
+    """Text to send for a scheduled run: '' when the agent chose to stay silent."""
+    if not text or SILENT_TOKEN not in text:
+        return text
+    rest = text.replace(SILENT_TOKEN, "").strip(" \n\t.*`'\"")
+    return rest
+
+
+def scheduled_task_prompt(job_id: str, content: str) -> str:
+    return (
+        "[SYSTEM: SCHEDULED TASK TRIGGERED]\n"
+        "Please execute ONLY the following task and nothing else. Do not repeat previous tasks.\n"
+        "Write to the chat only when the task asks for a message or when something happened that "
+        "the user must know (an action you just took, a condition that was met). If this run has "
+        f"nothing to report (e.g. a check found nothing), reply exactly {SILENT_TOKEN} and nothing else. "
+        f"When the task's goal is reached and it should not run again, delete it with "
+        f"delete_scheduled_task('{job_id}').\n"
+        f"Task:\n{content}"
+    )
+
 def make_baileys_callback(jid: str):
     """
     Cria uma função de callback específica para enviar mensagens via Baileys 
@@ -46,6 +71,13 @@ def make_baileys_callback(jid: str):
                     or "Empty response from model" in text_to_send
                 )
             )
+            if is_progress_msg:
+                # A scheduled run may end in silence; never leave a progress note behind.
+                return
+            text_to_send = strip_silent_token(text_to_send)
+            if not text_to_send and not audio_path:
+                logger.info(f"Scheduled run for {jid} stayed silent")
+                return
 
             # If this is a final successful response and we previously posted
             # a progress / retry error message, delete that progress message first.
@@ -101,6 +133,10 @@ def make_cloud_callback(sender_id: str):
         from channels.whatsapp_cloud import send_text_message
         try:
             logger.info(f"Cron job Cloud API callback triggered for {sender_id}")
+            out_text = strip_silent_token(out_text)
+            if not out_text:
+                logger.info(f"Scheduled run for {sender_id} stayed silent")
+                return
             send_text_message(sender_id, out_text)
         except Exception as e:
             logger.error(f"Failed to send scheduled Cloud API message: {e}")
@@ -166,7 +202,7 @@ def sweep():
                     # One-shot job, deactivate
                     cursor.execute('UPDATE cron_jobs SET is_active = 0, execution_count = ? WHERE id = ?', (new_execution_count, job_id))
                 
-                strict_content = f"[SYSTEM: SCHEDULED TASK TRIGGERED]\nPlease execute ONLY the following task and nothing else. Do not repeat previous tasks:\n{content}"
+                strict_content = scheduled_task_prompt(job_id, content)
                 
                 # Insert into messages_in for processing
                 message_in_id = f"msg-in-{uuid.uuid4().hex[:8]}"
