@@ -514,12 +514,30 @@ def cron_jobs_page():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT c.id, c.session_id, c.description, c.content, c.cron_expression, c.next_run, c.is_active, s.channel_id
+        SELECT c.id, c.session_id, c.description, c.content, c.cron_expression, c.next_run, c.is_active, c.execution_count, c.max_executions, s.channel_id
         FROM cron_jobs c
         LEFT JOIN sessions s ON c.session_id = s.id
         ORDER BY c.next_run ASC
     ''')
     jobs = cursor.fetchall()
+    cron_jobs_data = [
+        {
+            'id': j['id'],
+            'session_id': j['session_id'],
+            'description': j['description'],
+            'content': j['content'],
+            'cron_expression': j['cron_expression'] or '',
+            'next_run': j['next_run'],
+            'is_active': bool(j['is_active']),
+            'execution_count': j['execution_count'] or 0,
+            'max_executions': j['max_executions'],
+            'channel_id': j['channel_id'] or '',
+        }
+        for j in jobs
+    ]
+
+    cursor.execute('SELECT id, channel_id FROM sessions WHERE channel_id IS NOT NULL ORDER BY channel_id ASC')
+    chats = [dict(row) for row in cursor.fetchall()]
 
     cursor.execute('SELECT id, worker_name, worker_model FROM workers_config ORDER BY worker_name ASC')
     workers = cursor.fetchall()
@@ -530,6 +548,8 @@ def cron_jobs_page():
     return render_template(
         'cron_jobs.html',
         jobs=jobs,
+        jobs_data=cron_jobs_data,
+        chats=chats,
         workers=[dict(w) for w in workers],
         cron_pref_1=cron_prefs[0],
         cron_pref_2=cron_prefs[1],
