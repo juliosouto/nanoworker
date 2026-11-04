@@ -30,11 +30,29 @@ function clearTyping(jid) {
     if (typingIntervals[jid]) {
         clearInterval(typingIntervals[jid]);
         delete typingIntervals[jid];
+        scheduleOffline();
     }
     if (typingTimeouts[jid]) {
         clearTimeout(typingTimeouts[jid]);
         delete typingTimeouts[jid];
     }
+}
+
+// A "composing" presence marks the whole account online, and WhatsApp mutes the
+// phone's notifications while any device is online. Go back to "unavailable"
+// a few seconds after the last typing indicator stops.
+let offlineTimer = null;
+function scheduleOffline() {
+    if (offlineTimer) clearTimeout(offlineTimer);
+    offlineTimer = setTimeout(async () => {
+        offlineTimer = null;
+        if (Object.keys(typingIntervals).length > 0 || !sock) return;
+        try {
+            await sock.sendPresenceUpdate('unavailable');
+        } catch (e) {
+            console.error('Offline presence error:', e.message);
+        }
+    }, 5000);
 }
 
 let currentAgentName = null;
@@ -308,6 +326,7 @@ async function connectToWhatsApp() {
                 setTimeout(connectToWhatsApp, 2000);
             }
         } else if (connection === 'open') {
+            sock.sendPresenceUpdate('unavailable').catch(() => {});
             console.log('✅ WhatsApp Worker connected successfully!');
             // Extract the user's own JID and LID base
             if (sock.user) {
