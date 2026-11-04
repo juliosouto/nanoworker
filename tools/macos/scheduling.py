@@ -7,9 +7,10 @@ from croniter import croniter
 
 from database import get_db
 
-def schedule_task(description: str, prompt: str, cron_expression: Optional[str] = None, process_after: Optional[str] = None, max_executions: Optional[int] = None) -> str:
+def schedule_task(description: str, prompt: str, cron_expression: Optional[str] = None, process_after: Optional[str] = None, max_executions: Optional[int] = None, script: Optional[str] = None) -> str:
     """
     Creates a cron job / scheduled task: runs a prompt later or periodically (reminders, recurring reports, monitoring a chat every N minutes). This is how you create, rewrite or replace cron jobs; there is no server crontab or SSH involved.
+    For a job that must repeat the same logic every time (monitoring, rules, counting), pass a Python `script` instead of relying on yourself at each run.
     
     Args:
         description: A short summary of what this job does.
@@ -18,6 +19,7 @@ def schedule_task(description: str, prompt: str, cron_expression: Optional[str] 
         process_after: An ISO formatted timestamp (e.g., "2023-12-31 23:59:59") for a one-shot task. 
                        If both are provided, cron_expression takes precedence for the first execution.
         max_executions: The maximum number of times this task should run. If provided, the task will automatically deactivate after reaching this count.
+        script: A Python 3 script to run instead of asking the agent. Prefer it whenever the job must do the same thing every time: checking a chat, counting, fetching data, applying a rule (e.g. delete a user's message when they post). The script runs on its own, costs no model calls and is exact; what it prints is sent to the chat, and printing nothing keeps the chat silent. It runs with a 120 second limit and needs the Terminal permission. Use `prompt` only for jobs that need judgment each run (writing a reply, summarizing); if you give both, the script runs and the prompt is kept for reference.
     
     Returns:
         A confirmation string with the scheduled task ID.
@@ -46,10 +48,10 @@ def schedule_task(description: str, prompt: str, cron_expression: Optional[str] 
         next_run = now.strftime('%Y-%m-%d %H:%M:%S')
     
     query = '''
-        INSERT INTO cron_jobs (id, session_id, description, content, cron_expression, next_run, max_executions)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cron_jobs (id, session_id, description, content, script, cron_expression, next_run, max_executions)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     '''
-    params = (job_id, session_id, description, prompt, cron_expression, next_run, max_executions)
+    params = (job_id, session_id, description, prompt, (script or '').strip() or None, cron_expression, next_run, max_executions)
         
     try:
         cursor.execute(query, params)

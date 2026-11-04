@@ -653,6 +653,11 @@ def init_db():
     except sqlite3.OperationalError as e:
         if "duplicate column name" not in str(e).lower():
             pass
+    try:
+        cursor.execute("ALTER TABLE cron_jobs ADD COLUMN script TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
 
     # Messages In Table (Inbound DB equivalent)
     cursor.execute('''

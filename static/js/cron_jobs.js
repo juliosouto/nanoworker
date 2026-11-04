@@ -101,6 +101,7 @@ function openCronModal(jobId = null) {
     document.querySelector(`input[name="cronKind"][value="${once ? 'once' : 'cron'}"]`).checked = true;
     document.getElementById('cronDescription').value = job ? job.description : '';
     document.getElementById('cronContent').value = job ? job.content : '';
+    document.getElementById('cronScript').value = job ? job.script : '';
     document.getElementById('cronExpression').value = job ? job.cron_expression : '';
     document.getElementById('cronRunAt').value = once ? job.next_run.slice(0, 16).replace(' ', 'T') : '';
     document.getElementById('cronMaxExecutions').value = job && job.max_executions ? job.max_executions : '';
@@ -120,6 +121,7 @@ function saveCronJob() {
     const body = {
         description: document.getElementById('cronDescription').value,
         content: document.getElementById('cronContent').value,
+        script: document.getElementById('cronScript').value,
         cron_expression: once ? '' : document.getElementById('cronExpression').value.trim(),
         next_run: once ? document.getElementById('cronRunAt').value : '',
         max_executions: document.getElementById('cronMaxExecutions').value,

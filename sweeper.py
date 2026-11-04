@@ -142,6 +142,34 @@ def make_cloud_callback(sender_id: str):
             logger.error(f"Failed to send scheduled Cloud API message: {e}")
     return callback
 
+def _completion_callback(channel_id):
+    """Callback that sends a job's text to the chat it belongs to (None if unknown)."""
+    if not channel_id:
+        return None
+    if channel_id.startswith('wa_web:'):
+        target_jid = channel_id.replace('wa_web:', '')
+        if '@' not in target_jid:
+            if '-' in target_jid or target_jid.startswith('120363'):
+                target_jid = f"{target_jid}@g.us"
+            else:
+                target_jid = f"{target_jid}@s.whatsapp.net"
+        return make_baileys_callback(target_jid)
+    if channel_id.startswith('whatsapp:'):
+        return make_cloud_callback(channel_id.replace('whatsapp:', ''))
+    return None
+
+def run_script_job(job_id, script, on_complete):
+    """Runs a scripted cron job and sends its output, if any, to the chat."""
+    from utils.cron_script import run_cron_script
+    text = run_cron_script(script)
+    if not text:
+        logger.info(f"Scripted job {job_id} printed nothing; staying silent")
+        return
+    if on_complete:
+        on_complete(text)
+    else:
+        logger.info(f"Scripted job {job_id} output (no chat to send to): {text[:200]}")
+
 def sweep():
     """
     Loop principal do Sweeper. Verifica a cada 10 segundos no banco de dados
@@ -165,7 +193,7 @@ def sweep():
             
             # Fetch due cron jobs with channel_id from sessions
             cursor.execute('''
-                SELECT c.id, c.session_id, c.content, c.cron_expression, s.channel_id, c.execution_count, c.max_executions
+                SELECT c.id, c.session_id, c.content, c.script, c.cron_expression, s.channel_id, c.execution_count, c.max_executions
                 FROM cron_jobs c
                 JOIN sessions s ON c.session_id = s.id
                 WHERE c.is_active = 1 
@@ -178,6 +206,7 @@ def sweep():
                 job_id = job['id']
                 session_id = job['session_id']
                 content = job['content']
+                script = job['script']
                 cron_expression = job['cron_expression']
                 channel_id = job['channel_id']
                 execution_count = job['execution_count'] or 0
@@ -202,6 +231,12 @@ def sweep():
                     # One-shot job, deactivate
                     cursor.execute('UPDATE cron_jobs SET is_active = 0, execution_count = ? WHERE id = ?', (new_execution_count, job_id))
                 
+                if script:
+                    # Scripted job: no LLM call, the script's stdout is the message.
+                    conn.commit()
+                    executor.submit(run_script_job, job_id, script, _completion_callback(channel_id))
+                    continue
+
                 strict_content = scheduled_task_prompt(job_id, content)
                 
                 # Insert into messages_in for processing
@@ -215,20 +250,7 @@ def sweep():
                 
                 logger.info(f"Dispatching scheduled job {job_id} as message {message_in_id} for session {session_id}")
                 
-                # Determine callback based on channel
-                on_complete_cb = None
-                if channel_id:
-                    if channel_id.startswith('wa_web:'):
-                        target_jid = channel_id.replace('wa_web:', '')
-                        if '@' not in target_jid:
-                            if '-' in target_jid or target_jid.startswith('120363'):
-                                target_jid = f"{target_jid}@g.us"
-                            else:
-                                target_jid = f"{target_jid}@s.whatsapp.net"
-                        on_complete_cb = make_baileys_callback(target_jid)
-                    elif channel_id.startswith('whatsapp:'):
-                        sender_id = channel_id.replace('whatsapp:', '')
-                        on_complete_cb = make_cloud_callback(sender_id)
+                on_complete_cb = _completion_callback(channel_id)
                 
                 # Dispatch processing in a background thread pool
                 executor.submit(

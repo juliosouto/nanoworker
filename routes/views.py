@@ -514,7 +514,7 @@ def cron_jobs_page():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT c.id, c.session_id, c.description, c.content, c.cron_expression, c.next_run, c.is_active, c.execution_count, c.max_executions, s.channel_id
+        SELECT c.id, c.session_id, c.description, c.content, c.cron_expression, c.next_run, c.is_active, c.execution_count, c.max_executions, c.script, s.channel_id
         FROM cron_jobs c
         LEFT JOIN sessions s ON c.session_id = s.id
         ORDER BY c.next_run ASC
@@ -526,6 +526,7 @@ def cron_jobs_page():
             'session_id': j['session_id'],
             'description': j['description'],
             'content': j['content'],
+            'script': j['script'] or '',
             'cron_expression': j['cron_expression'] or '',
             'next_run': j['next_run'],
             'is_active': bool(j['is_active']),

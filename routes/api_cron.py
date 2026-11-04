@@ -19,8 +19,11 @@ def _parse_job_fields(data: dict, now: datetime):
     """
     description = (data.get('description') or '').strip()
     content = (data.get('content') or '').strip()
-    if not description or not content:
-        return None, 'Description and prompt are required.'
+    script = (data.get('script') or '').strip() or None
+    if not description:
+        return None, 'Description is required.'
+    if not content and not script:
+        return None, 'Give a prompt for the agent or a Python script.'
 
     cron_expression = (data.get('cron_expression') or '').strip() or None
     run_at = (data.get('next_run') or '').strip()
@@ -51,6 +54,7 @@ def _parse_job_fields(data: dict, now: datetime):
     return {
         'description': description,
         'content': content,
+        'script': script,
         'cron_expression': cron_expression,
         'next_run': next_run,
         'max_executions': max_executions,
@@ -88,10 +92,10 @@ def create_cron_job():
             return jsonify({"error": "Choose a valid chat."}), 400
         job_id = f"job-{uuid.uuid4().hex[:8]}"
         conn.execute(
-            'INSERT INTO cron_jobs (id, session_id, description, content, cron_expression, next_run, max_executions) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (job_id, session_id, fields['description'], fields['content'], fields['cron_expression'],
-             fields['next_run'], fields['max_executions']),
+            'INSERT INTO cron_jobs (id, session_id, description, content, script, cron_expression, next_run, max_executions) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (job_id, session_id, fields['description'], fields['content'], fields['script'],
+             fields['cron_expression'], fields['next_run'], fields['max_executions']),
         )
         conn.commit()
     finally:
@@ -111,9 +115,9 @@ def update_cron_job(job_id):
         if not conn.execute('SELECT 1 FROM cron_jobs WHERE id = ?', (job_id,)).fetchone():
             return jsonify({"error": "Job not found"}), 404
         conn.execute(
-            'UPDATE cron_jobs SET description = ?, content = ?, cron_expression = ?, next_run = ?, '
+            'UPDATE cron_jobs SET description = ?, content = ?, script = ?, cron_expression = ?, next_run = ?, '
             'max_executions = ?, is_active = ? WHERE id = ?',
-            (fields['description'], fields['content'], fields['cron_expression'], fields['next_run'],
+            (fields['description'], fields['content'], fields['script'], fields['cron_expression'], fields['next_run'],
              fields['max_executions'], 1 if data.get('is_active', True) else 0, job_id),
         )
         conn.commit()

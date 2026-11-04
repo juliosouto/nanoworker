@@ -159,7 +159,13 @@
 
         <div class="cron-field">
             <label for="cronContent">Prompt for the agent</label>
-            <textarea id="cronContent" rows="4" placeholder="What the agent should do when it runs"></textarea>
+            <textarea id="cronContent" rows="3" placeholder="What the agent should do when it runs"></textarea>
+        </div>
+
+        <div class="cron-field">
+            <label for="cronScript">Python script (optional: runs instead of the agent, stdout goes to the chat)</label>
+            <textarea id="cronScript" rows="6" spellcheck="false" style="font-family: monospace;" placeholder="print('hello')"></textarea>
+            <small class="cron-hint">Runs without the agent, so it costs no model calls. Print nothing to stay silent. Requires the Terminal permission.</small>
         </div>
 
         <div class="cron-field">
