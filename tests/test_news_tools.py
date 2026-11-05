@@ -5,6 +5,14 @@ import pytest
 from tools import news_tools
 from tools.news_tools import fetch_news, TOOL_SETTINGS_SCHEMA
 
+_REAL_SITE_LISTING = news_tools._site_listing
+
+
+@pytest.fixture(autouse=True)
+def _no_site_listing_download(monkeypatch):
+    """Tests never download real home pages; the listing is empty unless a test sets it."""
+    monkeypatch.setattr(news_tools, "_site_listing", lambda domain: [])
+
 # ---------------------------------------------------------------------------
 # Fixtures / sample feeds
 # ---------------------------------------------------------------------------
@@ -340,3 +348,62 @@ def test_fetch_news_runs_searches_downloads_and_summaries_in_parallel(mock_db_pa
     assert result.count("🔗") == 4
     # Serial would take 8 searches + 4 downloads + 4 summaries = 16 * 0.3s; parallel waves take far less.
     assert elapsed < 8 * delay
+
+
+HOME_HTML = """
+<html><body>
+<a href="/tecnologia/noticia/2026/06/01/ia-avanca-no-brasil.ghtml">IA avança no Brasil e cria empregos novos</a>
+<a href="/economia/seu-dinheiro/calculadoras/">Calculadoras</a>
+<a href="/tag/economia/">Economia</a>
+<a href="https://especiais.g1.globo.com/educacao/enem/2023/simula/">Simulado do Enem</a>
+<a href="/politica/noticia/2026/06/02/congresso-vota-reforma-tributaria.ghtml"></a>
+<a href="https://outro.com/tecnologia/materia-de-outro-site-com-titulo-longo.html">Outro site</a>
+</body></html>
+"""
+
+
+class _FakeResponse:
+    def __init__(self, text, url):
+        self.text = text
+        self.url = url
+
+
+def test_site_listing_keeps_article_links_only(monkeypatch):
+    monkeypatch.setattr(news_tools.curl_requests, "get",
+                        lambda url, **kw: _FakeResponse(HOME_HTML, "https://g1.globo.com/"))
+    items = _REAL_SITE_LISTING("g1.globo.com")
+    urls = [i["url"] for i in items]
+    assert urls == [
+        "https://g1.globo.com/tecnologia/noticia/2026/06/01/ia-avanca-no-brasil.ghtml",
+        "https://g1.globo.com/politica/noticia/2026/06/02/congresso-vota-reforma-tributaria.ghtml",
+    ]
+    assert items[0]["title"] == "IA avança no Brasil e cria empregos novos"
+    # Anchor without text: the title comes from the URL slug
+    assert items[1]["title"] == "congresso vota reforma tributaria"
+
+
+def test_listing_matches_keywords_without_accents():
+    items = [
+        {"title": "Política: Congresso vota reforma", "url": "https://x.com/politica/a-b-c-d-e"},
+        {"title": "Tecnologia nova", "url": "https://x.com/tech/abc"},
+    ]
+    assert [i["title"] for i in news_tools._listing_matches(items, ["Politica"])] == ["Política: Congresso vota reforma"]
+    assert news_tools._listing_matches(items, ["economia"]) == []
+
+
+def test_candidates_use_listing_when_topic_matches_and_search_otherwise(monkeypatch):
+    listing = [{"title": "Tecnologia: IA avança", "url": "https://g1.globo.com/tecnologia/ia-avanca-no-brasil.ghtml"}]
+    monkeypatch.setattr(news_tools, "_site_listing", lambda domain: listing if domain == "g1.globo.com" else [])
+    searched = []
+    monkeypatch.setattr(news_tools, "_search_one", lambda q: searched.append(q) or [
+        {"url": "https://other.com/a", "title": "Resultado da busca", "body": "b"}])
+
+    sources = [{"name": "G1", "domain": "g1.globo.com"}]
+    topics = [{"name": "Tecnologia", "keywords": ["tecnologia"]}, {"name": "Economia", "keywords": ["economia"]}]
+    found = news_tools._search_news_candidates(sources, topics, 4)
+
+    assert [c["url"] for c in found] == [
+        "https://g1.globo.com/tecnologia/ia-avanca-no-brasil.ghtml",  # from the home page
+        "https://other.com/a",  # from DuckDuckGo, for the topic with no match
+    ]
+    assert searched == ["Economia site:g1.globo.com"]

@@ -15,11 +15,13 @@ import contextvars
 import json
 import logging
 import re
+import unicodedata
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import List, Dict, Any
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
@@ -124,6 +126,14 @@ TOOL_SETTINGS_SCHEMA = [
 _ARTICLE_SCRAPE_TIMEOUT = 12
 _MAX_SEARCH_CANDIDATES = 20
 _PARALLEL_WORKERS = 6
+_LISTING_TIMEOUT = 15
+_MIN_HEADLINE_WORDS = 4
+# Paths of a site's home page that are not news articles (tags, videos, calculators, special pages, ...).
+_NON_NEWS_PARTS = (
+    "/tag/", "/tags/", "/video", "/podcast", "/calculadora", "/especiais", "/guia", "/login",
+    "/assine", "/newsletter", "/curso", "/lp/", "/autor/", "/author/", "/busca", "/search",
+    "/conheca-a-gazeta", "/cafe-com-a-gazeta",
+)
 
 
 def _clean_str(value) -> str:
@@ -250,6 +260,61 @@ def _resolve_entries(names, configured, coerce):
 # ===========================================================================
 # STEP 1: Web Search for News Candidates (Live, No RSS dependency)
 # ===========================================================================
+def _fold(text: str) -> str:
+    """Lowercase text without accents, for keyword matching ("Política" matches "politica")."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
+
+
+def _site_listing(domain: str) -> List[Dict[str, str]]:
+    """
+    Article links of a site's home page (or of a section given as domain/path), in page order.
+    One plain download and HTML parse, no JavaScript: returns [] when the page cannot be read.
+    """
+    clean = re.sub(r"^https?://", "", domain or "").strip().strip("/")
+    if not clean:
+        return []
+    host, _, prefix = clean.partition("/")
+    prefix = "/" + prefix if prefix else ""
+    host = host.lower().removeprefix("www.")
+    try:
+        resp = curl_requests.get(f"https://{clean}", impersonate="chrome146", timeout=_LISTING_TIMEOUT, allow_redirects=True)
+        soup = BeautifulSoup(resp.text or "", "html.parser")
+    except Exception as e:
+        logger.debug("Listing download failed for %s: %s", domain, e)
+        return []
+
+    items, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        url = urljoin(resp.url, a["href"]).split("#")[0].split("?")[0]
+        netloc = re.sub(r"^https?://", "", url).split("/")[0].lower().removeprefix("www.")
+        path = re.sub(r"^https?://[^/]+", "", url)
+        if not (netloc == host or netloc.endswith("." + host)) or not path.startswith(prefix):
+            continue
+        if netloc.startswith("especiais.") or any(part in path.lower() for part in _NON_NEWS_PARTS):
+            continue
+        if len([seg for seg in path.split("/") if seg]) < 2 or len(path) < 25 or url in seen:
+            continue
+        seen.add(url)
+        title = " ".join(a.get_text(" ").split())
+        if len(title) < 15:
+            # Anchors often hold only an icon or "leia mais": use the URL slug instead.
+            slug = [seg for seg in path.split("/") if seg][-1]
+            title = re.sub(r"\.\w+$", "", slug).replace("-", " ").strip()
+        # Headlines have several words; section names and bare slugs have one or two.
+        if len(title.split()) < _MIN_HEADLINE_WORDS:
+            continue
+        items.append({"title": title, "url": url})
+    return items
+
+
+def _listing_matches(items: List[Dict[str, str]], keywords: List[str]) -> List[Dict[str, str]]:
+    """Listing items whose title or URL contains one of the topic keywords."""
+    folded = [kw for kw in (_fold(k).strip() for k in keywords) if kw]
+    if not folded:
+        return []
+    return [item for item in items if any(kw in _fold(item["title"] + " " + item["url"]) for kw in folded)]
+
+
 def _search_one(query: str) -> list:
     """DuckDuckGo News for ``query``, falling back to text search when the news tab is empty."""
     try:
@@ -265,29 +330,46 @@ def _search_one(query: str) -> list:
 
 def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str, Any]], target_count: int) -> List[Dict[str, Any]]:
     """
-    Searches DuckDuckGo News/Text for recent articles across the requested sources and topics.
-    The searches run in parallel; results keep the source/topic order.
+    Finds candidate articles for each source and topic.
+
+    A source with a domain is read from its home page: the links whose title or
+    URL match the topic keywords are used. When the home page has none, the
+    source and topic are searched on DuckDuckGo, as before. The downloads run in
+    parallel; the candidates keep the source/topic order.
     Returns a list of candidate dicts with url, title, source, and rough date/snippet.
     """
-    queries = []
-    for source in sources:
+    with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
+        listings = list(pool.map(lambda src: _site_listing(src.get("domain") or ""), sources))
+
+    plan = []  # (source_name, topic_name, matched_items or None, query)
+    for source, listing in zip(sources, listings):
         source_name = source.get("name") or "News"
         domain = source.get("domain") or ""
 
         clean_domain = re.sub(r"^https?://", "", domain).split("/")[0].strip()
         for topic in topics:
             topic_name = topic.get("name") if isinstance(topic, dict) else str(topic)
+            keywords = (topic.get("keywords") if isinstance(topic, dict) else None) or [topic_name]
+            matched = _listing_matches(listing, keywords)
+            if matched:
+                plan.append((source_name, topic_name, matched, None))
+                continue
             query = f"{topic_name} site:{clean_domain}" if clean_domain else f"{topic_name} {source_name}"
-            queries.append((query, source_name, topic_name))
+            plan.append((source_name, topic_name, None, query))
 
+    queries = [p[3] for p in plan if p[3]]
     with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
-        results = list(pool.map(lambda q: _search_one(q[0]), queries))
+        results = iter(pool.map(_search_one, queries))
 
     candidates = []
     seen_urls = set()
     seen_titles = set()
-    for (query, source_name, topic_name), news_results in zip(queries, results):
-        for item in news_results:
+    for source_name, topic_name, matched, query in plan:
+        if matched is not None:
+            found = [{"url": m["url"], "title": m["title"], "body": "", "date": ""} for m in matched]
+        else:
+            found = next(results)
+        for item in found:
             url = item.get("url") or item.get("href") or ""
             title = item.get("title") or ""
             snippet = item.get("body") or ""
