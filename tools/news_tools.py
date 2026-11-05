@@ -11,10 +11,12 @@ Sources and topics are FULLY USER-MANAGED from the Tools Management card:
 each source is {name, domain} and each topic is {name, keywords}.
 """
 
+import contextvars
 import json
 import logging
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import List, Dict, Any
@@ -121,6 +123,7 @@ TOOL_SETTINGS_SCHEMA = [
 
 _ARTICLE_SCRAPE_TIMEOUT = 12
 _MAX_SEARCH_CANDIDATES = 20
+_PARALLEL_WORKERS = 6
 
 
 def _clean_str(value) -> str:
@@ -247,15 +250,26 @@ def _resolve_entries(names, configured, coerce):
 # ===========================================================================
 # STEP 1: Web Search for News Candidates (Live, No RSS dependency)
 # ===========================================================================
+def _search_one(query: str) -> list:
+    """DuckDuckGo News for ``query``, falling back to text search when the news tab is empty."""
+    try:
+        with DDGS() as ddgs:
+            news_results = list(ddgs.news(query, max_results=5))
+            if not news_results:
+                news_results = list(ddgs.text(query, max_results=5))
+        return news_results
+    except Exception as e:
+        logger.debug("DDG search failed for query %r: %s", query, e)
+        return []
+
+
 def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str, Any]], target_count: int) -> List[Dict[str, Any]]:
     """
     Searches DuckDuckGo News/Text for recent articles across the requested sources and topics.
+    The searches run in parallel; results keep the source/topic order.
     Returns a list of candidate dicts with url, title, source, and rough date/snippet.
     """
-    candidates = []
-    seen_urls = set()
-    seen_titles = set()
-
+    queries = []
     for source in sources:
         source_name = source.get("name") or "News"
         domain = source.get("domain") or ""
@@ -264,42 +278,39 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
         for topic in topics:
             topic_name = topic.get("name") if isinstance(topic, dict) else str(topic)
             query = f"{topic_name} site:{clean_domain}" if clean_domain else f"{topic_name} {source_name}"
-            
-            # 1. Try DuckDuckGo News search first
-            try:
-                with DDGS() as ddgs:
-                    news_results = list(ddgs.news(query, max_results=5))
-                    if not news_results:
-                        # Fallback to general text search if news tab returns empty
-                        news_results = list(ddgs.text(query, max_results=5))
-            except Exception as e:
-                logger.debug("DDG search failed for query %r: %s", query, e)
-                news_results = []
+            queries.append((query, source_name, topic_name))
 
-            for item in news_results:
-                url = item.get("url") or item.get("href") or ""
-                title = item.get("title") or ""
-                snippet = item.get("body") or ""
-                date = item.get("date") or ""
+    with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
+        results = list(pool.map(lambda q: _search_one(q[0]), queries))
 
-                if not url or not title:
-                    continue
+    candidates = []
+    seen_urls = set()
+    seen_titles = set()
+    for (query, source_name, topic_name), news_results in zip(queries, results):
+        for item in news_results:
+            url = item.get("url") or item.get("href") or ""
+            title = item.get("title") or ""
+            snippet = item.get("body") or ""
+            date = item.get("date") or ""
 
-                norm_title = re.sub(r"\W+", "", title.lower())
-                if url in seen_urls or norm_title in seen_titles:
-                    continue
+            if not url or not title:
+                continue
 
-                seen_urls.add(url)
-                seen_titles.add(norm_title)
+            norm_title = re.sub(r"\W+", "", title.lower())
+            if url in seen_urls or norm_title in seen_titles:
+                continue
 
-                candidates.append({
-                    "title": title,
-                    "url": url,
-                    "source": source_name,
-                    "topic": topic_name,
-                    "date": date,
-                    "snippet": snippet,
-                })
+            seen_urls.add(url)
+            seen_titles.add(norm_title)
+
+            candidates.append({
+                "title": title,
+                "url": url,
+                "source": source_name,
+                "topic": topic_name,
+                "date": date,
+                "snippet": snippet,
+            })
 
     return candidates
 
@@ -309,26 +320,28 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
 # ===========================================================================
 def _extract_article_text(url: str) -> str:
     """
-    Extracts main article text using curl_cffi + trafilatura, falling back to BeautifulSoup.
+    Extracts main article text from one download: trafilatura first, BeautifulSoup paragraphs as fallback.
     """
     if not url:
         return ""
     try:
         resp = curl_requests.get(url, impersonate="chrome146", timeout=_ARTICLE_SCRAPE_TIMEOUT)
         html = resp.text or ""
+    except Exception as e:
+        logger.debug("Article download failed for %s: %s", url, e)
+        return ""
+
+    try:
         text = trafilatura.extract(html)
         if text and len(text.strip()) >= 80:
             return text.strip()
     except Exception as e:
         logger.debug("Trafilatura extract failed for %s: %s", url, e)
 
-    # Secondary lightweight fallback with BeautifulSoup
     try:
-        resp = curl_requests.get(url, impersonate="chrome146", timeout=_ARTICLE_SCRAPE_TIMEOUT)
-        soup = BeautifulSoup(resp.text or "", "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
-        # Find paragraphs
         paragraphs = [p.get_text(" ").strip() for p in soup.find_all("p") if len(p.get_text(" ").strip()) > 30]
         full_text = "\n\n".join(paragraphs)
         if len(full_text) >= 80:
@@ -456,37 +469,37 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
         if not candidates:
             return "Nenhuma notícia recente foi encontrada para os tópicos e fontes configurados."
 
-        # STEP 2 & 3: Scrape full text & Summarize each article
-        completed_articles = []
-        for cand in candidates:
-            if len(completed_articles) >= target_count:
-                break
-
-            url = cand["url"]
-            title = cand["title"]
-            source = cand["source"]
-            date = cand.get("date") or "Recente"
-
-            # Scrape real content
-            content = _extract_article_text(url)
+        # STEP 2 & 3: Scrape full text & summarize, in parallel waves until enough articles are done
+        def _process(cand):
+            content = _extract_article_text(cand["url"])
             if not content or len(content.strip()) < 100:
                 # If scraping was blocked or empty, use snippet if available
                 content = cand.get("snippet", "")
                 if not content or len(content.strip()) < 50:
-                    continue
-
-            # Summarize content
-            summary = _summarize_article_with_llm(title, content, source, target_chars)
+                    return None
+            summary = _summarize_article_with_llm(cand["title"], content, cand["source"], target_chars)
             if not summary:
-                continue
-
-            completed_articles.append({
-                "title": title,
-                "source": source,
-                "date": date,
+                return None
+            return {
+                "title": cand["title"],
+                "source": cand["source"],
+                "date": cand.get("date") or "Recente",
                 "summary": summary,
-                "url": url,
-            })
+                "url": cand["url"],
+            }
+
+        completed_articles = []
+        with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
+            pending = list(candidates)
+            while pending and len(completed_articles) < target_count:
+                wave_size = target_count - len(completed_articles)
+                wave, pending = pending[:wave_size], pending[wave_size:]
+                # Each task gets a copy of the context so the LLM usage is still recorded for this request.
+                futures = [pool.submit(contextvars.copy_context().run, _process, cand) for cand in wave]
+                for future in futures:
+                    item = future.result()
+                    if item:
+                        completed_articles.append(item)
 
         if not completed_articles:
             return "Não foi possível extrair o conteúdo das notícias encontradas no momento."

@@ -299,3 +299,44 @@ def test_fetch_news_searches_only_the_requested_site(mocker):
     sources, topics, _ = search.call_args.args
     assert sources == [{"name": "poder360.com.br", "domain": "poder360.com.br"}]
     assert [t["name"] for t in topics] == ["principais notícias do dia"]
+
+
+def test_fetch_news_runs_searches_downloads_and_summaries_in_parallel(mock_db_path):
+    import time
+    from unittest.mock import patch
+
+    import database
+    from database import set_config
+    database.init_db()
+    set_config('PERM_WEB_SEARCH', 'true')
+
+    delay = 0.3
+    sources = [{"name": f"S{i}", "domain": f"s{i}.example"} for i in range(4)]
+    topics = [{"name": "t1"}, {"name": "t2"}]
+    cfg = {"sources": sources, "topics": topics, "max_news": 4, "summary_chars": 300}
+
+    def fake_search(query):
+        time.sleep(delay)
+        n = abs(hash(query)) % 10_000
+        return [{"url": f"https://x.example/{n}-{i}", "title": f"Notícia {n}-{i}", "body": "resumo"}
+                for i in range(2)]
+
+    def fake_extract(url):
+        time.sleep(delay)
+        return "texto da matéria " * 20
+
+    def fake_summary(title, text, source, target_chars):
+        time.sleep(delay)
+        return f"Resumo de {title}"
+
+    start = time.monotonic()
+    with patch.object(news_tools, "_effective_config", return_value=cfg), \
+         patch.object(news_tools, "_search_one", side_effect=fake_search), \
+         patch.object(news_tools, "_extract_article_text", side_effect=fake_extract), \
+         patch.object(news_tools, "_summarize_article_with_llm", side_effect=fake_summary):
+        result = fetch_news()
+    elapsed = time.monotonic() - start
+
+    assert result.count("🔗") == 4
+    # Serial would take 8 searches + 4 downloads + 4 summaries = 16 * 0.3s; parallel waves take far less.
+    assert elapsed < 8 * delay
