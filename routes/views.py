@@ -19,6 +19,7 @@ def login_page():
         token = request.form.get('token')
         correct_token = get_config('LOGIN_TOKEN')
         if token and token == correct_token:
+            session.permanent = True
             session['logged_in'] = True
             return redirect(url_for('views.dashboard_page'))
         else:

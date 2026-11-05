@@ -60,6 +60,8 @@ if platform.system() == 'Darwin' and getattr(subprocess, '_USE_POSIX_SPAWN', Fal
 
 import threading
 from dotenv import load_dotenv
+from datetime import timedelta
+
 from flask import Flask, request, redirect, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -110,6 +112,9 @@ if not secret:
     secret = secrets.token_hex(32)
     set_config('FLASK_SECRET_KEY', secret)
 app.secret_key = secret
+# Logins last 30 days. Without a lifetime the cookie is a browser-session cookie, which
+# phones drop as soon as the browser is closed or backgrounded.
+app.permanent_session_lifetime = timedelta(days=30)
 
 webhook_secret = get_config('WEBHOOK_SECRET')
 if not webhook_secret:

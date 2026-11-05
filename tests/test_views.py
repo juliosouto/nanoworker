@@ -292,3 +292,17 @@ def test_advanced_settings_agent_flow_card(client, monkeypatch):
     assert '<option value="auto" style="background: #1e1e2e; color: white;" selected>' in html
     assert 'id="agentEvaluatorModelSelect"' in html
     assert '<option value="cheap-model" style="background: #1e1e2e; color: white;" selected>' in html
+
+
+def test_login_cookie_survives_mobile_browser_restarts(client):
+    """The login cookie must have an expiry; a browser-session cookie is dropped when a phone closes the tab."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO app_config (key, value) VALUES ('LOGIN_TOKEN', 'supersecret')")
+    conn.commit()
+    conn.close()
+
+    response = client.post('/login', data={'token': 'supersecret'})
+    cookie = response.headers.get('Set-Cookie', '')
+    assert 'Expires=' in cookie or 'Max-Age=' in cookie
+    assert app.permanent_session_lifetime.days >= 30
