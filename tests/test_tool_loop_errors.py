@@ -251,6 +251,57 @@ class TestProviderBalanceRetry(unittest.TestCase):
         # 5 attempts -> only the first 4 wait (last attempt re-raises)
         self.assertEqual(mock_sleep_interruptible.call_count, 4)
 
+    _PROVIDER_429 = (
+        "Error calling LLM API: Error code: 429 - {'error': {'message': 'Provider returned error', "
+        "'code': 429, 'metadata': {'provider_name': 'Venice', 'is_byok': False}}}"
+    )
+
+    @patch("agent.openai_tools.sleep_interruptible", return_value=False)
+    def test_provider_429_retries_silently(self, mock_sleep_interruptible):
+        mock_client = MagicMock()
+        calls = {"n": 0}
+
+        def _create(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise Exception(self._PROVIDER_429)
+            return self._final_answer_response()
+
+        mock_client.chat.completions.create.side_effect = _create
+        on_complete = MagicMock()
+
+        with patch("agent.openai_tools.get_config", side_effect=_mock_config), \
+             patch("agent.openai_tools.insert_feedback") as mock_feedback:
+            result = agent_runner.execute_openai_compatible_llm(
+                mock_client, "qwen/qwen3.7-flash", [], {}, "hello",
+                MagicMock(), "session-1", "msg-1", "messages_out",
+                on_complete=on_complete,
+            )
+
+        self.assertEqual(result, "final answer")
+        self.assertEqual(mock_client.chat.completions.create.call_count, 2)
+        mock_sleep_interruptible.assert_called_once_with(10.0)
+        # Silent: no wait message reaches the chat or the database.
+        on_complete.assert_not_called()
+        mock_feedback.assert_not_called()
+
+    @patch("agent.openai_tools.sleep_interruptible", return_value=False)
+    def test_provider_429_persistent_raises_after_all_retries(self, mock_sleep_interruptible):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception(self._PROVIDER_429)
+
+        with self.assertRaises(Exception) as ctx, \
+             patch("agent.openai_tools.get_config", side_effect=_mock_config), \
+             patch("agent.openai_tools.insert_feedback"):
+            agent_runner.execute_openai_compatible_llm(
+                mock_client, "qwen/qwen3.7-flash", [], {}, "hello",
+                MagicMock(), "session-1", "msg-1", "messages_out",
+            )
+
+        self.assertIn("429", str(ctx.exception))
+        self.assertEqual(mock_client.chat.completions.create.call_count, 5)
+        self.assertEqual(mock_sleep_interruptible.call_count, 4)
+
     @patch("agent.openai_tools.sleep_interruptible", return_value=False)
     def test_own_insufficient_credits_not_retried(self, mock_sleep_interruptible):
         # A genuine 402 about the user's own account balance cannot be fixed by a
@@ -303,6 +354,16 @@ class TestProviderBalanceDetection(unittest.TestCase):
                       "'metadata': {'provider_name': 'GMICloud'}}}")
         e.code = 402
         self.assertTrue(_is_provider_balance_error(e))
+
+    def test_provider_429_detected(self):
+        from agent.openai_tools import _is_provider_rate_limit_error
+        e = self._err("Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429}}")
+        self.assertTrue(_is_provider_rate_limit_error(e))
+
+    def test_plain_429_quota_is_not_provider_429(self):
+        from agent.openai_tools import _is_provider_rate_limit_error
+        e = self._err("429 RESOURCE_EXHAUSTED. Quota exceeded.")
+        self.assertFalse(_is_provider_rate_limit_error(e))
 
     def test_429_is_not_provider_balance(self):
         e = self._err("429 RESOURCE_EXHAUSTED. Quota exceeded.")

@@ -30,6 +30,10 @@ _RATE_LIMIT_DEFAULT_WAIT = 30.0
 # provider. OpenRouter re-routes the request to another provider of the same
 # model, so this is much shorter than the 429 per-minute-quota wait.
 _PROVIDER_BALANCE_WAIT = 10.0
+# Wait before retrying a 429 that the upstream provider returned through OpenRouter
+# ("Error code: 429 - Provider returned error"). Retried silently: the user sees no
+# wait message, the chat just answers a few seconds later.
+_PROVIDER_RATE_LIMIT_WAIT = 10.0
 
 
 def _is_provider_balance_error(error: Exception) -> bool:
@@ -73,6 +77,16 @@ def _is_rate_limit_error(error: Exception) -> bool:
         or "rate-limit" in lowered
         or "retry in" in lowered
     )
+
+
+def _is_provider_rate_limit_error(error: Exception) -> bool:
+    """True for a 429 returned by the upstream provider through OpenRouter, e.g.
+    ``Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429}}``.
+    Its text has no "quota" / "rate limit" wording, so _is_rate_limit_error misses it."""
+    error_str = str(error)
+    lowered = error_str.lower()
+    code = getattr(error, "code", None)
+    return ("429" in error_str or code == 429) and "provider returned error" in lowered
 
 
 # Back-off for 503 "model overloaded": 5s, 10s, 20s, 40s.
@@ -398,6 +412,7 @@ def execute_openai_compatible_llm(
                     response = client.chat.completions.create(**fallback_args)
                     break
 
+                silent = False
                 if _is_provider_balance_error(e):
                     if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
                         raise e  # retries exhausted: propagate for model fallback
@@ -406,6 +421,16 @@ def execute_openai_compatible_llm(
                         f"💳 Model provider temporarily unavailable (402, insufficient balance) on "
                         f"attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
                         f"Waiting {wait_seconds:.0f}s to retry..."
+                    )
+                elif _is_provider_rate_limit_error(e):
+                    if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
+                        raise e  # retries exhausted: propagate for model fallback
+                    wait_seconds = _PROVIDER_RATE_LIMIT_WAIT
+                    silent = True
+                    retry_feedback = ""
+                    logger.warning(
+                        "Provider 429 (attempt %d/%d), retrying in %.0fs without notifying the user",
+                        retry_attempt + 1, _API_CALL_MAX_RETRIES, wait_seconds,
                     )
                 elif _is_rate_limit_error(e):
                     if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
@@ -427,14 +452,15 @@ def execute_openai_compatible_llm(
                 else:
                     raise e
 
-                insert_feedback(
-                    cursor, table, session_id, message_in_id, retry_feedback
-                )
-                if on_complete:
-                    try:
-                        on_complete(retry_feedback)
-                    except Exception:
-                        pass
+                if not silent:
+                    insert_feedback(
+                        cursor, table, session_id, message_in_id, retry_feedback
+                    )
+                    if on_complete:
+                        try:
+                            on_complete(retry_feedback)
+                        except Exception:
+                            pass
                 if sleep_interruptible(wait_seconds):
                     raise StopRequestedError()
 
