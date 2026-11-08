@@ -13,23 +13,12 @@ services:
     environment:
       - HOST=0.0.0.0
     restart: unless-stopped
+    # Rede do Caddy da VPS (stack vps-proxy). Ela é criada por esse stack; sem ele no ar, o nanoworker não sobe.
+    networks:
+      - default
+      - proxy
 
-  caddy:
-    image: caddy:latest
-    container_name: nanoworker-proxy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      - DOMAIN=${DOMAIN:-localhost}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - nanoworker
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  proxy:
+    external: true
+    name: proxy
