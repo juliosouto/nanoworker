@@ -348,7 +348,9 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
     from agent.openai_tools import (
         _API_CALL_MAX_RETRIES,
         _PROVIDER_BALANCE_WAIT,
+        _PROVIDER_RATE_LIMIT_WAIT,
         _is_provider_balance_error,
+        _is_provider_rate_limit_error,
         _is_rate_limit_error,
         _is_service_unavailable_error,
         _unavailable_attempts,
@@ -381,14 +383,23 @@ def _invoke_with_retry(executor, payload, callback, cursor, table, session_id,
                     f"attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
                     f"Waiting {wait_seconds:.0f}s to retry..."
                 )
-            elif _is_rate_limit_error(e):
+            elif _is_provider_rate_limit_error(e) or _is_rate_limit_error(e):
+                # Every 429 is retried silently: the user never sees the error
+                # and the chat just answers a little later. Only the final
+                # failure (retries exhausted) propagates to the fallback chain.
                 if retry_attempt >= _API_CALL_MAX_RETRIES - 1:
                     raise e
-                wait_seconds = _wait_seconds_for_rate_limit(e)
-                retry_feedback = (
-                    f"⏳ Rate limit (429) on attempt {retry_attempt + 1}/{_API_CALL_MAX_RETRIES}. "
-                    f"Waiting {wait_seconds:.0f}s to retry..."
+                if _is_provider_rate_limit_error(e):
+                    wait_seconds = _PROVIDER_RATE_LIMIT_WAIT
+                else:
+                    wait_seconds = _wait_seconds_for_rate_limit(e)
+                logger.warning(
+                    "Rate limit 429 (attempt %d/%d), retrying silently in %.0fs: %s",
+                    retry_attempt + 1, _API_CALL_MAX_RETRIES, wait_seconds, e,
                 )
+                if sleep_interruptible(wait_seconds):
+                    raise StopRequestedError()
+                continue
             elif _is_service_unavailable_error(e):
                 attempts = _unavailable_attempts(_API_CALL_MAX_RETRIES)
                 if retry_attempt >= attempts - 1:

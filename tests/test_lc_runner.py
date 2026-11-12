@@ -485,7 +485,15 @@ class TestRunnerRetry(unittest.TestCase):
         out, feedback, _, attempts = self._run_with_invoke_errors([err])
         self.assertEqual(out, "OK")
         self.assertEqual(attempts, 2)  # one failure + one success
-        self.assertTrue(any("⏳ Rate limit (429)" in f for f in feedback))
+        # 429 is retried silently: no feedback message reaches the user.
+        self.assertFalse(any("429" in f for f in feedback))
+
+    def test_provider_429_retries_silently(self):
+        err = Exception("Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429}}")
+        out, feedback, _, attempts = self._run_with_invoke_errors([err])
+        self.assertEqual(out, "OK")
+        self.assertEqual(attempts, 2)
+        self.assertEqual(feedback, [])
 
     def test_provider_balance_retries_then_succeeds(self):
         err = Exception("402 provider returned error: Insufficient balance, provider_name=X")
