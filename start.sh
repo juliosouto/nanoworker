@@ -20,6 +20,7 @@ touch .env
 touch nanoworker.db
 mkdir -p .store
 mkdir -p models
+mkdir -p logs
 
 if [ -z "$PUBLIC_IP" ]; then
     echo "⚠️ Warning: Could not detect public IP. Starting in local mode (HTTP only)."

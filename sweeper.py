@@ -7,7 +7,8 @@ from datetime import datetime
 from agent_runner import process_message
 from database import get_db
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+from utils.app_logging import setup_logging
+setup_logging()
 logger = logging.getLogger('sweeper')
 
 # A scheduled run answers exactly this when it has nothing to tell the chat

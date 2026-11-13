@@ -10,6 +10,7 @@ services:
       - ./.store:/app/.store
       - ./models:/app/models
       - ./temp:/app/temp
+      - ./logs:/app/logs
     environment:
       - HOST=0.0.0.0
     restart: unless-stopped

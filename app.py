@@ -89,7 +89,8 @@ if 'FLASK_PORT' not in os.environ:
 
 load_dotenv(override=True)
 
-logging.basicConfig(level=logging.INFO)
+from utils.app_logging import setup_logging
+setup_logging()
 
 app = Flask(__name__)
 # Tell Flask it is behind a proxy (Caddy) so that request.remote_addr is the real client IP.
