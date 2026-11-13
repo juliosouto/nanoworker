@@ -304,7 +304,7 @@ def test_fetch_news_searches_only_the_requested_site(mocker):
     mocker.patch("tools.news_tools.get_tool_config", return_value={})
     search = mocker.patch.object(news_tools, "_search_news_candidates", return_value=[])
     fetch_news(topics="principais notícias do dia", sources="poder360.com.br")
-    sources, topics, _ = search.call_args.args
+    sources, topics = search.call_args.args[:2]
     assert sources == [{"name": "poder360.com.br", "domain": "poder360.com.br"}]
     assert [t["name"] for t in topics] == ["principais notícias do dia"]
 
@@ -407,3 +407,98 @@ def test_candidates_use_listing_when_topic_matches_and_search_otherwise(monkeypa
         "https://other.com/a",  # from DuckDuckGo, for the topic with no match
     ]
     assert searched == ["Economia site:g1.globo.com"]
+
+
+# --- date filter -----------------------------------------------------------
+
+from datetime import date as _Date, timedelta
+
+
+def test_parse_news_window_formats():
+    today = _Date(2026, 11, 13)
+    assert news_tools.parse_news_window("hoje", today) == (today, today)
+    assert news_tools.parse_news_window("Ontem", today) == (_Date(2026, 11, 12), _Date(2026, 11, 12))
+    assert news_tools.parse_news_window("últimos 3 dias", today) == (_Date(2026, 11, 11), today)
+    assert news_tools.parse_news_window("semana", today) == (_Date(2026, 11, 7), today)
+    assert news_tools.parse_news_window("2026-11-10", today) == (_Date(2026, 11, 10), _Date(2026, 11, 10))
+    assert news_tools.parse_news_window("", today) is None
+    with pytest.raises(ValueError):
+        news_tools.parse_news_window("amanhã talvez", today)
+
+
+def test_timelimit_matches_window_size():
+    today = news_tools._news_today()
+    assert news_tools._timelimit_for((today, today)) == "d"
+    assert news_tools._timelimit_for((today - timedelta(days=5), today)) == "w"
+    assert news_tools._timelimit_for((today - timedelta(days=20), today)) == "m"
+    assert news_tools._timelimit_for((today - timedelta(days=90), today)) is None
+    assert news_tools._timelimit_for(None) is None
+
+
+def test_publish_day_from_meta_jsonld_url_and_garbage():
+    meta_html = '<html><head><meta property="article:published_time" content="2026-11-13T10:00:00-03:00"></head></html>'
+    assert news_tools._page_publish_day(meta_html) == _Date(2026, 11, 13)
+    ld_html = '<script type="application/ld+json">{"datePublished": "2026-11-12T08:00:00Z"}</script>'
+    assert news_tools._page_publish_day(ld_html) == _Date(2026, 11, 12)
+    garbage = '<meta property="article:published_time" content="2000-01-01T00:00:00">'
+    assert news_tools._page_publish_day(garbage) is None
+    assert news_tools._url_day("https://g1.globo.com/tec/noticia/2026/11/13/algo.ghtml") == _Date(2026, 11, 13)
+    assert news_tools._url_day("https://g1.globo.com/tec/algo.ghtml") is None
+
+
+def test_fetch_news_keeps_only_articles_from_the_requested_day(mocker):
+    today = news_tools._news_today()
+    old = (today - timedelta(days=400)).isoformat()
+    fresh_url = f"https://g1.globo.com/tec/noticia/{today:%Y/%m/%d}/novidade.ghtml"
+    old_url = "https://g1.globo.com/tec/noticia/2022/06/01/antiga.ghtml"
+    untagged_url = "https://g1.globo.com/tec/sem-data-na-url-nem-no-html.ghtml"
+    mocker.patch("utils.security_utils.get_config", return_value="true")
+    mocker.patch("tools.news_tools.get_tool_config", return_value={
+        "settings": {"sources": [{"name": "G1", "domain": "g1.globo.com"}],
+                     "topics": [{"name": "Tecnologia", "keywords": ["tecnologia"]}],
+                     "max_news": 5, "summary_chars": 200}})
+    hits = [
+        {"title": "Notícia antiga de tecnologia", "url": old_url, "body": "", "date": old},
+        {"title": "Notícia nova de tecnologia", "url": fresh_url, "body": "", "date": ""},
+        {"title": "Notícia sem data de tecnologia", "url": untagged_url, "body": "", "date": ""},
+    ]
+    seen_timelimits = []
+    mocker.patch.object(news_tools, "_search_one", side_effect=lambda q, tl=None: seen_timelimits.append(tl) or hits)
+    mocker.patch.object(news_tools, "_site_listing", return_value=[])
+
+    def fake_extract(url):
+        if url == fresh_url:
+            news_tools._PAGE_DATES[url] = today
+        return "texto da matéria " * 20
+
+    mocker.patch.object(news_tools, "_extract_article_text", side_effect=fake_extract)
+    mocker.patch.object(news_tools, "_summarize_article_with_llm", side_effect=lambda t, x, s, c: f"Resumo de {t}")
+
+    out = fetch_news(date="hoje")
+    assert seen_timelimits and all(tl == "d" for tl in seen_timelimits)
+    assert "Notícia nova de tecnologia" in out
+    assert "Notícia antiga de tecnologia" not in out
+    assert "Notícia sem data de tecnologia" not in out
+    assert "Recente" not in out
+    assert f"{today:%d/%m/%Y}" in out
+
+
+def test_fetch_news_without_date_keeps_old_behaviour_without_recente_label(mocker):
+    mocker.patch("utils.security_utils.get_config", return_value="true")
+    mocker.patch("tools.news_tools.get_tool_config", return_value={
+        "settings": {"sources": [{"name": "G1", "domain": "g1.globo.com"}],
+                     "topics": [{"name": "Tecnologia", "keywords": ["tecnologia"]}],
+                     "max_news": 1, "summary_chars": 200}})
+    mocker.patch.object(news_tools, "_search_one", return_value=[
+        {"title": "Notícia sem data", "url": "https://g1.globo.com/x", "body": "", "date": ""}])
+    mocker.patch.object(news_tools, "_site_listing", return_value=[])
+    mocker.patch.object(news_tools, "_extract_article_text", return_value="texto da matéria " * 20)
+    mocker.patch.object(news_tools, "_summarize_article_with_llm", return_value="Resumo.")
+    out = fetch_news()
+    assert "📰 Notícia sem data — G1" in out
+    assert "Recente" not in out
+
+
+def test_fetch_news_invalid_date_returns_error(mocker):
+    mocker.patch("utils.security_utils.get_config", return_value="true")
+    assert fetch_news(date="semana passada de manhã").startswith("Erro ao gerar resumo")

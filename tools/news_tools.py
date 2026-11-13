@@ -15,12 +15,14 @@ import contextvars
 import json
 import logging
 import re
+import threading
 import unicodedata
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date as Date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -258,6 +260,141 @@ def _resolve_entries(names, configured, coerce):
 
 
 # ===========================================================================
+# Date window: "hoje", "ontem", "últimos N dias", or a single day (AAAA-MM-DD)
+# ===========================================================================
+# Brasília time (UTC-3, no daylight saving since 2019). The server may run in UTC,
+# so "hoje" is computed in this zone on every OS.
+_NEWS_TZ = timezone(timedelta(hours=-3))
+_MIN_PUBLISH_YEAR = 2005  # older dates are parser garbage (e.g. 2000-01-01 on error pages)
+_PAGE_DATES: Dict[str, Date] = {}  # article URL -> publish day, filled by the download step
+_PAGE_DATES_LOCK = threading.Lock()
+
+
+def _news_today() -> Date:
+    return datetime.now(_NEWS_TZ).date()
+
+
+def _safe_day(year: int, month: int, day: int) -> Optional[Date]:
+    try:
+        d = Date(year, month, day)
+    except ValueError:
+        return None
+    return d if d.year >= _MIN_PUBLISH_YEAR else None
+
+
+def parse_news_window(value: str, today: Optional[Date] = None):
+    """(first_day, last_day) for the date filter, or None when empty. Raises ValueError."""
+    v = _fold(value or "").strip()
+    if not v:
+        return None
+    today = today or _news_today()
+    if v in ("hoje", "today"):
+        return today, today
+    if v in ("ontem", "yesterday"):
+        day = today - timedelta(days=1)
+        return day, day
+    if v in ("semana", "week", "esta semana", "essa semana"):
+        return today - timedelta(days=6), today
+    m = re.fullmatch(r"(?:ultimos |ultimas |last )?(\d{1,2}) (?:dias?|days?)", v)
+    if m:
+        n = int(m.group(1))
+        if not 1 <= n <= 31:
+            raise ValueError("use de 1 a 31 dias")
+        return today - timedelta(days=n - 1), today
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            day = datetime.strptime(v, fmt).date()
+            return day, day
+        except ValueError:
+            pass
+    raise ValueError(
+        f"data inválida '{value}' (use hoje, ontem, últimos N dias ou AAAA-MM-DD)"
+    )
+
+
+def _window_label(window) -> str:
+    first, last = window
+    if first == last:
+        return f"o dia {first:%d/%m/%Y}"
+    return f"o período de {first:%d/%m/%Y} a {last:%d/%m/%Y}"
+
+
+def _timelimit_for(window) -> Optional[str]:
+    """DuckDuckGo time limit covering the window: d (day), w (week) or m (month)."""
+    if not window:
+        return None
+    back = (_news_today() - window[0]).days
+    if back <= 1:
+        return "d"
+    if back <= 7:
+        return "w"
+    if back <= 31:
+        return "m"
+    return None
+
+
+def _in_window(day: Optional[Date], window) -> bool:
+    """No window means everything passes. With a window, an unknown date does not."""
+    if window is None:
+        return True
+    return day is not None and window[0] <= day <= window[1]
+
+
+def _url_day(url: str) -> Optional[Date]:
+    """Day from a /AAAA/MM/DD/ path segment, which most news sites use."""
+    m = re.search(r"/((?:19|20)\d{2})/(\d{2})/(\d{2})(?:/|$)", url or "")
+    return _safe_day(*map(int, m.groups())) if m else None
+
+
+def _to_news_day(value: str) -> Optional[Date]:
+    """Day in Brasília time from an ISO timestamp or a date string."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(_NEWS_TZ)
+        return _safe_day(dt.year, dt.month, dt.day)
+    except ValueError:
+        pass
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", text)
+    return _safe_day(*map(int, m.groups())) if m else None
+
+
+def _page_publish_day(html: str) -> Optional[Date]:
+    """Publication day of an article page: meta tags, JSON-LD, then trafilatura."""
+    soup = BeautifulSoup(html, "html.parser")
+    for meta in soup.find_all("meta"):
+        key = (meta.get("property") or meta.get("name") or meta.get("itemprop") or "").lower()
+        if key in ("article:published_time", "og:published_time", "pubdate", "publishdate",
+                   "datepublished", "parsely-pub-date", "dc.date"):
+            day = _to_news_day(meta.get("content", ""))
+            if day:
+                return day
+    for found in re.finditer(r'"datePublished"\s*:\s*"([^"]+)"', html):
+        day = _to_news_day(found.group(1))
+        if day:
+            return day
+    try:
+        meta = trafilatura.extract_metadata(html)
+        if meta and meta.date:
+            return _to_news_day(meta.date)
+    except Exception:
+        pass
+    return None
+
+
+def _pop_page_date(url: str) -> Optional[Date]:
+    with _PAGE_DATES_LOCK:
+        return _PAGE_DATES.pop(url, None)
+
+
+def _format_day(day: Optional[Date]) -> str:
+    return day.strftime("%d/%m/%Y") if day else ""
+
+
+# ===========================================================================
 # STEP 1: Web Search for News Candidates (Live, No RSS dependency)
 # ===========================================================================
 def _fold(text: str) -> str:
@@ -307,6 +444,17 @@ def _site_listing(domain: str) -> List[Dict[str, str]]:
     return items
 
 
+_GENERIC_TOPIC_WORDS = {"principais", "noticias", "noticia", "news", "top", "geral", "hoje",
+                        "destaques", "manchetes", "ultimas", "dia", "brasil"}
+_TOPIC_STOPWORDS = {"do", "da", "de", "dos", "das", "o", "a", "os", "as", "em", "no", "na", "e"}
+
+
+def _is_generic_topic(name: str) -> bool:
+    """True for topics that ask for the day's news in general, not for one subject."""
+    words = [w for w in _fold(name).split() if w not in _TOPIC_STOPWORDS]
+    return bool(words) and all(w in _GENERIC_TOPIC_WORDS for w in words)
+
+
 def _listing_matches(items: List[Dict[str, str]], keywords: List[str]) -> List[Dict[str, str]]:
     """Listing items whose title or URL contains one of the topic keywords."""
     folded = [kw for kw in (_fold(k).strip() for k in keywords) if kw]
@@ -315,20 +463,23 @@ def _listing_matches(items: List[Dict[str, str]], keywords: List[str]) -> List[D
     return [item for item in items if any(kw in _fold(item["title"] + " " + item["url"]) for kw in folded)]
 
 
-def _search_one(query: str) -> list:
-    """DuckDuckGo News for ``query``, falling back to text search when the news tab is empty."""
+def _search_one(query: str, timelimit: Optional[str] = None) -> list:
+    """DuckDuckGo News for ``query``, falling back to text search when the news tab is empty.
+    ``timelimit`` (d/w/m) makes DuckDuckGo return only recent results."""
+    extra = {"timelimit": timelimit} if timelimit else {}
     try:
         with DDGS() as ddgs:
-            news_results = list(ddgs.news(query, max_results=5))
+            news_results = list(ddgs.news(query, max_results=5, **extra))
             if not news_results:
-                news_results = list(ddgs.text(query, max_results=5))
+                news_results = list(ddgs.text(query, max_results=5, **extra))
         return news_results
     except Exception as e:
         logger.debug("DDG search failed for query %r: %s", query, e)
         return []
 
 
-def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str, Any]], target_count: int) -> List[Dict[str, Any]]:
+def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str, Any]], target_count: int,
+                            window: Optional[tuple] = None) -> List[Dict[str, Any]]:
     """
     Finds candidate articles for each source and topic.
 
@@ -350,7 +501,8 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
         for topic in topics:
             topic_name = topic.get("name") if isinstance(topic, dict) else str(topic)
             keywords = (topic.get("keywords") if isinstance(topic, dict) else None) or [topic_name]
-            matched = _listing_matches(listing, keywords)
+            # A generic request ("principais notícias do dia") means the site's own top stories.
+            matched = listing if _is_generic_topic(topic_name) else _listing_matches(listing, keywords)
             if matched:
                 plan.append((source_name, topic_name, matched, None))
                 continue
@@ -358,8 +510,10 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
             plan.append((source_name, topic_name, None, query))
 
     queries = [p[3] for p in plan if p[3]]
+    timelimit = _timelimit_for(window)
+    search = (lambda q: _search_one(q, timelimit)) if timelimit else _search_one
     with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
-        results = iter(pool.map(_search_one, queries))
+        results = iter(pool.map(search, queries))
 
     candidates = []
     seen_urls = set()
@@ -378,6 +532,10 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
             if not url or not title:
                 continue
 
+            day = _to_news_day(date) or _url_day(url)
+            if not _in_window(day, window):
+                continue
+
             norm_title = re.sub(r"\W+", "", title.lower())
             if url in seen_urls or norm_title in seen_titles:
                 continue
@@ -391,6 +549,7 @@ def _search_news_candidates(sources: List[Dict[str, str]], topics: List[Dict[str
                 "source": source_name,
                 "topic": topic_name,
                 "date": date,
+                "day": day,
                 "snippet": snippet,
             })
 
@@ -412,6 +571,14 @@ def _extract_article_text(url: str) -> str:
     except Exception as e:
         logger.debug("Article download failed for %s: %s", url, e)
         return ""
+
+    try:
+        day = _page_publish_day(html)
+        if day:
+            with _PAGE_DATES_LOCK:
+                _PAGE_DATES[url] = day
+    except Exception as e:
+        logger.debug("Publish date not found for %s: %s", url, e)
 
     try:
         text = trafilatura.extract(html)
@@ -502,9 +669,9 @@ def _summarize_article_with_llm(title: str, text: str, source: str, target_chars
 # STEP 4: End-to-End Orchestrator
 # ===========================================================================
 @require_permission('PERM_WEB_SEARCH')
-def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_chars: int = 0) -> str:
+def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_chars: int = 0, date: str = "") -> str:
     """
-    Gets recent news as a ready-made digest (title, source, date, summary, link) to send as is; slow, so call it ONCE per request with all filters, and when the user names a site or subject pass sources (prefer the domain, e.g. 'g1.globo.com') and topics (e.g. 'principais notícias do dia'), otherwise it uses the configured ones (by default tech topics).
+    Gets news as a ready-made digest (title, source, date, summary, link) to send as is; slow, so call it ONCE per request with all filters. When the user asks for today's news, or news of any period, ALWAYS pass date (e.g. date="hoje"): only articles published in that period are kept, and the rest is discarded. When the user names a site or subject pass sources (prefer the domain, e.g. 'g1.globo.com') and topics (e.g. 'principais notícias do dia'), otherwise it uses the configured ones (by default tech topics).
 
     Args:
         topics: Comma-separated subjects to search for, e.g. "principais notícias
@@ -520,12 +687,17 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
             Empty = every configured source.
         max_news: Number of articles in the digest (1-30); 0 = configured amount.
         summary_chars: Approximate length of each summary (100-1000); 0 = configured.
+        date: Publication period to keep. "hoje" (today), "ontem" (yesterday),
+            "semana" or "últimos N dias" (e.g. "últimos 3 dias"), or one day as
+            AAAA-MM-DD. Empty = no date filter. Articles without a verifiable
+            publication date are dropped when a period is given.
 
     Returns:
         str: The digest, ready to be sent as is (or trimmed), or a message
         saying that no news was found.
     """
     try:
+        window = parse_news_window(date)
         cfg = _effective_config()
 
         if topics:
@@ -547,13 +719,19 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
         target_chars = cfg["summary_chars"]
 
         # STEP 1: Search live web candidates
-        candidates = _search_news_candidates(cfg["sources"], cfg["topics"], target_count)
+        candidates = _search_news_candidates(cfg["sources"], cfg["topics"], target_count, window)
         if not candidates:
+            if window:
+                return f"Nenhuma notícia encontrada para {_window_label(window)} nos tópicos e fontes pedidos."
             return "Nenhuma notícia recente foi encontrada para os tópicos e fontes configurados."
 
         # STEP 2 & 3: Scrape full text & summarize, in parallel waves until enough articles are done
         def _process(cand):
             content = _extract_article_text(cand["url"])
+            # The publication day read from the page is more reliable than the search hit's.
+            day = _pop_page_date(cand["url"]) or cand.get("day")
+            if not _in_window(day, window):
+                return None
             if not content or len(content.strip()) < 100:
                 # If scraping was blocked or empty, use snippet if available
                 content = cand.get("snippet", "")
@@ -565,7 +743,7 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
             return {
                 "title": cand["title"],
                 "source": cand["source"],
-                "date": cand.get("date") or "Recente",
+                "date": _format_day(day),
                 "summary": summary,
                 "url": cand["url"],
             }
@@ -584,6 +762,8 @@ def fetch_news(topics: str = "", sources: str = "", max_news: int = 0, summary_c
                         completed_articles.append(item)
 
         if not completed_articles:
+            if window:
+                return f"Nenhuma notícia de {_window_label(window)} foi confirmada pela data de publicação."
             return "Não foi possível extrair o conteúdo das notícias encontradas no momento."
 
         # STEP 4: Assemble Final Formatted Digest
