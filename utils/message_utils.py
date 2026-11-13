@@ -95,22 +95,23 @@ def _find_worker_mention_loose(content, worker_names):
     """
     Returns the name of the first worker mentioned in `content`, or None.
 
-    Looser matching used for audio transcriptions: the worker name may appear
-    anywhere in the snippet, with or without the "@" prefix.
+    Matching used for audio transcriptions: the "@name" form counts anywhere
+    in the snippet (whole word only), and the bare "name" only at its
+    beginning, like text messages. Substrings never match ("Mini" does not
+    match "minimalista" or "@Miniflores").
     """
     if not content or not worker_names:
         return None
-    snippet = content.lower()
     for name in worker_names:
-        name_clean = (name or "").strip().lower()
+        name_clean = (name or "").strip()
         if not name_clean:
             continue
         name_no_spaces = re.sub(r"\s+", "", name_clean)
-        for candidate in (name_clean, name_no_spaces):
-            if not candidate:
-                continue
-            if candidate in snippet or f"@{candidate}" in snippet:
-                return name_clean
+        for candidate in dict.fromkeys((name_clean, name_no_spaces)):
+            for require_at in (True, False):
+                pattern = _mention_regex(candidate, require_at=require_at)
+                if pattern and pattern.search(content):
+                    return name_clean
     return None
 
 

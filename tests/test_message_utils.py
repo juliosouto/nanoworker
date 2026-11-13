@@ -218,6 +218,18 @@ def test_should_process_wa_message_audio_no_mention_reason(mock_db, mocker):
     assert allowed is False
     assert reason == "no_worker_mentioned_in_transcription"
 
+def test_audio_bare_name_mid_transcription_does_not_mention(mock_db, mocker):
+    # A bare worker name in the middle of a transcription is not a mention.
+    mock_db.fetchone.return_value = {'bot_enabled': True, 'allowed_from': '*', 'allow_mentions': True, 'allow_audio_mentions': True}
+    mocker.patch('requests.get', side_effect=Exception)
+    mock_db.fetchall.return_value = [{'worker_name': 'nano'}]
+    mocker.patch('database.get_config', return_value='true')
+
+    audio_content = "Audio\n[Transcription]: hey can you ask nano this"
+    allowed, reason = should_process_wa_message('channel', 'user@s.whatsapp.net', audio_content, return_reason=True)
+    assert allowed is False
+    assert reason == "no_worker_mentioned_in_transcription"
+
 def test_should_process_wa_message_bot_disabled_reason(mock_db, mocker):
     mock_db.fetchone.return_value = {'bot_enabled': False}
     allowed, reason = should_process_wa_message('wa_web:me', 'user@s.whatsapp.net', return_reason=True)
