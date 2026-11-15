@@ -10,7 +10,7 @@ from channels.whatsapp_cloud import mark_as_read as wa_mark_read
 from channels.whatsapp_cloud import parse_incoming_messages as wa_parse
 from channels.whatsapp_cloud import send_text_message as wa_send
 from channels.whatsapp_cloud import verify_webhook as wa_verify
-from database import get_db
+from database import get_config, get_db
 from router import route_inbound_message
 from utils.message_utils import should_process_wa_message
 
@@ -82,7 +82,12 @@ def whatsapp_restart():
         worker_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'node_scripts', 'wa_worker.js')
         if os.path.exists(worker_script):
             logging.info("Restarting Baileys WhatsApp Worker (wa_worker.js)...")
-            state.worker_process = subprocess.Popen(['node', worker_script])
+            # Same environment as the boot start in app.py: without WEBHOOK_SECRET
+            # the worker's posts to /api/webhook are redirected to /login (302)
+            # and every inbound message is silently lost.
+            env = os.environ.copy()
+            env['WEBHOOK_SECRET'] = get_config('WEBHOOK_SECRET') or ''
+            state.worker_process = subprocess.Popen(['node', worker_script], env=env)
             return jsonify({"status": "success", "message": "Worker restarted"})
         else:
             return jsonify({"status": "error", "message": "Worker script not found"}), 404

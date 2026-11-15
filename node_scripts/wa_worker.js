@@ -628,7 +628,11 @@ async function connectToWhatsApp() {
                 await axios.post(FLASK_WEBHOOK_URL, payload, {
                     headers: {
                         'X-Webhook-Secret': process.env.WEBHOOK_SECRET || ''
-                    }
+                    },
+                    // A rejected secret makes Flask answer 302 -> /login. Following
+                    // it hid the failure (the login page returns 200), so treat any
+                    // redirect as an error and let the catch below log it.
+                    maxRedirects: 0
                 });
             } catch (err) {
                 console.error('Failed to forward message to Flask:', err.message);
