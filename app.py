@@ -223,4 +223,6 @@ if __name__ == '__main__':
     print("\033[1;32m" + f" 🚀 Access your panel at: http://{display_host}:{port}" + "\033[0m")
     print("═"*60 + "\n")
     
-    app.run(debug=True, host=host, port=port)
+    # use_reloader=False: o reloader reinicia o processo e deixa o wa_worker.js
+    # anterior órfão (ocupando a porta 3000), então cada reinício criava outro worker.
+    app.run(debug=True, use_reloader=False, host=host, port=port)
