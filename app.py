@@ -147,11 +147,12 @@ if not os.path.exists('static'):
 state.CURRENT_PROJECT_PATH = get_ide_config('CURRENT_PROJECT_PATH')
 
 # Start the Baileys background worker
-run_workers = False
-if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    run_workers = True
-elif __name__ != '__main__':
-    run_workers = True
+# The dev server runs without the reloader (app.run(use_reloader=False) below),
+# so this is the only process: it must start the workers both when run as
+# `python app.py` and when imported by a WSGI server. (Gating on
+# WERKZEUG_RUN_MAIN only made sense with the reloader's parent/child pair;
+# without the reloader it left `python app.py` with no worker at all.)
+run_workers = True
 
 # The test suite imports this module; NW_START_WORKERS=false keeps it from
 # starting the WhatsApp worker, the sweeper and the embeddings work.
