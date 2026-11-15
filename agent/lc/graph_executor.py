@@ -71,13 +71,19 @@ class GraphAgentExecutor:
         from langchain.agents import create_agent
         from langchain.agents.middleware import ToolErrorMiddleware
 
+        from agent.lc.text_tool_calls import text_tool_call_middleware
+
         self._graph = create_agent(
             model, tools, system_prompt=system_message,
-            middleware=[ToolErrorMiddleware(_tool_error_message)],
+            middleware=[
+                ToolErrorMiddleware(_tool_error_message),
+                text_tool_call_middleware(tools),
+            ],
         )
-        # One iteration = a model call that requests tools + the tools node,
-        # i.e. two graph steps; the final answer fits in the last model step.
-        self._recursion_limit = 2 * max_iterations
+        # One iteration = a model call that requests tools + the text tool-call
+        # middleware node + the tools node, i.e. three graph steps; the final
+        # answer fits in the last model step.
+        self._recursion_limit = 3 * max_iterations
         self._stopped_output = stopped_output
 
     def invoke(self, payload, config=None):

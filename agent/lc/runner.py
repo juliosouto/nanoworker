@@ -542,7 +542,11 @@ def run_langchain_llm(
             model, lc_tools, system_message, max_iterations, _STOPPED_OUTPUT
         )
     elif has_tools:
-        agent = create_tool_calling_agent(model, lc_tools, agent_prompt)
+        from agent.lc.text_tool_calls import TextToolCallBinder
+
+        # Some models (e.g. Qwen) write tool calls as text; the binder turns
+        # them into real tool calls instead of sending them to the user.
+        agent = create_tool_calling_agent(TextToolCallBinder(model), lc_tools, agent_prompt)
         executor = AgentExecutor(
             agent=agent,
             tools=lc_tools,
