@@ -13,6 +13,7 @@ import threading
 
 from flask import Blueprint, jsonify, request
 
+from agent.message_processor import VOICE_CHANNEL_PREFIX
 from database import get_all_workers_with_capabilities, get_config, set_config
 from router import route_inbound_message
 from security import limiter
@@ -23,7 +24,9 @@ voice_bp = Blueprint('api_voice', __name__)
 
 TOKEN_HASH_KEY = 'VOICE_API_TOKEN_HASH'
 REPLY_TIMEOUT_S = 120
-MAX_TEXT_CHARS = 2000
+# The app sends the conversation history it wants inside `text`, so the limit
+# is generous; the server keeps no history for this channel.
+MAX_TEXT_CHARS = 200_000
 MIN_WORDS, MAX_WORDS, DEFAULT_WORDS = 10, 300, 60
 CONVERSATION_RE = re.compile(r'^[a-z0-9-]{1,32}$')
 
@@ -134,7 +137,7 @@ def ask_worker():
     content = f"@{worker_name} {_style_block(max_words)}\n{text}"
     try:
         route_inbound_message(
-            channel_id=f"voice-{conversation}",
+            channel_id=f"{VOICE_CHANNEL_PREFIX}{conversation}",
             content=content,
             sender_id='voice-app',
             on_complete=on_complete,

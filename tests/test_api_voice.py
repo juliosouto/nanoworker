@@ -52,9 +52,21 @@ def test_unknown_worker_404(client, token):
 
 def test_text_too_long_413(client, token):
     with patch('routes.api_voice.get_all_workers_with_capabilities', return_value=WORKERS):
-        r = client.post('/api/voice/ask', json={'worker': 'Quen', 'text': 'a' * 2001},
+        r = client.post('/api/voice/ask', json={'worker': 'Quen', 'text': 'a' * (api_voice.MAX_TEXT_CHARS + 1)},
                         headers=_auth(token))
     assert r.status_code == 413
+
+
+def test_long_text_with_app_history_is_accepted(client, token):
+    # The app sends its own history inside `text`, so long texts must pass.
+    def fake_route(channel_id, content, sender_id, on_complete):
+        on_complete('ok')
+
+    with patch('routes.api_voice.get_all_workers_with_capabilities', return_value=WORKERS), \
+         patch('routes.api_voice.route_inbound_message', side_effect=fake_route):
+        r = client.post('/api/voice/ask', json={'worker': 'Quen', 'text': 'a ' * 20000},
+                        headers=_auth(token))
+    assert r.status_code == 200
 
 
 def test_ask_returns_limited_plain_reply(client, token):

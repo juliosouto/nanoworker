@@ -444,6 +444,24 @@ def _resolve_models(worker) -> list:
 # user (e.g. several images) are answered together by the last one.
 _DEBOUNCE_SECONDS = 2
 
+# Channel prefix of the voice API (routes/api_voice.py). Each voice request is
+# one synchronous HTTP call waiting for its own answer, so the debounce above
+# (made for WhatsApp bursts) does not apply: it only added latency, and a
+# newer request must never cancel an older one that is still waiting.
+VOICE_CHANNEL_PREFIX = 'voice-'
+
+
+def _is_voice_session(session_id) -> bool:
+    """True when the session belongs to the voice API channel."""
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT channel_id FROM sessions WHERE id = ?', (session_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
+    return bool(row and str(row['channel_id'] or '').startswith(VOICE_CHANNEL_PREFIX))
+
 
 def _superseded_by_newer_message(cursor, session_id, message_in_id, content) -> bool:
     """True when a newer message makes this one redundant.
@@ -506,14 +524,17 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 
         return message_out_id, stop_response
 
-    # Wait a bit to debounce multiple rapid messages (like multiple images from WhatsApp)
-    time.sleep(_DEBOUNCE_SECONDS)
+    # Wait a bit to debounce multiple rapid messages (like multiple images from
+    # WhatsApp). The voice API channel skips the wait and the batching.
+    is_voice = _is_voice_session(session_id)
+    if not is_voice:
+        time.sleep(_DEBOUNCE_SECONDS)
 
     conn = get_db()
     cursor = conn.cursor()
 
     # Check if a newer message of the same batch arrived while we slept
-    if _superseded_by_newer_message(cursor, session_id, message_in_id, original_content):
+    if not is_voice and _superseded_by_newer_message(cursor, session_id, message_in_id, original_content):
         cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
         conn.commit()
         conn.close()
@@ -549,7 +570,11 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     # timeline (last PROMPT_HISTORY_SIZE rows of the channel, including group
     # messages that never mentioned the worker). Other channels keep the
     # messages_in/messages_out rebuild, capped by message count.
-    if channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):
+    # The voice API channel gets no server-side history: the app sends, in the
+    # request text, whatever context it wants the model to see.
+    if is_voice:
+        history = []
+    elif channel_id and (channel_id.startswith('wa_web:') or channel_id.startswith('whatsapp:')):
         history = _build_history_from_message_history(cursor, channel_id, current_client_message_id)
     else:
         history = _build_history_from_db(cursor, session_id, message_in_id)
@@ -595,14 +620,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
     rag_query = content
 
     sender_label = None
-    if current_sender_id:
+    if current_sender_id and not is_voice:
         sender_label = current_sender_name or current_sender_id
         ids = current_sender_id
         if current_sender_id_alt:
             ids = f"{current_sender_id} / {current_sender_id_alt}"
         content = f"[Message from: {sender_label} ({ids})]\n{content}"
-    separate_context = history_in_system_prompt()
-    if not separate_context:
+    # Voice: the text goes to the model as sent, with no labels or markers.
+    separate_context = False if is_voice else history_in_system_prompt()
+    if not separate_context and not is_voice:
         content = mark_current_message(content, sender_label)
 
     # History RAG (WhatsApp channels): retrieve the most relevant vectorized
@@ -617,7 +643,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         else:
             content = _attach_history_rag(cursor, channel_id, rag_query, content, current_client_message_id)
 
-    content = apply_plan_before_execution(content)
+    if not is_voice:
+        content = apply_plan_before_execution(content)
 
     # The context size is bounded by message count (MESSAGE_HISTORY_SIZE) —
     # token-based slicing was removed. The last N timeline messages are the
@@ -659,16 +686,21 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         native_structured = lc_outputs.schema_enforced_by_api(
             _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
         )
-        system_prompt = build_system_prompt(
-            cursor=cursor,
-            worker=worker,
-            channel_id=channel_id,
-            include_tool_rules=include_tool_rules,
-            has_image=bool(current_image_base64),
-            worker_name=worker_name,
-            native_structured=native_structured,
-            models_to_try=models_to_try,
-        )
+        if is_voice:
+            # Voice: only the worker's own instructions. No standard/channel
+            # rules, JSON contract or user memory.
+            system_prompt = ((worker or {}).get('worker_instructions') or '').strip()
+        else:
+            system_prompt = build_system_prompt(
+                cursor=cursor,
+                worker=worker,
+                channel_id=channel_id,
+                include_tool_rules=include_tool_rules,
+                has_image=bool(current_image_base64),
+                worker_name=worker_name,
+                native_structured=native_structured,
+                models_to_try=models_to_try,
+            )
         if separate_context:
             context = context_for_system_prompt(history, rag_block)
             if context:
@@ -697,6 +729,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             thinking_level=worker.get('thinking_level') if worker else None,
             quantizations=worker.get('quantizations') if worker else None,
         )
+        if is_voice:
+            config_kwargs["plain_text_reply"] = True
 
         # Live status (one reply edited at each step) when the channel supports it.
         from agent import status as agent_status

@@ -292,6 +292,8 @@ def _route_llm_call(
                   message_in_id=message_in_id, api_key=api_key)
 
     local_kwargs = config_kwargs.copy()
+    # Voice API channel: the reply is plain text, with no JSON contract.
+    plain_text_reply = bool(local_kwargs.pop("plain_text_reply", False))
     # The worker's thinking level; internal calls (planner, evaluator...) have
     # none and run with thinking off.
     thinking_level = local_kwargs.pop("thinking_level", None)
@@ -331,7 +333,7 @@ def _route_llm_call(
     # the native structured-output patch that would otherwise break the call.
     # The graph flow (AGENT_FLOW=graph) has no contract either: the executor
     # answers in plain text and a separate evaluator judges it.
-    if not summarize and not lc_settings.graph_flow_enabled():
+    if not summarize and not plain_text_reply and not lc_settings.graph_flow_enabled():
         has_tools = bool(local_kwargs.get("tools"))
         if lc_outputs.structured_output_enabled(provider, model_name, has_tools=has_tools):
             local_kwargs.update(lc_outputs.build_structured_kwargs(provider))
