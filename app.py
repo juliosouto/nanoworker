@@ -134,6 +134,10 @@ def check_login():
     if secret and expected_secret and secret == expected_secret:
         return
 
+    # Voice API: autenticada pelo próprio token (ver routes/api_voice.py)
+    if request.path.startswith('/api/voice/'):
+        return
+
     login_enabled = get_config('LOGIN_ENABLED', 'false') == 'true'
     if login_enabled:
         if not session.get('logged_in'):
@@ -212,6 +216,9 @@ register_routes(app)
 
 # Exempt webhooks from CSRF protection as they are called by external services
 csrf.exempt(webhooks_bp)
+# Voice API: clientes não-browser, autenticados por Bearer token
+from routes.api_voice import voice_bp as _voice_bp
+csrf.exempt(_voice_bp)
 
 if __name__ == '__main__':
     host = os.environ.get('HOST', '127.0.0.1')

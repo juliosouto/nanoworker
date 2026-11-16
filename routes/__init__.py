@@ -8,6 +8,7 @@ def register_routes(app):
     from .api_messages import api_messages_bp
     from .api_permissions import api_permissions_bp
     from .api_settings import api_settings_bp
+    from .api_voice import voice_bp
     from .api_whatsapp import api_whatsapp_bp
     from .views import views_bp
     from .webhooks import webhooks_bp
@@ -24,3 +25,4 @@ def register_routes(app):
     app.register_blueprint(api_memory_bp)
     app.register_blueprint(api_messages_bp)
     app.register_blueprint(api_costs_bp)
+    app.register_blueprint(voice_bp)
