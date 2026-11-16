@@ -307,6 +307,13 @@ def _is_always_kept_tool(func) -> bool:
     return module.endswith(".whatsapp") or module.endswith(".scheduling")
 
 
+def _is_chat_tool(func) -> bool:
+    """Chat tools (pick, read and search a WhatsApp chat): always kept on the
+    voice agent channel, where picking the chat comes before searching it."""
+    module = getattr(func, "__module__", "")
+    return module.endswith((".chat_history", ".chat_search", ".whatsapp_group"))
+
+
 def _tool_query(history: list, message: str) -> str:
     """Text the tool relevance filter matches tools against.
 
@@ -745,6 +752,10 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
         # Build config kwargs
         tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
+        if tools and not session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX):
+            # Picking another chat is only for the voice agent channel.
+            from tools.chat_history import VOICE_AGENT_ONLY_TOOLS
+            tools = [t for t in tools if getattr(t, '__name__', '') not in VOICE_AGENT_ONLY_TOOLS]
         if tools:
             # TOOL_RELEVANCE_FILTER: keep the tools most similar to the plain
             # user message (local embeddings); fail-open to the full set.
@@ -752,7 +763,11 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
             tools = filter_tools_by_relevance(
                 tools, _tool_query(history, rag_query),
-                always_keep=_is_always_kept_tool if (is_wa_group or is_wa_private) else None,
+                always_keep=(
+                    _is_always_kept_tool if (is_wa_group or is_wa_private)
+                    else _is_chat_tool if session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX)
+                    else None
+                ),
             )
         thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
         show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True

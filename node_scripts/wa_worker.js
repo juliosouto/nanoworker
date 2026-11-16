@@ -788,6 +788,22 @@ app.post('/delete', async (req, res) => {
     }
 });
 
+// Groups the account participates in: [{ jid, subject }]. Read-only; used by
+// the voice agent channel to find a group by name.
+app.get('/groups', async (req, res) => {
+    if (!sock || !ownJid) {
+        return res.status(503).json({ error: 'WhatsApp client is not ready' });
+    }
+    try {
+        const groups = await sock.groupFetchAllParticipating();
+        const list = Object.values(groups || {}).map(g => ({ jid: g.id, subject: g.subject || '' }));
+        res.json({ groups: list });
+    } catch (err) {
+        console.error('Failed to list groups via Baileys:', err);
+        res.status(500).json({ error: 'Failed to list groups', details: err.message || err.toString() });
+    }
+});
+
 app.post('/group_subject', async (req, res) => {
     if (!sock || !ownJid) {
         return res.status(503).json({ error: 'WhatsApp client is not ready' });

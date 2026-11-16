@@ -5,10 +5,13 @@ can summarize them, list them point by point, find who said what, etc.
 Loaded on every OS (root tools/ directory). The source is message_history,
 which also records group messages that never mention the worker. Only the
 chat the agent is answering right now can be read: a request in one group
-never exposes another chat's messages.
+never exposes another chat's messages. The one exception is the voice agent
+API (the owner's phone app, /api/voice/agent): there the chat tools work on
+the chat picked with select_whatsapp_chat.
 """
 
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +19,20 @@ _DEFAULT_COUNT = 50
 _MAX_COUNT = 500
 _MAX_CHARS_PER_MESSAGE = 1000
 
+# Voice agent API (/api/voice/agent): the owner talks from the phone app, not
+# from a chat, so the chat tools work on a chat picked with
+# select_whatsapp_chat (kept per session, in memory, until another pick).
+# Same value as agent.message_processor.VOICE_AGENT_CHANNEL_PREFIX.
+VOICE_AGENT_CHANNEL_PREFIX = 'voiceagent-'
+# Tools offered only on the voice agent channel.
+VOICE_AGENT_ONLY_TOOLS = ('list_whatsapp_chats', 'select_whatsapp_chat')
+_WA_PREFIXES = ('wa_web:', 'whatsapp:')
+_selected_chats = {}
+_selected_lock = threading.Lock()
 
-def _current_channel():
-    """(channel_id, id of the message being answered) for the current session."""
+
+def _session_channel():
+    """(session_id, channel_id) of the current session, or (None, None)."""
     from utils.session import current_session_id
 
     session_id = current_session_id.get()
@@ -29,14 +43,156 @@ def _current_channel():
     conn = get_db()
     try:
         session = conn.execute("SELECT channel_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    finally:
+        conn.close()
+    return session_id, (session["channel_id"] if session else None)
+
+
+def _is_voice_agent(channel) -> bool:
+    return str(channel or '').startswith(VOICE_AGENT_CHANNEL_PREFIX)
+
+
+def _current_channel():
+    """(channel_id, id of the message being answered) for the current session.
+
+    On the voice agent channel it is the chat picked with select_whatsapp_chat
+    (no message is being answered there), or (None, None) before a pick.
+    """
+    session_id, channel = _session_channel()
+    if not session_id:
+        return None, None
+    if _is_voice_agent(channel):
+        with _selected_lock:
+            return _selected_chats.get(session_id), None
+    from database import get_db
+
+    conn = get_db()
+    try:
         last = conn.execute(
             "SELECT client_message_id FROM messages_in WHERE session_id = ? ORDER BY rowid DESC LIMIT 1",
             (session_id,),
         ).fetchone()
     finally:
         conn.close()
-    channel = session["channel_id"] if session else None
     return channel, (last["client_message_id"] if last else None)
+
+
+def _group_subjects() -> dict:
+    """{group jid: subject} from the WhatsApp worker; {} when unavailable."""
+    try:
+        import requests
+
+        res = requests.get('http://127.0.0.1:3000/groups', timeout=5)
+        if res.status_code == 200:
+            return {g.get('jid'): g.get('subject') or '' for g in res.json().get('groups', []) if g.get('jid')}
+    except Exception as e:
+        logger.warning(f"Could not list WhatsApp groups: {e}")
+    return {}
+
+
+def _jid(channel) -> str:
+    for prefix in _WA_PREFIXES:
+        if channel.startswith(prefix):
+            return channel[len(prefix):]
+    return channel
+
+
+def _known_chats():
+    """Every WhatsApp chat with stored messages, newest activity first:
+    [{'channel', 'jid', 'is_group', 'name', 'messages', 'last'}]."""
+    from database import get_db
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT channel_id, MAX(is_group) AS is_group, COUNT(*) AS messages, "
+            "MAX(msg_timestamp) AS last_ts, MAX(msg_date) AS last_date, "
+            "(SELECT h2.sender_name FROM message_history h2 WHERE h2.channel_id = h.channel_id "
+            " AND h2.from_me = 0 AND h2.is_bot = 0 AND COALESCE(h2.sender_name, '') != '' "
+            " ORDER BY h2.id DESC LIMIT 1) AS contact "
+            "FROM message_history h WHERE channel_id LIKE 'wa_web:%' OR channel_id LIKE 'whatsapp:%' "
+            "GROUP BY channel_id ORDER BY last_ts DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    subjects = _group_subjects() if any(r["is_group"] for r in rows) else {}
+    chats = []
+    for r in rows:
+        jid = _jid(r["channel_id"])
+        is_group = bool(r["is_group"]) or jid.endswith('@g.us')
+        name = subjects.get(jid) if is_group else r["contact"]
+        chats.append({
+            'channel': r["channel_id"], 'jid': jid, 'is_group': is_group,
+            'name': (name or '').strip(), 'messages': r["messages"], 'last': r["last_date"] or '',
+        })
+    return chats
+
+
+def _voice_agent_only_error() -> str:
+    return "Error: this tool only works on the voice agent channel (/api/voice/agent)."
+
+
+def list_whatsapp_chats(name: str = "") -> str:
+    """Lists the WhatsApp chats (groups and private chats) that have stored messages, so you can pick one with select_whatsapp_chat. Only on the voice agent channel.
+
+    Args:
+        name (str): Optional part of the group or contact name to filter by (case-insensitive).
+
+    Returns:
+        str: One line per chat ('group|private · name · jid · N messages · last date'), or an error message.
+    """
+    _, channel = _session_channel()
+    if not _is_voice_agent(channel):
+        return _voice_agent_only_error()
+    try:
+        chats = _known_chats()
+    except Exception as e:
+        logger.warning(f"Could not list chats: {e}")
+        return f"Error listing the chats: {e}"
+    needle = (name or "").strip().lower()
+    if needle:
+        chats = [c for c in chats if needle in c['name'].lower() or needle in c['jid'].lower()]
+    if not chats:
+        return "No WhatsApp chats found" + (f" matching '{name}'." if needle else ".")
+    lines = [f"{len(chats)} chat(s), most recent activity first:"]
+    for c in chats:
+        kind = "group" if c['is_group'] else "private"
+        lines.append(f"{kind} · {c['name'] or '(no name)'} · {c['jid']} · {c['messages']} messages · last {c['last']}")
+    return "\n".join(lines)
+
+
+def select_whatsapp_chat(chat: str) -> str:
+    """Picks the WhatsApp chat (group or private) that the chat tools (search_chat_history, read_chat_messages, rename_whatsapp_group, delete_whatsapp_messages) work on from now on in this conversation. Call it before those tools on the voice agent channel; call it again to switch chats. Only on the voice agent channel.
+
+    Args:
+        chat (str): The group or contact name (or part of it), or the JID/number shown by list_whatsapp_chats.
+
+    Returns:
+        str: The selected chat, or an error message (e.g. when the name matches several chats).
+    """
+    session_id, channel = _session_channel()
+    if not _is_voice_agent(channel):
+        return _voice_agent_only_error()
+    needle = (chat or "").strip().lower()
+    if not needle:
+        return "Error: chat is empty."
+    try:
+        chats = _known_chats()
+    except Exception as e:
+        logger.warning(f"Could not list chats: {e}")
+        return f"Error listing the chats: {e}"
+    exact = [c for c in chats if needle in (c['jid'].lower(), c['channel'].lower(), c['name'].lower())]
+    matches = exact or [c for c in chats if needle in c['name'].lower() or needle in c['jid'].lower()]
+    if not matches:
+        return f"Error: no chat matches '{chat}'. Use list_whatsapp_chats to see the chats."
+    if len(matches) > 1:
+        options = "; ".join(f"{c['name'] or '(no name)'} ({c['jid']})" for c in matches[:10])
+        return f"Error: '{chat}' matches {len(matches)} chats: {options}. Call again with the JID."
+    target = matches[0]
+    with _selected_lock:
+        _selected_chats[session_id] = target['channel']
+    kind = "group" if target['is_group'] else "private chat"
+    return f"Selected {kind} '{target['name'] or target['jid']}' ({target['jid']}). The chat tools now work on it."
 
 
 def _sender(row) -> str:
