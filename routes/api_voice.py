@@ -53,8 +53,9 @@ def _style_block(max_words: int) -> str:
 
 
 def _plain_for_speech(text: str) -> str:
-    """Remove markdown que o TTS leria em voz alta."""
+    """Remove markdown e tags (ex.: <audio>) que o TTS leria em voz alta."""
     text = re.sub(r'```.*?```', ' ', text, flags=re.S)
+    text = re.sub(r'</?[A-Za-z][^>]*>', ' ', text)
     text = re.sub(r'!\[[^\]]*\]\([^)]*\)', ' ', text)
     text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)
     text = re.sub(r'[*_`#>]+', '', text)
@@ -72,6 +73,16 @@ def _limit_words(text: str, max_words: int) -> str:
     if ends and ends[-1].start() + 1 > len(cut) * 0.5:
         return cut[:ends[-1].start() + 1]
     return cut.rstrip(',;:') + '.'
+
+
+@voice_bp.after_request
+def _cors(resp):
+    # O app de voz roda de um arquivo local (origem "null"). A autenticação é
+    # só pelo Bearer token; não há cookies, então liberar a origem é seguro.
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    return resp
 
 
 @voice_bp.route('/api/voice/workers', methods=['GET'])

@@ -99,6 +99,17 @@ def test_workers_list(client, token):
     assert r.get_json() == {'workers': ['Quen']}
 
 
+def test_cors_headers_on_voice_responses(client):
+    r = client.get('/api/voice/workers')
+    assert r.headers.get('Access-Control-Allow-Origin') == '*'
+    assert 'Authorization' in r.headers.get('Access-Control-Allow-Headers', '')
+
+
+def test_plain_for_speech_removes_tags():
+    out = api_voice._plain_for_speech("<audio>Agora fazem 25 graus.</audio>")
+    assert out == "Agora fazem 25 graus."
+
+
 def test_limit_words_cuts_at_sentence():
     text = "Uma duas tres quatro cinco seis sete. " + " ".join(["palavra"] * 30)
     out = api_voice._limit_words(text, 8)
