@@ -24,8 +24,9 @@ def db(mock_db_path):
     conn = database.get_db()
     conn.execute("INSERT INTO sessions (id, agent_id, channel_id) VALUES ('s-voice', 'agent-1', 'voice-default')")
     conn.execute("INSERT INTO sessions (id, agent_id, channel_id) VALUES ('s-web', 'agent-1', 'web-chat-1')")
-    # Earlier turns: the voice channel must not send them; web chat must.
-    for sess in ('s-voice', 's-web'):
+    conn.execute("INSERT INTO sessions (id, agent_id, channel_id) VALUES ('s-agent', 'agent-1', 'voiceagent-default')")
+    # Earlier turns: the voice channel must not send them; the others must.
+    for sess in ('s-voice', 's-web', 's-agent'):
         conn.execute("INSERT INTO messages_in (id, session_id, content, sender_id, processed) "
                      "VALUES (?, ?, 'pergunta antiga', 'voice-app', 2)", (f'old-{sess}', sess))
         conn.execute("INSERT INTO messages_out (id, session_id, in_reply_to, content) "
@@ -90,13 +91,30 @@ def test_real_voice_context(monkeypatch):
     assert text == 'Data e hora atuais: segunda-feira, 2026-11-16 09:05. Local do usuário: Recife, PE, BR.'
 
 
-def test_other_channels_keep_full_prompt_and_history(db):
-    call = _run('s-web')
+@pytest.mark.parametrize('session_id', ['s-web', 's-agent'])
+def test_other_channels_keep_full_prompt_and_history(db, session_id):
+    call = _run(session_id)
     assert call['config']['system_instruction'] == 'FULL PROMPT'
     assert 'plain_text_reply' not in call['config']
     assert call['history']  # earlier turns are sent
     assert 'Message from' in str(call['content'])
     call['build_prompt'].assert_called_once()
+
+
+class TestDeliverFinal:
+    def test_on_final_hook_gets_the_final_reply_only(self):
+        cb = MagicMock()
+        mp._deliver_final(cb, 'fim')
+        cb.on_final.assert_called_once_with('fim')
+        cb.assert_not_called()
+
+    def test_plain_callback_gets_the_final_reply(self):
+        got = []
+        mp._deliver_final(got.append, 'fim')
+        assert got == ['fim']
+
+    def test_no_callback(self):
+        mp._deliver_final(None, 'fim')  # no error
 
 
 class TestRouterPlainTextReply:

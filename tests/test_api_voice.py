@@ -131,3 +131,51 @@ def test_limit_words_cuts_at_sentence():
 def test_limit_words_adds_period_when_no_sentence_end():
     out = api_voice._limit_words(" ".join(["palavra"] * 30), 5)
     assert out == "palavra palavra palavra palavra palavra."
+
+
+# --- /api/voice/agent: the worker's full pipeline (tools, prompt, memory) ---
+
+def test_agent_requires_token(client):
+    r = client.post('/api/voice/agent', json={'worker': 'Quen', 'text': 'oi'})
+    assert r.status_code == 401
+
+
+def test_agent_validates_like_ask(client, token):
+    with patch('routes.api_voice.get_all_workers_with_capabilities', return_value=WORKERS):
+        r = client.post('/api/voice/agent', json={'worker': 'Nope', 'text': 'oi'}, headers=_auth(token))
+        assert r.status_code == 404
+        r = client.post('/api/voice/agent', json={'worker': 'Quen'}, headers=_auth(token))
+        assert r.status_code == 400
+
+
+def test_agent_uses_its_own_channel_and_returns_only_the_final_reply(client, token):
+    seen = {}
+
+    def fake_route(channel_id, content, sender_id, on_complete):
+        seen['channel'] = channel_id
+        seen['content'] = content
+        on_complete('⚙️ Executed tools: search_chat_history')  # intermediate: ignored
+        on_complete.on_final('**Achei** três mensagens sobre a viagem.')
+
+    with patch('routes.api_voice.get_all_workers_with_capabilities', return_value=WORKERS), \
+         patch('routes.api_voice.route_inbound_message', side_effect=fake_route):
+        r = client.post('/api/voice/agent', json={'worker': 'quen', 'text': 'busca a viagem', 'conversation': 'carro'},
+                        headers=_auth(token))
+    assert r.status_code == 200
+    assert r.get_json() == {'reply': 'Achei três mensagens sobre a viagem.', 'worker': 'Quen'}
+    assert seen['channel'] == 'voiceagent-carro'
+    assert seen['content'].startswith('@Quen ')
+    assert 'busca a viagem' in seen['content']
+
+
+def test_agent_timeout_504(client, token):
+    with patch('routes.api_voice.get_all_workers_with_capabilities', return_value=WORKERS), \
+         patch('routes.api_voice.route_inbound_message'), \
+         patch.object(api_voice, 'AGENT_REPLY_TIMEOUT_S', 0.01):
+        r = client.post('/api/voice/agent', json={'worker': 'Quen', 'text': 'oi'}, headers=_auth(token))
+    assert r.status_code == 504
+
+
+def test_agent_channel_is_not_the_lean_voice_channel():
+    from agent.message_processor import VOICE_AGENT_CHANNEL_PREFIX, VOICE_CHANNEL_PREFIX
+    assert not VOICE_AGENT_CHANNEL_PREFIX.startswith(VOICE_CHANNEL_PREFIX)

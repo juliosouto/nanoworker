@@ -449,6 +449,23 @@ _DEBOUNCE_SECONDS = 2
 # (made for WhatsApp bursts) does not apply: it only added latency, and a
 # newer request must never cancel an older one that is still waiting.
 VOICE_CHANNEL_PREFIX = 'voice-'
+# Channel prefix of the voice agent API (/api/voice/agent): the worker runs
+# with its full pipeline (system prompt, memory, tools, history); only the
+# debounce/batching is skipped, as above. Must not start with 'voice-'.
+VOICE_AGENT_CHANNEL_PREFIX = 'voiceagent-'
+
+
+def _deliver_final(on_complete, text):
+    """Final reply of process_message. A callback with an ``on_final`` hook
+    (the voice agent API) gets the final reply there, apart from the
+    intermediate feedback (tool results, plans) sent to the callback itself."""
+    on_final = getattr(on_complete, 'on_final', None)
+    target = on_final if callable(on_final) else on_complete
+    if target:
+        try:
+            target(text)
+        except Exception as e:
+            logger.error(f"on_complete callback failed: {e}")
 
 
 _WEEKDAYS_PT = ('segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira',
@@ -471,8 +488,8 @@ def _voice_context() -> str:
             f"{now.strftime('%Y-%m-%d %H:%M')}. Local do usuário: {location}.")
 
 
-def _is_voice_session(session_id) -> bool:
-    """True when the session belongs to the voice API channel."""
+def _session_channel(session_id) -> str:
+    """channel_id of the session ('' when unknown)."""
     conn = get_db()
     try:
         cursor = conn.cursor()
@@ -480,7 +497,7 @@ def _is_voice_session(session_id) -> bool:
         row = cursor.fetchone()
     finally:
         conn.close()
-    return bool(row and str(row['channel_id'] or '').startswith(VOICE_CHANNEL_PREFIX))
+    return str(row['channel_id'] or '') if row else ''
 
 
 def _superseded_by_newer_message(cursor, session_id, message_in_id, content) -> bool:
@@ -536,25 +553,22 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         except Exception as e:
             logger.error(f"Failed to save stop response to DB: {e}")
 
-        if on_complete:
-            try:
-                on_complete(stop_response)
-            except Exception as e:
-                logger.error(f"on_complete callback failed for stop command: {e}")
-                
+        _deliver_final(on_complete, stop_response)
         return message_out_id, stop_response
 
     # Wait a bit to debounce multiple rapid messages (like multiple images from
-    # WhatsApp). The voice API channel skips the wait and the batching.
-    is_voice = _is_voice_session(session_id)
-    if not is_voice:
+    # WhatsApp). The voice API channels skip the wait and the batching.
+    session_channel = _session_channel(session_id)
+    is_voice = session_channel.startswith(VOICE_CHANNEL_PREFIX)
+    is_sync_api = is_voice or session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX)
+    if not is_sync_api:
         time.sleep(_DEBOUNCE_SECONDS)
 
     conn = get_db()
     cursor = conn.cursor()
 
     # Check if a newer message of the same batch arrived while we slept
-    if not is_voice and _superseded_by_newer_message(cursor, session_id, message_in_id, original_content):
+    if not is_sync_api and _superseded_by_newer_message(cursor, session_id, message_in_id, original_content):
         cursor.execute('UPDATE messages_in SET processed = 2 WHERE id = ?', (message_in_id,))
         conn.commit()
         conn.close()
@@ -803,11 +817,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         except:
             pass
 
-    if on_complete:
-        try:
-            on_complete(mock_response)
-        except Exception as e:
-            logger.error(f"on_complete callback failed: {e}")
+    _deliver_final(on_complete, mock_response)
 
     return message_out_id, mock_response
 

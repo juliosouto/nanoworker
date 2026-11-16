@@ -13,7 +13,7 @@ import threading
 
 from flask import Blueprint, jsonify, request
 
-from agent.message_processor import VOICE_CHANNEL_PREFIX
+from agent.message_processor import VOICE_AGENT_CHANNEL_PREFIX, VOICE_CHANNEL_PREFIX
 from database import get_all_workers_with_capabilities, get_config, set_config
 from router import route_inbound_message
 from security import limiter
@@ -24,6 +24,8 @@ voice_bp = Blueprint('api_voice', __name__)
 
 TOKEN_HASH_KEY = 'VOICE_API_TOKEN_HASH'
 REPLY_TIMEOUT_S = 120
+# /agent runs tools, so it may take longer.
+AGENT_REPLY_TIMEOUT_S = 300
 # The app sends the conversation history it wants inside `text`, so the limit
 # is generous; the server keeps no history for this channel.
 MAX_TEXT_CHARS = 200_000
@@ -97,12 +99,12 @@ def list_voice_workers():
     return jsonify({"workers": names}), 200
 
 
-@voice_bp.route('/api/voice/ask', methods=['POST'])
-@limiter.limit("30 per minute")
-def ask_worker():
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
+def _parse_request():
+    """Validates the body shared by /ask and /agent.
 
+    Returns ((worker_name, text, conversation, max_words), None) or
+    (None, (response, status)).
+    """
     data = request.get_json(silent=True) or {}
     worker = (data.get('worker') or '').strip()
     text = (data.get('text') or '').strip()
@@ -111,20 +113,31 @@ def ask_worker():
     try:
         max_words = int(data.get('max_words', DEFAULT_WORDS))
     except (TypeError, ValueError):
-        return jsonify({"error": "max_words must be an integer"}), 400
+        return None, (jsonify({"error": "max_words must be an integer"}), 400)
     max_words = min(max(max_words, MIN_WORDS), MAX_WORDS)
 
     if not worker or not text:
-        return jsonify({"error": "worker and text are required"}), 400
+        return None, (jsonify({"error": "worker and text are required"}), 400)
     if len(text) > MAX_TEXT_CHARS:
-        return jsonify({"error": f"text exceeds {MAX_TEXT_CHARS} characters"}), 413
+        return None, (jsonify({"error": f"text exceeds {MAX_TEXT_CHARS} characters"}), 413)
     if not CONVERSATION_RE.match(conversation):
-        return jsonify({"error": "invalid conversation id"}), 400
+        return None, (jsonify({"error": "invalid conversation id"}), 400)
 
     known = {w.get('worker_name', '').lower(): w.get('worker_name') for w in get_all_workers_with_capabilities()}
     if worker.lower() not in known:
-        return jsonify({"error": "unknown worker"}), 404
-    worker_name = known[worker.lower()]
+        return None, (jsonify({"error": "unknown worker"}), 404)
+    return (known[worker.lower()], text, conversation, max_words), None
+
+
+@voice_bp.route('/api/voice/ask', methods=['POST'])
+@limiter.limit("30 per minute")
+def ask_worker():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    parsed, error = _parse_request()
+    if error:
+        return error
+    worker_name, text, conversation, max_words = parsed
 
     done = threading.Event()
     box = {}
@@ -150,6 +163,56 @@ def ask_worker():
         return jsonify({"error": "worker timeout"}), 504
 
     reply = _limit_words(_plain_for_speech(str(box.get('reply') or '')), max_words)
+    return jsonify({"reply": reply, "worker": worker_name}), 200
+
+
+class _FinalReply:
+    """on_complete for /agent: process_message sends the final reply to
+    ``on_final``; intermediate feedback (tool results, plans, retries) goes to
+    the call itself and is ignored, so the app only hears the answer."""
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.reply = None
+
+    def __call__(self, text):
+        logger.debug("voice agent: intermediate feedback ignored: %.80s", text)
+
+    def on_final(self, text):
+        self.reply = text
+        self.done.set()
+
+
+@voice_bp.route('/api/voice/agent', methods=['POST'])
+@limiter.limit("30 per minute")
+def ask_worker_agent():
+    """Same body as /ask, but the worker runs as it does on the other
+    channels: its system prompt, standard rules, user memory, tools, database
+    access and this conversation's server-side history."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    parsed, error = _parse_request()
+    if error:
+        return error
+    worker_name, text, conversation, max_words = parsed
+
+    callback = _FinalReply()
+    content = f"@{worker_name} {_style_block(max_words)}\n{text}"
+    try:
+        route_inbound_message(
+            channel_id=f"{VOICE_AGENT_CHANNEL_PREFIX}{conversation}",
+            content=content,
+            sender_id='voice-app',
+            on_complete=callback,
+        )
+    except Exception:
+        logger.exception("voice agent: failed to dispatch message")
+        return jsonify({"error": "dispatch failed"}), 500
+
+    if not callback.done.wait(AGENT_REPLY_TIMEOUT_S):
+        return jsonify({"error": "worker timeout"}), 504
+
+    reply = _limit_words(_plain_for_speech(str(callback.reply or '')), max_words)
     return jsonify({"reply": reply, "worker": worker_name}), 200
 
 
