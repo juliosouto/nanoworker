@@ -8,6 +8,9 @@ import pytest
 
 from agent import message_processor as mp
 
+# The real function, kept before the autouse fixture below patches it.
+_REAL_VOICE_CONTEXT = mp._voice_context
+
 WORKER = {
     'worker_name': 'Voz', 'worker_model': 'deepseek-chat', 'tools_enabled': 0,
     'worker_instructions': 'Seja breve.', 'show_tools_results': 0,
@@ -47,19 +50,44 @@ def _run(session_id):
     return {'history': args[0], 'config': args[1], 'content': args[2], 'build_prompt': bsp}
 
 
-def test_voice_sends_only_worker_instructions_and_text(db):
+CTX = 'Data e hora atuais: domingo, 2026-11-15 10:00. Local do usuário: Recife.'
+
+
+@pytest.fixture(autouse=True)
+def _fixed_context():
+    with patch.object(mp, '_voice_context', return_value=CTX):
+        yield
+
+
+def test_voice_sends_context_worker_instructions_and_text(db):
     call = _run('s-voice')
     assert call['history'] == []
-    assert call['config']['system_instruction'] == 'Seja breve.'
+    assert call['config']['system_instruction'] == f'{CTX}\n\nSeja breve.'
     assert call['config']['plain_text_reply'] is True
     assert call['content'] == ['que horas são?']
     call['build_prompt'].assert_not_called()
 
 
-def test_voice_without_instructions_has_no_system_prompt(db):
+def test_voice_without_instructions_still_has_context(db):
     with patch.dict(WORKER, {'worker_instructions': ''}):
         call = _run('s-voice')
-    assert 'system_instruction' not in call['config']
+    assert call['config']['system_instruction'] == CTX
+
+
+def test_real_voice_context(monkeypatch):
+    import datetime
+
+    import standard_prompts
+
+    class FakeDT(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 16, 9, 5)
+
+    monkeypatch.setattr(datetime, 'datetime', FakeDT)
+    monkeypatch.setattr(standard_prompts, '_get_user_location', lambda: 'Recife, PE, BR')
+    text = _REAL_VOICE_CONTEXT()
+    assert text == 'Data e hora atuais: segunda-feira, 2026-11-16 09:05. Local do usuário: Recife, PE, BR.'
 
 
 def test_other_channels_keep_full_prompt_and_history(db):

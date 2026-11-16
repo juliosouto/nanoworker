@@ -451,6 +451,26 @@ _DEBOUNCE_SECONDS = 2
 VOICE_CHANNEL_PREFIX = 'voice-'
 
 
+_WEEKDAYS_PT = ('segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira',
+                'sexta-feira', 'sábado', 'domingo')
+
+
+def _voice_context() -> str:
+    """Current date, time and user location for the voice channel prompt
+    (the same sources the full prompt uses)."""
+    import datetime
+
+    import standard_prompts
+
+    now = datetime.datetime.now()
+    try:
+        location = standard_prompts._get_user_location()
+    except Exception:
+        location = "Unknown"
+    return (f"Data e hora atuais: {_WEEKDAYS_PT[now.weekday()]}, "
+            f"{now.strftime('%Y-%m-%d %H:%M')}. Local do usuário: {location}.")
+
+
 def _is_voice_session(session_id) -> bool:
     """True when the session belongs to the voice API channel."""
     conn = get_db()
@@ -687,9 +707,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
         )
         if is_voice:
-            # Voice: only the worker's own instructions. No standard/channel
-            # rules, JSON contract or user memory.
-            system_prompt = ((worker or {}).get('worker_instructions') or '').strip()
+            # Voice: current date/time/location plus the worker's own
+            # instructions. No standard/channel rules, JSON contract or memory.
+            instructions = ((worker or {}).get('worker_instructions') or '').strip()
+            system_prompt = _voice_context()
+            if instructions:
+                system_prompt = f"{system_prompt}\n\n{instructions}"
         else:
             system_prompt = build_system_prompt(
                 cursor=cursor,
