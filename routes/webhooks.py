@@ -362,6 +362,26 @@ def _handle_inbound_safely(data):
         logging.exception("Background webhook processing failed")
 
 
+def save_extra_images(data):
+    """Saves the other images of a batch (several WhatsApp photos sent under
+    one caption, see the Baileys worker) and returns them as
+    [{"path": "path:...", "mime_type": ...}], or None when there are none."""
+    extras = data.get('extra_images')
+    if not isinstance(extras, list):
+        return None
+    from utils.file_utils import save_base64_attachment
+    saved = []
+    for idx, item in enumerate(extras, start=2):
+        if not isinstance(item, dict) or not item.get('image_base64'):
+            continue
+        mime_type = item.get('mimetype') or 'image/jpeg'
+        ext = 'png' if 'png' in mime_type else 'webp' if 'webp' in mime_type else 'jpg'
+        path = save_base64_attachment(item['image_base64'], f'image_{idx}.{ext}')
+        if path:
+            saved.append({"path": path, "mime_type": mime_type})
+    return saved or None
+
+
 def _handle_inbound(data):
     """Processes one inbound message; returns (response body, status code)."""
     content = data['content']
@@ -451,6 +471,7 @@ def _handle_inbound(data):
     file_path = save_webhook_attachment(data)
     file_mime_type = data.get('file_mime_type')
     file_name = data.get('file_name')
+    extra_attachments = save_extra_images(data)
 
     # If current message doesn't have an attachment but quoted message does, use quoted attachment
     quoted_media_kind = None
@@ -510,7 +531,8 @@ def _handle_inbound(data):
         file_mime_type=file_mime_type,
         file_name=file_name,
         on_complete=on_complete,
-        client_message_id=data.get('message_id')
+        client_message_id=data.get('message_id'),
+        extra_attachments=extra_attachments,
     )
 
     # 5. Response

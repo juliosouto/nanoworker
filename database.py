@@ -725,6 +725,13 @@ def init_db():
     except sqlite3.OperationalError as e:
         if "duplicate column name" not in str(e).lower():
             pass
+    # JSON list of the other images sent together with this message (one
+    # WhatsApp caption for several photos): [{"path": ..., "mime_type": ...}].
+    try:
+        cursor.execute("ALTER TABLE messages_in ADD COLUMN extra_attachments TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            pass
 
     # Messages Out Table (Outbound DB equivalent)
     cursor.execute('''

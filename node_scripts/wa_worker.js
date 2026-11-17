@@ -282,6 +282,341 @@ function messageFlow(context, agentConfig) {
 }
 // ----------------------------------------
 
+// --- Image batches ---
+// WhatsApp delivers N photos sent together as N separate messages, usually with
+// the caption (and the worker mention) on only one of them. Images are held per
+// chat+sender until none arrives for IMAGE_BATCH_WINDOW_MS, then forwarded as
+// ONE message carrying every image, so the caption applies to all of them.
+// Without a worker mention in any caption the batch is dropped, as before.
+const IMAGE_BATCH_WINDOW_MS = parseInt(process.env.IMAGE_BATCH_WINDOW_MS || '3000', 10);
+const IMAGE_BATCH_MAX = parseInt(process.env.IMAGE_BATCH_MAX || '20', 10);
+const imageBatches = new Map(); // key -> { entries: [...], timer }
+
+function imageBatchKey(msg) {
+    const sender = msg.key.fromMe ? 'me' : (msg.key.participant || msg.key.remoteJid);
+    return `${msg.key.remoteJid}|${sender}`;
+}
+
+function queueImageForBatch(entry) {
+    const key = imageBatchKey(entry.msg);
+    let batch = imageBatches.get(key);
+    if (!batch) {
+        batch = { entries: [], timer: null };
+        imageBatches.set(key, batch);
+    }
+    if (batch.timer) clearTimeout(batch.timer);
+    batch.entries.push(entry);
+    const flush = () => flushImageBatch(key).catch(err => {
+        console.error('[Baileys Inbound] Failed to forward image batch:', err.message);
+    });
+    if (batch.entries.length >= IMAGE_BATCH_MAX) {
+        flush();
+        return;
+    }
+    batch.timer = setTimeout(flush, IMAGE_BATCH_WINDOW_MS);
+}
+
+async function flushImageBatch(key) {
+    const batch = imageBatches.get(key);
+    if (!batch) return;
+    imageBatches.delete(key);
+    if (batch.timer) clearTimeout(batch.timer);
+    const entries = batch.entries;
+    // The image whose caption mentions a worker (or any image in the
+    // note-to-self chat) leads the batch: its id, mention and quote are used.
+    const lead = entries.find(e => e.flow === 'process');
+    if (!lead) {
+        for (const e of entries) {
+            const preview = (e.textContent || '').slice(0, 80).replace(/\n/g, ' ');
+            console.error(`[Baileys Inbound] 📎 Dropped media message from ${e.msg.key.remoteJid} (not self, no worker mention; only text is kept in history). text="${preview}" nativeMention=${e.nativeMention} knownWorkers=[${e.agentConfig.workerNames.join(', ')}]`);
+        }
+        return;
+    }
+    if (entries.length > 1) {
+        console.log(`[Baileys Inbound] 🖼️ ${entries.length} images sent together from ${lead.msg.key.remoteJid}: forwarding as one message`);
+    }
+    await forwardInbound(lead.msg, lead.msgContent, lead.flow, lead.mentionedJids, lead.nativeMention, entries);
+}
+
+// Downloads the images of a batch, in the order they arrived. Images that fail
+// to download are skipped (and logged).
+async function downloadBatchImages(entries) {
+    const images = [];
+    for (const e of entries) {
+        try {
+            const buffer = await downloadMediaMessage(
+                e.msg,
+                'buffer',
+                { },
+                {
+                    logger: pino({ level: 'silent' }),
+                    reuploadRequest: sock.updateMediaMessage
+                }
+            );
+            images.push({
+                image_base64: buffer.toString('base64'),
+                mimetype: e.msgContent.imageMessage.mimetype || 'image/jpeg'
+            });
+            console.log(`[Baileys Inbound] Image downloaded, size: ${buffer.length} bytes`);
+        } catch (err) {
+            console.error('Failed to download image:', err.message);
+        }
+    }
+    return images;
+}
+
+// The text of a batch: its captions, in order. A single image without a
+// caption keeps the old '[Image received]' text.
+function imageBatchText(entries) {
+    const captions = entries
+        .map(e => (e.msgContent.imageMessage.caption || '').trim())
+        .filter(Boolean);
+    if (captions.length > 0) return captions.join('\n\n');
+    return entries.length === 1 ? '[Image received]' : `[${entries.length} images received]`;
+}
+
+// Downloads the media of one inbound message (or of an image batch) and
+// forwards it to the Flask webhook. imageBatch is the list of queued image
+// entries when msg leads a batch (see flushImageBatch), else null.
+async function forwardInbound(msg, msgContent, flow, mentionedJids, nativeMention, imageBatch) {
+    const remoteJid = msg.key.remoteJid;
+    const msgTimestamp = msg.messageTimestamp;
+
+    // In personal chat, msg.key.fromMe might be true for messages we send,
+    // or if we use WhatsApp Web, we can just treat the personal chat as the channel.
+    
+    // Extract text or audio
+    let text = '';
+    let audioBase64 = null;
+    let imageBase64 = null;
+    let mimeType = null;
+    let extraImages = [];
+
+    if (msgContent.conversation) {
+        text = msgContent.conversation;
+    } else if (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text) {
+        text = msgContent.extendedTextMessage.text;
+    } else if (msgContent.audioMessage) {
+        text = '[Audio received, waiting for transcription...]';
+        mimeType = msgContent.audioMessage.mimetype || 'audio/ogg';
+        try {
+            const buffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                { },
+                { 
+                    logger: pino({ level: 'silent' }),
+                    reuploadRequest: sock.updateMediaMessage
+                }
+            );
+            audioBase64 = buffer.toString('base64');
+            console.log(`[Baileys Inbound] Audio downloaded, size: ${buffer.length} bytes`);
+        } catch (err) {
+            console.error('Failed to download audio:', err.message);
+            text = '[Error downloading received audio]';
+        }
+    } else if (msgContent.imageMessage) {
+        // A single image is a batch of one: same text and payload as before.
+        const batch = imageBatch || [{ msg, msgContent }];
+        const images = await downloadBatchImages(batch);
+        text = imageBatchText(batch);
+        if (images.length === 0) {
+            text = '[Error downloading received image]';
+        } else {
+            imageBase64 = images[0].image_base64;
+            mimeType = images[0].mimetype;
+            extraImages = images.slice(1);
+        }
+    }
+
+    if (!text) return;
+
+    // Extract Quoted Message Information if present
+    const quotedInfo = extractQuotedInfo(msgContent);
+    let quotedText = null;
+    let quotedSender = null;
+    let quotedMsgId = null;
+    let quotedAudioBase64 = null;
+    let quotedImageBase64 = null;
+    let quotedMimeType = null;
+
+    if (quotedInfo && quotedInfo.quotedMessage) {
+        const qMsg = quotedInfo.quotedMessage;
+        quotedMsgId = quotedInfo.stanzaId || null;
+        quotedSender = quotedInfo.participant ? quotedInfo.participant.split('@')[0].split(':')[0] : null;
+        
+        quotedText = extractTextContent(qMsg);
+
+        // Check for media in quoted message
+        const qMsgWrapper = {
+            key: {
+                remoteJid: remoteJid,
+                id: quotedMsgId,
+                participant: quotedInfo.participant
+            },
+            message: qMsg
+        };
+
+        if (qMsg.audioMessage) {
+            quotedMimeType = qMsg.audioMessage.mimetype || 'audio/ogg';
+            try {
+                const buffer = await downloadMediaMessage(
+                    qMsgWrapper,
+                    'buffer',
+                    {},
+                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                );
+                quotedAudioBase64 = buffer.toString('base64');
+                console.log(`[Baileys Inbound] Quoted audio downloaded, size: ${buffer.length} bytes`);
+            } catch (err) {
+                console.error('Failed to download quoted audio:', err.message);
+                // Explicit marker so the backend/model knows the quoted media is
+                // unavailable instead of silently forwarding an empty quoted
+                // message (which made small models hallucinate an open() call
+                // trying to "read" the audio they could not see).
+                quotedText = '[Quoted audio - transcription unavailable: media download failed]';
+            }
+        } else if (qMsg.imageMessage) {
+            quotedMimeType = qMsg.imageMessage.mimetype || 'image/jpeg';
+            try {
+                const buffer = await downloadMediaMessage(
+                    qMsgWrapper,
+                    'buffer',
+                    {},
+                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                );
+                quotedImageBase64 = buffer.toString('base64');
+                console.log(`[Baileys Inbound] Quoted image downloaded, size: ${buffer.length} bytes`);
+            } catch (err) {
+                console.error('Failed to download quoted image:', err.message);
+            }
+        } else if (qMsg.videoMessage) {
+            quotedMimeType = qMsg.videoMessage.mimetype || 'video/mp4';
+            try {
+                const buffer = await downloadMediaMessage(
+                    qMsgWrapper,
+                    'buffer',
+                    {},
+                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                );
+                quotedImageBase64 = buffer.toString('base64');
+                console.log(`[Baileys Inbound] Quoted video downloaded, size: ${buffer.length} bytes`);
+            } catch (err) {
+                console.error('Failed to download quoted video:', err.message);
+            }
+        } else if (qMsg.documentMessage) {
+            quotedMimeType = qMsg.documentMessage.mimetype || 'application/octet-stream';
+            try {
+                const buffer = await downloadMediaMessage(
+                    qMsgWrapper,
+                    'buffer',
+                    {},
+                    { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                );
+                quotedImageBase64 = buffer.toString('base64');
+                console.log(`[Baileys Inbound] Quoted document downloaded, size: ${buffer.length} bytes`);
+            } catch (err) {
+                console.error('Failed to download quoted document:', err.message);
+            }
+        }
+    }
+
+    // Use the FULL remoteJid (including the '@lid' / '@g.us' / '@s.whatsapp.net' suffix)
+    // as the channel ID. This preserves the correct addressing mode so the agent can
+    // later reply to the exact chat (group vs private LID chat vs note-to-self).
+    // Only the device suffix (e.g. ':3' in multi-device sessions) is stripped.
+    const channelIdBase = remoteJid.split(':')[0];
+    let actualSenderJid = msg.key.participant || msg.key.remoteJid;
+    if (msg.key.fromMe && ownJid) {
+        actualSenderJid = ownJid;
+    }
+    const senderId = actualSenderJid.split('@')[0].split(':')[0];
+
+    // Extract alt identifier (LID↔PN mapping) when available
+    let altSenderJid = null;
+    if (msg.key.fromMe && ownJid) {
+        // For own messages, use ownLid as the alt identifier
+        altSenderJid = ownLid || null;
+    } else if (msg.key.participant) {
+        altSenderJid = msg.key.participantAlt || null;
+    } else {
+        altSenderJid = msg.key.remoteJidAlt || null;
+    }
+    const senderIdAlt = altSenderJid ? altSenderJid.split('@')[0].split(':')[0] : null;
+
+    console.log(`[Baileys Inbound] ${senderId} (alt: ${senderIdAlt || 'none'}) (in ${channelIdBase}): ${text}`);
+
+    try {
+        const payload = {
+            channel_id: `wa_web:${channelIdBase}`,
+            sender_id: senderId,
+            sender_id_alt: senderIdAlt,
+            sender_name: msg.pushName || '',
+            sender_jid: actualSenderJid,
+            sender_jid_alt: altSenderJid,
+            remote_jid: remoteJid,
+            content: text,
+            message_id: msg.key.id,
+            // Original WhatsApp epoch (falls back to now) so the backend
+            // can store real date/hour/minute/second metadata.
+            msg_timestamp: msgTimestamp || Math.floor(Date.now() / 1000),
+            from_me: msg.key.fromMe === true
+        };
+        // Text without a worker mention: the backend only records it
+        // into message_history and must NOT run the agent pipeline.
+        if (flow === 'history_only') {
+            payload.history_only = true;
+        }
+        // Forward the native mention info so the backend can also decide
+        // that a worker was mentioned (the text alone does not contain
+        // the worker name when the user picks it from the "@" list).
+        if (mentionedJids.length > 0) {
+            payload.mentioned_jid = mentionedJids;
+            payload.native_mention = nativeMention;
+        }
+        if (audioBase64) {
+            payload.audio_base64 = audioBase64;
+            payload.mimetype = mimeType;
+        }
+        if (imageBase64) {
+            payload.image_base64 = imageBase64;
+            payload.mimetype = mimeType;
+        }
+        // The other images of the batch: the caption applies to all of them.
+        if (extraImages.length > 0) {
+            payload.extra_images = extraImages;
+        }
+        if (quotedText) {
+            payload.quoted_text = quotedText;
+        }
+        if (quotedSender) {
+            payload.quoted_sender = quotedSender;
+        }
+        if (quotedMsgId) {
+            payload.quoted_msg_id = quotedMsgId;
+        }
+        if (quotedAudioBase64) {
+            payload.quoted_audio_base64 = quotedAudioBase64;
+            payload.quoted_mimetype = quotedMimeType;
+        }
+        if (quotedImageBase64) {
+            payload.quoted_image_base64 = quotedImageBase64;
+            payload.quoted_mimetype = quotedMimeType;
+        }
+        await axios.post(FLASK_WEBHOOK_URL, payload, {
+            headers: {
+                'X-Webhook-Secret': process.env.WEBHOOK_SECRET || ''
+            },
+            // A rejected secret makes Flask answer 302 -> /login. Following
+            // it hid the failure (the login page returns 200), so treat any
+            // redirect as an error and let the catch below log it.
+            maxRedirects: 0
+        });
+    } catch (err) {
+        console.error('Failed to forward message to Flask:', err.message);
+    }
+}
+
 async function connectToWhatsApp() {
     const logger = pino({ level: 'silent' });
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -387,6 +722,18 @@ async function connectToWhatsApp() {
             };
 
             const flow = messageFlow(context, agentConfig);
+
+            // Images are grouped per chat+sender: several photos sent together
+            // with the caption on one of them reach the worker as ONE message
+            // carrying all the images (see queueImageForBatch).
+            if (msgType === 'image') {
+                queueImageForBatch({ msg, msgContent, flow, mentionedJids, nativeMention, textContent, agentConfig });
+                continue;
+            }
+            // Any other message from the same sender in the same chat flushes
+            // its pending images first, so the order of messages is kept.
+            await flushImageBatch(imageBatchKey(msg));
+
             if (!flow) {
                 // Log dropped messages explicitly so silent filtering is observable
                 // instead of disappearing without a trace. Text drops used to be
@@ -402,241 +749,7 @@ async function connectToWhatsApp() {
                 continue;
             }
 
-            // In personal chat, msg.key.fromMe might be true for messages we send,
-            // or if we use WhatsApp Web, we can just treat the personal chat as the channel.
-            
-            // Extract text or audio
-            let text = '';
-            let audioBase64 = null;
-            let imageBase64 = null;
-            let mimeType = null;
-
-            if (msgContent.conversation) {
-                text = msgContent.conversation;
-            } else if (msgContent.extendedTextMessage && msgContent.extendedTextMessage.text) {
-                text = msgContent.extendedTextMessage.text;
-            } else if (msgContent.audioMessage) {
-                text = '[Audio received, waiting for transcription...]';
-                mimeType = msgContent.audioMessage.mimetype || 'audio/ogg';
-                try {
-                    const buffer = await downloadMediaMessage(
-                        msg,
-                        'buffer',
-                        { },
-                        { 
-                            logger: pino({ level: 'silent' }),
-                            reuploadRequest: sock.updateMediaMessage
-                        }
-                    );
-                    audioBase64 = buffer.toString('base64');
-                    console.log(`[Baileys Inbound] Audio downloaded, size: ${buffer.length} bytes`);
-                } catch (err) {
-                    console.error('Failed to download audio:', err.message);
-                    text = '[Error downloading received audio]';
-                }
-            } else if (msgContent.imageMessage) {
-                text = msgContent.imageMessage.caption || '[Image received]';
-                mimeType = msgContent.imageMessage.mimetype || 'image/jpeg';
-                try {
-                    const buffer = await downloadMediaMessage(
-                        msg,
-                        'buffer',
-                        { },
-                        { 
-                            logger: pino({ level: 'silent' }),
-                            reuploadRequest: sock.updateMediaMessage
-                        }
-                    );
-                    imageBase64 = buffer.toString('base64');
-                    console.log(`[Baileys Inbound] Image downloaded, size: ${buffer.length} bytes`);
-                } catch (err) {
-                    console.error('Failed to download image:', err.message);
-                    text = '[Error downloading received image]';
-                }
-            }
-
-            if (!text) continue;
-
-            // Extract Quoted Message Information if present
-            const quotedInfo = extractQuotedInfo(msgContent);
-            let quotedText = null;
-            let quotedSender = null;
-            let quotedMsgId = null;
-            let quotedAudioBase64 = null;
-            let quotedImageBase64 = null;
-            let quotedMimeType = null;
-
-            if (quotedInfo && quotedInfo.quotedMessage) {
-                const qMsg = quotedInfo.quotedMessage;
-                quotedMsgId = quotedInfo.stanzaId || null;
-                quotedSender = quotedInfo.participant ? quotedInfo.participant.split('@')[0].split(':')[0] : null;
-                
-                quotedText = extractTextContent(qMsg);
-
-                // Check for media in quoted message
-                const qMsgWrapper = {
-                    key: {
-                        remoteJid: remoteJid,
-                        id: quotedMsgId,
-                        participant: quotedInfo.participant
-                    },
-                    message: qMsg
-                };
-
-                if (qMsg.audioMessage) {
-                    quotedMimeType = qMsg.audioMessage.mimetype || 'audio/ogg';
-                    try {
-                        const buffer = await downloadMediaMessage(
-                            qMsgWrapper,
-                            'buffer',
-                            {},
-                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                        );
-                        quotedAudioBase64 = buffer.toString('base64');
-                        console.log(`[Baileys Inbound] Quoted audio downloaded, size: ${buffer.length} bytes`);
-                    } catch (err) {
-                        console.error('Failed to download quoted audio:', err.message);
-                        // Explicit marker so the backend/model knows the quoted media is
-                        // unavailable instead of silently forwarding an empty quoted
-                        // message (which made small models hallucinate an open() call
-                        // trying to "read" the audio they could not see).
-                        quotedText = '[Quoted audio - transcription unavailable: media download failed]';
-                    }
-                } else if (qMsg.imageMessage) {
-                    quotedMimeType = qMsg.imageMessage.mimetype || 'image/jpeg';
-                    try {
-                        const buffer = await downloadMediaMessage(
-                            qMsgWrapper,
-                            'buffer',
-                            {},
-                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                        );
-                        quotedImageBase64 = buffer.toString('base64');
-                        console.log(`[Baileys Inbound] Quoted image downloaded, size: ${buffer.length} bytes`);
-                    } catch (err) {
-                        console.error('Failed to download quoted image:', err.message);
-                    }
-                } else if (qMsg.videoMessage) {
-                    quotedMimeType = qMsg.videoMessage.mimetype || 'video/mp4';
-                    try {
-                        const buffer = await downloadMediaMessage(
-                            qMsgWrapper,
-                            'buffer',
-                            {},
-                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                        );
-                        quotedImageBase64 = buffer.toString('base64');
-                        console.log(`[Baileys Inbound] Quoted video downloaded, size: ${buffer.length} bytes`);
-                    } catch (err) {
-                        console.error('Failed to download quoted video:', err.message);
-                    }
-                } else if (qMsg.documentMessage) {
-                    quotedMimeType = qMsg.documentMessage.mimetype || 'application/octet-stream';
-                    try {
-                        const buffer = await downloadMediaMessage(
-                            qMsgWrapper,
-                            'buffer',
-                            {},
-                            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                        );
-                        quotedImageBase64 = buffer.toString('base64');
-                        console.log(`[Baileys Inbound] Quoted document downloaded, size: ${buffer.length} bytes`);
-                    } catch (err) {
-                        console.error('Failed to download quoted document:', err.message);
-                    }
-                }
-            }
-
-            // Use the FULL remoteJid (including the '@lid' / '@g.us' / '@s.whatsapp.net' suffix)
-            // as the channel ID. This preserves the correct addressing mode so the agent can
-            // later reply to the exact chat (group vs private LID chat vs note-to-self).
-            // Only the device suffix (e.g. ':3' in multi-device sessions) is stripped.
-            const channelIdBase = remoteJid.split(':')[0];
-            let actualSenderJid = msg.key.participant || msg.key.remoteJid;
-            if (msg.key.fromMe && ownJid) {
-                actualSenderJid = ownJid;
-            }
-            const senderId = actualSenderJid.split('@')[0].split(':')[0];
-
-            // Extract alt identifier (LID↔PN mapping) when available
-            let altSenderJid = null;
-            if (msg.key.fromMe && ownJid) {
-                // For own messages, use ownLid as the alt identifier
-                altSenderJid = ownLid || null;
-            } else if (msg.key.participant) {
-                altSenderJid = msg.key.participantAlt || null;
-            } else {
-                altSenderJid = msg.key.remoteJidAlt || null;
-            }
-            const senderIdAlt = altSenderJid ? altSenderJid.split('@')[0].split(':')[0] : null;
-
-            console.log(`[Baileys Inbound] ${senderId} (alt: ${senderIdAlt || 'none'}) (in ${channelIdBase}): ${text}`);
-
-            try {
-                const payload = {
-                    channel_id: `wa_web:${channelIdBase}`,
-                    sender_id: senderId,
-                    sender_id_alt: senderIdAlt,
-                    sender_name: msg.pushName || '',
-                    sender_jid: actualSenderJid,
-                    sender_jid_alt: altSenderJid,
-                    remote_jid: remoteJid,
-                    content: text,
-                    message_id: msg.key.id,
-                    // Original WhatsApp epoch (falls back to now) so the backend
-                    // can store real date/hour/minute/second metadata.
-                    msg_timestamp: msgTimestamp || Math.floor(Date.now() / 1000),
-                    from_me: msg.key.fromMe === true
-                };
-                // Text without a worker mention: the backend only records it
-                // into message_history and must NOT run the agent pipeline.
-                if (flow === 'history_only') {
-                    payload.history_only = true;
-                }
-                // Forward the native mention info so the backend can also decide
-                // that a worker was mentioned (the text alone does not contain
-                // the worker name when the user picks it from the "@" list).
-                if (mentionedJids.length > 0) {
-                    payload.mentioned_jid = mentionedJids;
-                    payload.native_mention = nativeMention;
-                }
-                if (audioBase64) {
-                    payload.audio_base64 = audioBase64;
-                    payload.mimetype = mimeType;
-                }
-                if (imageBase64) {
-                    payload.image_base64 = imageBase64;
-                    payload.mimetype = mimeType;
-                }
-                if (quotedText) {
-                    payload.quoted_text = quotedText;
-                }
-                if (quotedSender) {
-                    payload.quoted_sender = quotedSender;
-                }
-                if (quotedMsgId) {
-                    payload.quoted_msg_id = quotedMsgId;
-                }
-                if (quotedAudioBase64) {
-                    payload.quoted_audio_base64 = quotedAudioBase64;
-                    payload.quoted_mimetype = quotedMimeType;
-                }
-                if (quotedImageBase64) {
-                    payload.quoted_image_base64 = quotedImageBase64;
-                    payload.quoted_mimetype = quotedMimeType;
-                }
-                await axios.post(FLASK_WEBHOOK_URL, payload, {
-                    headers: {
-                        'X-Webhook-Secret': process.env.WEBHOOK_SECRET || ''
-                    },
-                    // A rejected secret makes Flask answer 302 -> /login. Following
-                    // it hid the failure (the login page returns 200), so treat any
-                    // redirect as an error and let the catch below log it.
-                    maxRedirects: 0
-                });
-            } catch (err) {
-                console.error('Failed to forward message to Flask:', err.message);
-            }
+            await forwardInbound(msg, msgContent, flow, mentionedJids, nativeMention, null);
         }
     });
 }

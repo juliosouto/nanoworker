@@ -12,10 +12,14 @@ logger = logging.getLogger(__name__)
 # The '/new' chat command (deletes the channel's history) is disabled.
 ENABLE_NEW_COMMAND = False
 
-def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=None, sender_name=None, image_base64=None, file_mime_type=None, file_name=None, on_complete=None, client_message_id=None):
+def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=None, sender_name=None, image_base64=None, file_mime_type=None, file_name=None, on_complete=None, client_message_id=None, extra_attachments=None):
     """
     Finds/creates a session, writes to messages_in, and dispatches
     processing in a background thread. Returns immediately.
+
+    extra_attachments: the other images sent together with this message
+    (several WhatsApp photos under one caption), as a list of
+    {"path": "path:...", "mime_type": ...}; stored as JSON.
     """
     conn = get_db()
     cursor = conn.cursor()
@@ -66,6 +70,10 @@ def route_inbound_message(channel_id, content, sender_id=None, sender_id_alt=Non
         INSERT INTO messages_in (id, session_id, content, sender_id, sender_id_alt, sender_name, image_base64, file_mime_type, file_name, client_message_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (message_id, session_id, content, sender_id, sender_id_alt, sender_name, image_base64, file_mime_type, file_name, client_message_id))
+    if extra_attachments:
+        import json
+        cursor.execute('UPDATE messages_in SET extra_attachments = ? WHERE id = ?',
+                       (json.dumps(extra_attachments), message_id))
     conn.commit()
     
     from utils.message_utils import get_default_worker

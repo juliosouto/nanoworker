@@ -2,6 +2,7 @@
 Message processing entry points for WhatsApp/chat and IDE channels.
 These are the two main public functions consumed by router.py and sweeper.py.
 """
+import json
 import logging
 import re
 import time
@@ -507,6 +508,46 @@ def _session_channel(session_id) -> str:
     return str(row['channel_id'] or '') if row else ''
 
 
+def _extra_image_parts(client, cursor, message_in_id, has_main_image) -> list:
+    """Parts for the other images sent together with this message (several
+    WhatsApp photos under one caption, stored in messages_in.extra_attachments),
+    each followed by its file path, plus a note that the caption applies to
+    all of them. Fail-open: any problem returns [] and the message is answered
+    with its main image only."""
+    try:
+        cursor.execute('SELECT extra_attachments FROM messages_in WHERE id = ?', (message_in_id,))
+        row = cursor.fetchone()
+        raw = row['extra_attachments'] if row else None
+        if not isinstance(raw, str) or not raw:
+            return []
+        extras = json.loads(raw)
+        if not isinstance(extras, list):
+            return []
+        from utils.image_utils import upload_and_build_gemini_part
+        parts = []
+        for item in extras:
+            path = item.get('path') if isinstance(item, dict) else None
+            if not path:
+                continue
+            part, _ = upload_and_build_gemini_part(client, path, item.get('mime_type') or 'image/jpeg')
+            if not part:
+                continue
+            parts.append(part)
+            if path.startswith('path:'):
+                parts.append(f"[Attached Document File Path: {path[5:]}]")
+        if not parts:
+            return []
+        total = sum(1 for p in parts if not isinstance(p, str)) + (1 if has_main_image else 0)
+        parts.append(
+            f"[{total} images were sent together in this message: its text/caption "
+            "applies to all of them, so consider every image when answering]"
+        )
+        return parts
+    except Exception as e:
+        logger.error(f"Failed to load the extra images of {message_in_id}: {e}")
+        return []
+
+
 def _superseded_by_newer_message(cursor, session_id, message_in_id, content) -> bool:
     """True when a newer message makes this one redundant.
 
@@ -703,6 +744,12 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             cursor.execute("UPDATE messages_in SET gemini_file_uri = ? WHERE id = ?", (new_uri, message_in_id))
             conn.commit()
 
+    # Other images sent together with this one (several WhatsApp photos under
+    # one caption): they go right before the text, so the caption covers all.
+    extra_parts = _extra_image_parts(client, cursor, message_in_id, bool(current_image_base64))
+    if extra_parts:
+        send_content[-1:-1] = extra_parts
+
     if history and history[-1].role == 'user' and not separate_context:
         # Group messages sent since the last reply: they go in the same user
         # turn, labeled as context so the model does not answer them instead.
@@ -740,7 +787,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
                 worker=worker,
                 channel_id=channel_id,
                 include_tool_rules=include_tool_rules,
-                has_image=bool(current_image_base64),
+                has_image=bool(current_image_base64 or extra_parts),
                 worker_name=worker_name,
                 native_structured=native_structured,
                 models_to_try=models_to_try,
