@@ -24,6 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setupToggle('useRecipesToggle', 'useRecipesKnob');
     setupToggle('planBeforeExecutionToggle', 'planBeforeExecutionKnob');
     setupToggle('historyRagToggle', 'historyRagKnob');
+    setupToggle('decisionModelToggle', 'decisionModelKnob');
+    setupDecisionModel();
 
     const requireAtToggle = document.getElementById('requireAtToggle');
     if(requireAtToggle) requireAtToggle.addEventListener('change', autoSaveToggles);
@@ -153,10 +155,111 @@ function saveRagSources() {
     });
 }
 
+// --- Decision model (OpenRouter list) ---
+let decisionModels = null;
+
+function setupDecisionModel() {
+    const toggle = document.getElementById('decisionModelToggle');
+    const params = document.getElementById('decisionModelParams');
+    const select = document.getElementById('decisionModelSelect');
+    const search = document.getElementById('decisionModelSearch');
+    if (!toggle || !params || !select) return;
+
+    toggle.addEventListener('change', () => {
+        params.style.display = toggle.checked ? 'flex' : 'none';
+        if (toggle.checked && decisionModels === null) loadDecisionModels(false);
+        autoSaveToggles();
+    });
+    select.addEventListener('change', saveDecisionModel);
+    search?.addEventListener('input', renderDecisionModels);
+    document.getElementById('decisionModelRefresh')?.addEventListener('click', () => loadDecisionModels(true));
+
+    if (toggle.checked) loadDecisionModels(false);
+}
+
+function formatModelPrice(m) {
+    if (m.free) return /\(free\)/i.test(m.name) ? '' : 'free';
+    if (m.prompt_price == null || m.completion_price == null) return '';
+    return `$${m.prompt_price}/$${m.completion_price} per 1M`;
+}
+
+function loadDecisionModels(refresh) {
+    const status = document.getElementById('decisionModelStatus');
+    if (status) status.textContent = 'Loading the OpenRouter model list...';
+    fetch('/api/settings/decision_models' + (refresh ? '?refresh=1' : ''))
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('list failed')))
+        .then(data => {
+            decisionModels = data.models || [];
+            const params = document.getElementById('decisionModelParams');
+            if (params && data.selected !== undefined) params.dataset.selected = data.selected;
+            renderDecisionModels();
+        })
+        .catch(err => {
+            console.error(err);
+            if (status) status.textContent = 'Could not load the OpenRouter model list. Try Refresh.';
+            const select = document.getElementById('decisionModelSelect');
+            const selected = document.getElementById('decisionModelParams')?.dataset.selected || '';
+            if (select) {
+                select.innerHTML = '';
+                select.add(new Option(selected || 'No model selected', selected));
+            }
+        });
+}
+
+function renderDecisionModels() {
+    const select = document.getElementById('decisionModelSelect');
+    const status = document.getElementById('decisionModelStatus');
+    const selected = document.getElementById('decisionModelParams')?.dataset.selected || '';
+    if (!select || decisionModels === null) return;
+    const query = (document.getElementById('decisionModelSearch')?.value || '').trim().toLowerCase();
+    const shown = decisionModels.filter(m =>
+        !query || m.id.toLowerCase().includes(query) || m.name.toLowerCase().includes(query));
+
+    select.innerHTML = '';
+    select.add(new Option('Select a model...', ''));
+    // The saved model stays selectable even when filtered out or delisted.
+    if (selected && !shown.some(m => m.id === selected)) {
+        select.add(new Option(selected, selected));
+    }
+    shown.forEach(m => {
+        const price = formatModelPrice(m);
+        select.add(new Option(price ? `${m.name} (${price})` : m.name, m.id));
+    });
+    select.value = selected;
+    if (status) {
+        status.textContent = selected
+            ? `Selected: ${selected} · ${decisionModels.length} models available`
+            : `${decisionModels.length} models available. Choose one: without a model every message goes to the full agent.`;
+    }
+}
+
+function saveDecisionModel() {
+    const select = document.getElementById('decisionModelSelect');
+    const params = document.getElementById('decisionModelParams');
+    if (!select) return;
+    const model = select.value;
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision_model: model })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error('save failed');
+        if (params) params.dataset.selected = model;
+        renderDecisionModels();
+        showToast(model ? `Decision model saved: ${model}` : 'Decision model cleared.');
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('Error saving the decision model.');
+    });
+}
+
 function autoSaveToggles() {
     const requireAtPrefix = document.getElementById('requireAtToggle')?.checked;
     const useRecipesAsTools = document.getElementById('useRecipesToggle')?.checked;
     const planBeforeExecution = document.getElementById('planBeforeExecutionToggle')?.checked;
+    const decisionModelEnabled = document.getElementById('decisionModelToggle')?.checked;
     const autonomousMode = parseInt(document.getElementById('autonomousModeSlider')?.value) || 1;
     const historySizeMessages = parseInt(document.getElementById('historySizeInput')?.value);
     const historyRagEnabled = document.getElementById('historyRagToggle')?.checked;
@@ -173,6 +276,7 @@ function autoSaveToggles() {
             require_at_prefix: requireAtPrefix,
             use_recipes_as_tools: useRecipesAsTools,
             plan_before_execution: planBeforeExecution,
+            decision_model_enabled: decisionModelEnabled,
             autonomous_mode: autonomousMode,
             history_size_messages: isNaN(historySizeMessages) ? 10000 : historySizeMessages,
             history_rag_enabled: historyRagEnabled,

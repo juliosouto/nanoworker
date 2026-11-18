@@ -115,7 +115,8 @@ def save_settings():
         'agent_flow': 'AGENT_FLOW',
         'agent_planner': 'AGENT_PLANNER',
         'agent_evaluator_model': 'AGENT_EVALUATOR_MODEL',
-        'agent_planner_model': 'AGENT_PLANNER_MODEL'
+        'agent_planner_model': 'AGENT_PLANNER_MODEL',
+        'decision_model': 'DECISION_MODEL'
     }
 
     allowed_values = {
@@ -164,6 +165,7 @@ def save_settings():
         'tool_relevance_filter': 'TOOL_RELEVANCE_FILTER',
         'history_in_system_prompt': 'HISTORY_IN_SYSTEM_PROMPT',
         'plan_before_execution': 'PLAN_BEFORE_EXECUTION',
+        'decision_model_enabled': 'DECISION_MODEL_ENABLED',
         'block_ads': 'BLOCK_ADS'
     }
 
@@ -191,6 +193,19 @@ def save_settings():
         "saved": saved_keys,
         "ignored_unknown_keys": unknown_keys,
     }), 200
+
+@api_settings_bp.route('/api/settings/decision_models', methods=['GET'])
+def list_decision_models():
+    """OpenRouter text models for the decision model picker (Agent Behavior).
+    ?refresh=1 bypasses the one-hour cache."""
+    from agent.decision_model import list_openrouter_models
+
+    try:
+        models = list_openrouter_models(force=request.args.get('refresh') == '1')
+    except Exception as e:
+        logger.warning("Could not fetch the OpenRouter model list: %s", e)
+        return jsonify({"error": "Could not fetch the OpenRouter model list"}), 502
+    return jsonify({"models": models, "selected": get_config('DECISION_MODEL', '') or ''})
 
 @api_settings_bp.route('/api/settings/tools', methods=['POST'])
 def save_tool_setting():

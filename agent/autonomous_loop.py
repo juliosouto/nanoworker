@@ -162,7 +162,19 @@ def _parse_json_response(raw_response):
     return None
 
 
-def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None, show_plan_in_chat=True, worker_name=None):
+def _direct_answer_text(raw) -> str:
+    """The user-facing text of a direct reply: the llm_response of the
+    AgentResponse JSON contract when the model used it, else the raw text."""
+    from agent.lc import outputs as lc_outputs
+
+    agent_resp = lc_outputs.parse_agent_response(raw)
+    parsed = agent_resp.to_legacy_dict() if agent_resp is not None else _parse_json_response(raw)
+    if isinstance(parsed, dict) and isinstance(parsed.get("llm_response"), str):
+        return parsed["llm_response"]
+    return raw
+
+
+def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_try, cursor, session_id, message_in_id, is_ide, on_complete=None, show_plan_in_chat=True, worker_name=None, direct=False):
     """
     Executes the autonomous reflection loop that re-invokes the LLM
     when the response indicates the user's request is not yet satisfied.
@@ -182,6 +194,8 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
             When False, the plan is discarded silently and never reaches the user.
         worker_name (str, optional): The worker answering this message. A newer
             "<worker> /stop" stops it; a plain "/stop" stops every worker.
+        direct (bool): The decision model chose a direct reply: one model call
+            (no planner, evaluator or reflection rounds), its answer returned.
 
     Returns:
         str: The final response text.
@@ -218,6 +232,20 @@ def execute_autonomous_loop(history, config_kwargs, initial_content, models_to_t
 
     token = set_stop_check(_stop_requested)
     try:
+        if direct:
+            if _stop_requested():
+                _abort_with_stop_message()
+                return final_response
+            try:
+                raw = invoke_llm_with_fallback(history, config_kwargs, current_send_content, models_to_try, cursor, session_id, message_in_id, is_ide=is_ide, on_complete=on_complete)
+            except StopRequestedError:
+                _abort_with_stop_message()
+                return final_response
+            final_response = _direct_answer_text(raw)
+            if _stop_requested():
+                _abort_with_stop_message()
+            return final_response
+
         from agent.lc import settings as lc_settings
         if lc_settings.graph_flow_enabled():
             from agent.lc.flow import run_agent_flow

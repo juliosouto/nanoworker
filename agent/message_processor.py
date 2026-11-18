@@ -508,6 +508,40 @@ def _session_channel(session_id) -> str:
     return str(row['channel_id'] or '') if row else ''
 
 
+def _decide_direct_reply(worker, is_voice, sender_id, message, history, cursor, session_id,
+                         message_in_id, is_wa_group, is_wa_private, has_image=False) -> bool:
+    """True when the decision model says this message gets a direct reply
+    (no tools, no plan, one model call). False when the feature is off, the
+    worker has no tools anyway, the message is a voice or scheduled one, or
+    anything fails: the full agent runs, as before."""
+    try:
+        from agent.decision_model import ROUTE_DIRECT, decide_route, decision_settings
+
+        enabled, model = decision_settings()
+        if not enabled or not model or is_voice or sender_id == 'scheduler':
+            return False
+        if worker and not bool(worker.get('tools_enabled', 1)):
+            return False  # no tools: the agent already answers directly
+        tools = get_permitted_tools(
+            is_admin=_check_is_admin(sender_id), is_group=is_wa_group, is_direct=is_wa_private,
+        ) or []
+        tool_names = [getattr(t, '__name__', '') for t in tools if getattr(t, '__name__', '')]
+        last_reply = ""
+        for turn in reversed(history or []):
+            if getattr(turn, "role", None) == "model":
+                last_reply = " ".join(p.text for p in turn.parts if getattr(p, "text", None))
+                break
+        route = decide_route(
+            message, cursor, session_id, message_in_id, tool_names=tool_names,
+            last_reply=last_reply, images=1 if has_image else 0,
+        )
+        return route == ROUTE_DIRECT
+    except Exception as e:
+        # Includes a /stop during the call: the agent loop sees it next.
+        logger.warning(f"Decision model skipped for {message_in_id}: {e}")
+        return False
+
+
 def _extra_image_parts(client, cursor, message_in_id, has_main_image) -> list:
     """Parts for the other images sent together with this message (several
     WhatsApp photos under one caption, stored in messages_in.extra_attachments),
@@ -725,7 +759,15 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         else:
             content = _attach_history_rag(cursor, channel_id, rag_query, content, current_client_message_id)
 
-    if not is_voice:
+    # Decision model (Agent Behavior > Use Decision Model): a quick call decides
+    # whether this message needs the full agent or a direct reply without
+    # tools, plan or extra rounds. Off, or any failure, keeps the full agent.
+    direct_reply = _decide_direct_reply(
+        worker, is_voice, current_sender_id, rag_query, history, cursor, session_id,
+        message_in_id, is_wa_group, is_wa_private, has_image=bool(current_image_base64),
+    )
+
+    if not is_voice and not direct_reply:
         content = apply_plan_before_execution(content)
 
     # The context size is bounded by message count (MESSAGE_HISTORY_SIZE) —
@@ -763,6 +805,8 @@ def process_message(message_in_id, session_id, content, on_complete=None):
 
     try:
         tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
+        if direct_reply:
+            tools_enabled = False  # the decision model chose a direct reply
         is_admin = _check_is_admin(current_sender_id)
         include_tool_rules = tools_enabled
 
@@ -842,7 +886,7 @@ def process_message(message_in_id, session_id, content, on_complete=None):
             from agent.llm_usage import usage_worker
 
             with usage_worker(worker_name):
-                mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name)
+                mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name, direct=direct_reply)
         finally:
             if status_token is not None:
                 agent_status.reset_status_reporter(status_token)

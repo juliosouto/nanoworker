@@ -78,6 +78,42 @@
                     </label>
                 </div>
 
+                <div style="margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between;">
+                    <div style="flex: 1; margin-right: 16px;">
+                        <label
+                            style="display: block; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">Use Decision Model</label>
+                        <small style="display: block; margin-top: 2px; color: var(--text-muted);">Before each message, a quick model decides if it needs the full agent (tools, planning, extra rounds) or a direct reply with only the system prompt, memory and history. When unsure, or if the call fails, the full agent runs.</small>
+                    </div>
+                    <label
+                        style="position: relative; display: inline-block; width: 64px; height: 32px; cursor: pointer; flex-shrink: 0; margin-top: 2px;">
+                        <input type="checkbox" id="decisionModelToggle" {% if decision_model_enabled %}checked{% endif %}
+                            style="opacity: 0; width: 0; height: 0;">
+                        <span
+                            style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.15); border-radius: 32px; transition: 0.3s; width: 62px;"></span>
+                        <span
+                            style="position: absolute; content: ''; height: 26px; width: 26px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s;"
+                            id="decisionModelKnob"></span>
+                    </label>
+                </div>
+
+                <div id="decisionModelParams" data-selected="{{ decision_model }}"
+                    style="display: {% if decision_model_enabled %}flex{% else %}none{% endif %}; flex-direction: column; gap: 8px; margin: -4px 0 16px 0;">
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="search" id="decisionModelSearch" placeholder="Filter OpenRouter models..."
+                            style="flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                        <button type="button" id="decisionModelRefresh" title="Reload the list from OpenRouter"
+                            style="background: rgba(255,255,255,0.1); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 0.85rem; white-space: nowrap;">Refresh</button>
+                    </div>
+                    <select id="decisionModelSelect"
+                        style="width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; font-family: inherit; font-size: 0.85rem;">
+                        <option value="">Loading models...</option>
+                    </select>
+                    <small id="decisionModelStatus" style="color: var(--text-muted);"></small>
+                    {% if not openrouter_key_set %}
+                    <small style="color: #f59e0b;">No OpenRouter API key found in General settings: the decision model also uses the key of any OpenRouter model registered in LLM Config.</small>
+                    {% endif %}
+                </div>
+
                 <div style="margin-bottom: 16px; display: flex; flex-wrap: wrap; row-gap: 8px; align-items: center; justify-content: space-between;">
                     <div style="flex: 1 1 200px; margin-right: 16px;">
                         <label
