@@ -30,23 +30,45 @@ def _enable(database, model="openrouter/acme/router-mini"):
 
 
 # --------------------------------------------------------------------------
-# parse_route / decide_route
+# Decisions API request / parse_route / decide_route
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("raw,expected", [
-    ('{"route": "direct"}', "direct"),
-    ('```json\n{"route": "AGENT"}\n```', "agent"),
-    ('{"route": "maybe"}', None),
-    ("direct", None),
-    ("", None),
+def _answer(choice, probabilities=None, type_="choice"):
+    ans = {"type": type_, "choice": choice}
+    if probabilities is not None:
+        ans["probabilities"] = probabilities
+    return {"id": "d1", "model": "acme/router-mini", "answers": {"route": ans},
+            "usage": {"input_tokens": 120, "output_tokens": 0, "cost": 0.0000024}}
+
+
+def test_build_decision_request():
+    req = dm.build_decision_request("openrouter/acme/router-mini", "bom dia",
+                                    tool_names=["web_search"], last_reply="Oi", images=2)
+    assert req["model"] == "acme/router-mini"  # prefix stripped for the API
+    assert req["state"] == {"message": "bom dia", "attached_images": 2,
+                            "previous_reply": "Oi", "agent_tools": ["web_search"]}
+    question = req["questions"]["route"]
+    assert question["type"] == "choice"
+    assert set(question["criteria"]) == {"agent", "direct"}
+
+
+@pytest.mark.parametrize("response,expected", [
+    (_answer("direct"), "direct"),
+    (_answer("AGENT"), "agent"),
+    (_answer("direct", {"direct": 0.9, "agent": 0.1}), "direct"),
+    (_answer("direct", {"direct": 0.55, "agent": 0.45}), "agent"),  # not clear enough
+    (_answer("maybe"), None),
+    (_answer("direct", type_="noul"), None),
+    ({"answers": {}}, None),
+    ("not a dict", None),
     (None, None),
 ])
-def test_parse_route(raw, expected):
-    assert dm.parse_route(raw) == expected
+def test_parse_route(response, expected):
+    assert dm.parse_route(response) == expected
 
 
 def test_decide_route_off_never_calls_a_model(db):
-    with patch("agent.llm_router.route_llm_call") as call:
+    with patch("agent.decision_model.call_decisions_api") as call:
         assert dm.decide_route("oi", MagicMock(), "s", "m") == "agent"
         db.set_config("DECISION_MODEL_ENABLED", "true")  # enabled, no model
         assert dm.decide_route("oi", MagicMock(), "s", "m") == "agent"
@@ -56,31 +78,63 @@ def test_decide_route_off_never_calls_a_model(db):
 def test_decide_route_direct(db):
     _enable(db)
     db.set_config("OPENROUTER_API_KEY", "sk-config")
-    with patch("agent.llm_router.route_llm_call", return_value='{"route": "direct"}') as call:
+    with patch("agent.decision_model.call_decisions_api",
+               return_value=_answer("direct", {"direct": 0.92, "agent": 0.08})) as call:
         route = dm.decide_route("bom dia!", MagicMock(), "s", "m",
                                 tool_names=["web_search"], last_reply="Oi", images=1)
     assert route == "direct"
-    args, kwargs = call.call_args
-    assert args[0] == "openrouter/acme/router-mini"
-    assert args[2]["system_instruction"] == dm.DECISION_PROMPT
-    assert args[2]["fallback_api_key"] == "sk-config"
-    assert "bom dia!" in args[3] and "web_search" in args[3] and "[1 image(s) attached]" in args[3]
-    assert kwargs["summarize"] is True
+    payload, key = call.call_args.args
+    assert key == "sk-config"
+    assert payload["model"] == "acme/router-mini"
+    assert payload["state"]["message"] == "bom dia!"
+    conn = db.get_db()
+    row = conn.execute("SELECT stage, model, provider, input_tokens, cost FROM llm_calls").fetchone()
+    conn.close()
+    assert dict(row) == {"stage": "decision", "model": "openrouter/acme/router-mini",
+                         "provider": "openrouter", "input_tokens": 120, "cost": 0.0000024}
 
 
-@pytest.mark.parametrize("outcome", [RuntimeError("down"), "not json", '{"route": "x"}'])
+def test_decide_route_without_key_is_agent(db):
+    _enable(db)
+    with patch("agent.decision_model.call_decisions_api") as call:
+        assert dm.decide_route("oi", MagicMock(), "s", "m") == "agent"
+    call.assert_not_called()
+
+
+@pytest.mark.parametrize("outcome", [RuntimeError("HTTP 400"), {"answers": {}}, _answer("x")])
 def test_decide_route_fails_open_to_agent(db, outcome):
     _enable(db)
+    db.set_config("OPENROUTER_API_KEY", "sk-config")
     kwargs = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
-    with patch("agent.llm_router.route_llm_call", **kwargs):
+    with patch("agent.decision_model.call_decisions_api", **kwargs):
         assert dm.decide_route("pesquise o preço do dólar", MagicMock(), "s", "m") == "agent"
 
 
 def test_decide_route_empty_message_is_agent(db):
     _enable(db)
-    with patch("agent.llm_router.route_llm_call") as call:
+    with patch("agent.decision_model.call_decisions_api") as call:
         assert dm.decide_route("   ", MagicMock(), "s", "m") == "agent"
     call.assert_not_called()
+
+
+def test_call_decisions_api_posts_json():
+    opener = _urlopen_returning(_answer("agent"))
+    with patch("urllib.request.urlopen", opener):
+        out = dm.call_decisions_api({"model": "x"}, "sk-1")
+    assert out["answers"]["route"]["choice"] == "agent"
+    req = opener.call_args.args[0]
+    assert req.full_url == "https://openrouter.ai/api/alpha/decisions"
+    assert req.get_method() == "POST"
+    assert req.get_header("Authorization") == "Bearer sk-1"
+    assert json.loads(req.data) == {"model": "x"}
+
+
+def test_call_decisions_api_http_error_has_detail():
+    import urllib.error
+    err = urllib.error.HTTPError("u", 400, "Bad Request", {}, io.BytesIO(b'{"error":"bad model"}'))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(RuntimeError, match="HTTP 400.*bad model"):
+            dm.call_decisions_api({}, "k")
 
 
 # --------------------------------------------------------------------------
@@ -102,33 +156,21 @@ def test_openrouter_key_falls_back_to_config(db):
     assert dm.openrouter_api_key() == "sk-config"
 
 
-def test_route_llm_call_uses_fallback_key_for_unregistered_model():
-    from agent.llm_router import route_llm_call
-
-    conn, cur = MagicMock(), MagicMock()
-    cur.fetchone.return_value = None  # not in llm_config
-    conn.cursor.return_value = cur
-    with patch("agent.llm_router.lc_settings.stack_enabled", return_value=False), \
-         patch("database.get_db", return_value=conn), \
-         patch("agent.llm_providers.call_openrouter_llm", return_value="ok") as provider:
-        route_llm_call("openrouter/acme/router-mini", [], {"fallback_api_key": "sk-fb"}, "hi",
-                       MagicMock(), "s", "m", is_ide=False, summarize=True)
-    args = provider.call_args.args
-    assert args[8] == "sk-fb"
-    assert "fallback_api_key" not in args[2]  # never sent to the provider
-
-
 # --------------------------------------------------------------------------
-# OpenRouter model list
+# OpenRouter decision model list
 # --------------------------------------------------------------------------
 
 _MODELS_JSON = {"data": [
     {"id": "b/fast:free", "name": "B Fast (free)", "context_length": 8000,
-     "architecture": {"output_modalities": ["text"]},
+     "architecture": {"output_modalities": ["decisions"]}, "endpoints": ["/api/alpha/decisions"],
      "pricing": {"prompt": "0", "completion": "0"}},
-    {"id": "a/smart", "name": "A Smart", "architecture": {"output_modalities": ["text", "image"]},
-     "pricing": {"prompt": "0.0000005", "completion": "0.0000015"}},
-    {"id": "c/painter", "name": "C Painter", "architecture": {"output_modalities": ["image"]}},
+    {"id": "a/decider", "name": "A Decider", "architecture": {"output_modalities": ["decisions"]},
+     "endpoints": ["/api/alpha/decisions", "/api/alpha/extractions"],
+     "pricing": {"prompt": "0.000000042", "completion": "0"}},
+    {"id": "c/extract-only", "name": "C Extract", "architecture": {"output_modalities": ["decisions"]},
+     "endpoints": ["/api/alpha/extractions"]},
+    {"id": "d/no-endpoints", "name": "D Old", "architecture": {"output_modalities": ["decisions"]}},
+    {"id": "e/chat", "name": "E Chat", "architecture": {"output_modalities": ["text"]}},
     {"name": "no id"},
 ]}
 
@@ -139,16 +181,19 @@ def _urlopen_returning(payload):
     return MagicMock(return_value=resp)
 
 
-def test_list_openrouter_models_filters_and_formats():
-    with patch("urllib.request.urlopen", _urlopen_returning(_MODELS_JSON)):
+def test_list_decision_models_filters_and_formats():
+    opener = _urlopen_returning(_MODELS_JSON)
+    with patch("urllib.request.urlopen", opener):
         models = dm.list_openrouter_models()
-    assert [m["id"] for m in models] == ["openrouter/a/smart", "openrouter/b/fast:free"]
-    smart, fast = models
-    assert smart["prompt_price"] == 0.5 and smart["completion_price"] == 1.5 and not smart["free"]
+    assert "output_modalities=decisions" in opener.call_args.args[0].full_url
+    assert [m["id"] for m in models] == ["openrouter/a/decider", "openrouter/b/fast:free",
+                                         "openrouter/d/no-endpoints"]
+    decider, fast, _ = models
+    assert decider["prompt_price"] == 0.042 and decider["completion_price"] == 0 and not decider["free"]
     assert fast["free"] and fast["context_length"] == 8000
 
 
-def test_list_openrouter_models_cache_and_stale_fallback():
+def test_list_decision_models_cache_and_stale_fallback():
     opener = _urlopen_returning(_MODELS_JSON)
     with patch("urllib.request.urlopen", opener):
         first = dm.list_openrouter_models()
@@ -158,7 +203,7 @@ def test_list_openrouter_models_cache_and_stale_fallback():
         assert dm.list_openrouter_models(force=True) == first  # stale list kept
 
 
-def test_list_openrouter_models_raises_without_cache():
+def test_list_decision_models_raises_without_cache():
     with patch("urllib.request.urlopen", side_effect=OSError("offline")):
         with pytest.raises(OSError):
             dm.list_openrouter_models()

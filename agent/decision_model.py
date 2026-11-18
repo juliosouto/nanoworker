@@ -1,23 +1,30 @@
 """Decision model (Agent Behavior > Use Decision Model).
 
-When DECISION_MODEL_ENABLED is on, one quick call to the chosen OpenRouter
-model decides how each message is answered:
+When DECISION_MODEL_ENABLED is on, the OpenRouter decision model picked on the
+settings page decides how each message is answered:
 
 - "agent":  the full pipeline (tools, planner, reflection/evaluator rounds);
 - "direct": one plain call with the system prompt, memory, history and RAG,
             but no tools, no plan and no extra rounds.
 
-Fail-open: when the feature is off, no model is chosen, the call fails or the
-answer cannot be parsed, the message goes to the agent (the old behavior).
+Decision models are not chat models: they answer typed questions with
+calibrated probabilities through OpenRouter's Decisions API
+(POST /api/alpha/decisions). Here one ``choice`` question with the options
+"agent" and "direct" is asked over the message.
 
-The model list on the settings page comes from OpenRouter's public
-/api/v1/models, cached for an hour.
+Fail-open: when the feature is off, no model is chosen, the call fails, the
+answer is not a valid choice or "direct" is not clearly more likely
+(DIRECT_MIN_PROBABILITY), the message goes to the agent (the old behavior).
+
+The model list on the settings page comes from OpenRouter's
+/api/v1/models?output_modalities=decisions, cached for an hour.
 """
 
 import json
 import logging
 import threading
 import time
+import urllib.error
 import urllib.request
 
 logger = logging.getLogger(__name__)
@@ -25,19 +32,37 @@ logger = logging.getLogger(__name__)
 ROUTE_AGENT = "agent"
 ROUTE_DIRECT = "direct"
 
+# "direct" needs at least this probability (when the model reports one).
+DIRECT_MIN_PROBABILITY = 0.6
+
 OPENROUTER_PREFIX = "openrouter/"
-_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+_DECISION_MODELS_URL = "https://openrouter.ai/api/v1/models?output_modalities=decisions"
 _MODELS_TTL = 3600
 _models_cache = {"at": 0.0, "models": []}
 _models_lock = threading.Lock()
 
-DECISION_PROMPT = """You route the messages of an AI assistant. Decide how the assistant should answer the user's latest message.
-
-"agent": the answer needs tools or several steps: searching the web or fresh data (news, prices, weather, sports, anything that changes), reading or writing files, browsing, sending messages or files, reading other chats, scheduling, reminders, calendar, e-mail, running commands, generating images or audio, saving memories, or any action in the world.
-"direct": the assistant can answer right away from its own knowledge, its instructions and memory, the conversation shown and any attached image: greetings, small talk, thanks, opinions, explanations, advice, writing, rewriting, summarizing or translating text given in the message or the conversation, describing an attached image.
-
-When in doubt, choose "agent".
-Reply with only a JSON object, no markdown: {"route": "agent"} or {"route": "direct"}"""
+QUESTION_ID = "route"
+ROUTE_INSTRUCTIONS = (
+    "An AI assistant received `message` from a user. Decide how the assistant should answer it. "
+    "`previous_reply` is the assistant's last reply in the chat, `attached_images` the number of "
+    "images sent with the message and `agent_tools` the tools the full agent can use. "
+    "When in doubt, choose agent."
+)
+ROUTE_CRITERIA = {
+    ROUTE_AGENT: (
+        "The answer needs tools or several steps: searching the web or fresh data (news, prices, "
+        "weather, sports, anything that changes), reading or writing files, browsing, sending "
+        "messages or files, reading other chats, scheduling, reminders, calendar, e-mail, running "
+        "commands, generating images or audio, saving memories, or any action in the world."
+    ),
+    ROUTE_DIRECT: (
+        "The assistant can answer right away from its own knowledge, its instructions and memory, "
+        "the conversation and any attached image: greetings, small talk, thanks, opinions, "
+        "explanations, advice, writing, rewriting, summarizing or translating text given in the "
+        "message or the conversation, describing an attached image."
+    ),
+}
 
 
 def decision_settings():
@@ -50,8 +75,8 @@ def decision_settings():
 
 
 def openrouter_api_key() -> str:
-    """Key for a decision model that is not registered in llm_config: the key
-    of any registered OpenRouter model, else OPENROUTER_API_KEY. "" if none."""
+    """The OpenRouter key: the decision model's own llm_config row, else any
+    registered OpenRouter model's key, else OPENROUTER_API_KEY. "" if none."""
     from database import decrypt_value, get_config, get_db
 
     try:
@@ -72,61 +97,126 @@ def openrouter_api_key() -> str:
     return str(get_config("OPENROUTER_API_KEY", "") or "").strip()
 
 
-def build_decision_input(message, tool_names=(), last_reply="", images=0) -> str:
-    parts = []
+def _api_model_id(model: str) -> str:
+    """The id OpenRouter expects: the stored id without the "openrouter/" prefix."""
+    return model[len(OPENROUTER_PREFIX):] if model.lower().startswith(OPENROUTER_PREFIX) else model
+
+
+def build_decision_request(model, message, tool_names=(), last_reply="", images=0) -> dict:
+    state = {"message": message, "attached_images": int(images or 0)}
     if last_reply:
-        parts.append(f"ASSISTANT'S PREVIOUS REPLY (context):\n{last_reply[-600:]}")
-    note = f"\n[{images} image(s) attached]" if images else ""
-    parts.append(f"USER MESSAGE:\n{message}{note}")
+        state["previous_reply"] = last_reply[-600:]
     if tool_names:
-        parts.append("TOOLS THE AGENT CAN USE:\n" + ", ".join(tool_names))
-    return "\n\n".join(parts)
+        state["agent_tools"] = list(tool_names)
+    return {
+        "model": _api_model_id(model),
+        "state": state,
+        "questions": {
+            QUESTION_ID: {
+                "type": "choice",
+                "instructions": ROUTE_INSTRUCTIONS,
+                "criteria": ROUTE_CRITERIA,
+            }
+        },
+    }
 
 
-def parse_route(raw_text):
-    """'agent' or 'direct' from the model answer, or None when unclear."""
-    from agent.autonomous_loop import _parse_json_response
+def parse_route(response):
+    """'agent' or 'direct' from a Decisions API response, or None when the
+    answer is missing or not a valid choice. 'direct' with a probability
+    below DIRECT_MIN_PROBABILITY counts as 'agent'."""
+    if not isinstance(response, dict):
+        return None
+    answer = (response.get("answers") or {}).get(QUESTION_ID)
+    if not isinstance(answer, dict) or answer.get("type") != "choice":
+        return None
+    choice = str(answer.get("choice", "")).strip().lower()
+    if choice not in (ROUTE_AGENT, ROUTE_DIRECT):
+        return None
+    probabilities = answer.get("probabilities")
+    if choice == ROUTE_DIRECT and isinstance(probabilities, dict):
+        try:
+            if float(probabilities.get(ROUTE_DIRECT, 1.0)) < DIRECT_MIN_PROBABILITY:
+                return ROUTE_AGENT
+        except (TypeError, ValueError):
+            pass
+    return choice
 
-    parsed = _parse_json_response(raw_text or "")
-    if isinstance(parsed, dict):
-        value = str(parsed.get("route", "")).strip().lower()
-        if value in (ROUTE_AGENT, ROUTE_DIRECT):
-            return value
-    return None
+
+def _timeout() -> int:
+    try:
+        from agent.lc import settings as lc_settings
+        return lc_settings.llm_request_timeout()
+    except Exception:
+        return 45
+
+
+def call_decisions_api(payload: dict, api_key: str) -> dict:
+    """POST one request to OpenRouter's Decisions API; returns the JSON body."""
+    req = urllib.request.Request(
+        _DECISIONS_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/nanoworker",
+            "X-OpenRouter-Title": "NanoWorker",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_timeout()) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"HTTP {e.code}: {detail}") from e
+
+
+def _log_usage(model, session_id, message_in_id, response, latency_ms) -> None:
+    """Records the call's tokens and cost on the Costs page (stage 'decision')."""
+    try:
+        from agent import llm_usage
+
+        with llm_usage.call_context(), llm_usage.usage_stage("decision"):
+            llm_usage.set_call_info(provider="openrouter", model=model,
+                                    session_id=session_id, message_in_id=message_in_id)
+            llm_usage.log_llm_call("decisions", latency_ms=latency_ms,
+                                   **llm_usage.usage_fields(response.get("usage")))
+    except Exception as e:
+        logger.debug("Decision usage not logged: %s", e)
 
 
 def decide_route(message, cursor, session_id, message_in_id, tool_names=(), last_reply="",
                  images=0) -> str:
     """The route for one message: 'direct' only when the decision model says
-    so explicitly; 'agent' otherwise (feature off, no model, any failure)."""
+    so clearly; 'agent' otherwise (feature off, no model, any failure)."""
     enabled, model = decision_settings()
     if not enabled or not model or not (message or "").strip():
         return ROUTE_AGENT
 
-    from agent.llm_router import route_llm_call
-    from agent.llm_usage import usage_stage
-    from agent.stop_check import StopRequestedError
+    api_key = openrouter_api_key()
+    if not api_key:
+        logger.warning("Decision model %s skipped: no OpenRouter API key; using the agent", model)
+        return ROUTE_AGENT
 
+    payload = build_decision_request(model, message, tool_names, last_reply, images)
     started = time.monotonic()
     try:
-        with usage_stage("decision"):
-            raw = route_llm_call(
-                model, [], {"system_instruction": DECISION_PROMPT, "temperature": 0,
-                        "fallback_api_key": openrouter_api_key()},
-                build_decision_input(message, tool_names, last_reply, images),
-                cursor, session_id, message_in_id, False, summarize=True,
-            )
-    except StopRequestedError:
-        raise
+        response = call_decisions_api(payload, api_key)
     except Exception as e:
         logger.warning("Decision model %s failed (%s); using the agent", model, e)
         return ROUTE_AGENT
-    route = parse_route(raw)
+    latency_ms = int((time.monotonic() - started) * 1000)
+    _log_usage(model, session_id, message_in_id, response, latency_ms)
+
+    route = parse_route(response)
     if route is None:
-        logger.warning("Decision model %s gave no valid route: %r; using the agent", model, str(raw)[:200])
+        logger.warning("Decision model %s gave no valid route: %r; using the agent",
+                       model, json.dumps(response)[:300])
         return ROUTE_AGENT
-    logger.info("Decision model %s routed message %s to %s in %.1fs",
-                model, message_in_id, route, time.monotonic() - started)
+    answer = (response.get("answers") or {}).get(QUESTION_ID) or {}
+    logger.info("Decision model %s routed message %s to %s (probabilities %s) in %dms",
+                model, message_in_id, route, answer.get("probabilities"), latency_ms)
     return route
 
 
@@ -137,8 +227,8 @@ def _price_per_million(value):
         return None
 
 
-def _fetch_openrouter_models() -> list:
-    req = urllib.request.Request(_OPENROUTER_MODELS_URL, headers={"User-Agent": "NanoWorker"})
+def _fetch_decision_models() -> list:
+    req = urllib.request.Request(_DECISION_MODELS_URL, headers={"User-Agent": "NanoWorker"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     models = []
@@ -146,10 +236,14 @@ def _fetch_openrouter_models() -> list:
         model_id = m.get("id")
         if not model_id:
             continue
-        arch = m.get("architecture") or {}
-        outputs = arch.get("output_modalities") or ["text"]
-        if "text" not in outputs:
-            continue  # image/audio generators cannot answer the route JSON
+        outputs = (m.get("architecture") or {}).get("output_modalities") or []
+        endpoints = m.get("endpoints") or []
+        # Only models the Decisions API can call (some serve extractions only).
+        if endpoints:
+            if "/api/alpha/decisions" not in endpoints:
+                continue
+        elif "decisions" not in outputs:
+            continue
         pricing = m.get("pricing") or {}
         prompt_price = _price_per_million(pricing.get("prompt"))
         completion_price = _price_per_million(pricing.get("completion"))
@@ -157,8 +251,8 @@ def _fetch_openrouter_models() -> list:
             "id": OPENROUTER_PREFIX + model_id,
             "name": m.get("name") or model_id,
             "context_length": m.get("context_length"),
-            "prompt_price": prompt_price,
-            "completion_price": completion_price,
+            "prompt_price": prompt_price if prompt_price is None or prompt_price >= 0 else None,
+            "completion_price": completion_price if completion_price is None or completion_price >= 0 else None,
             "free": model_id.endswith(":free") or (prompt_price == 0 and completion_price == 0),
         })
     models.sort(key=lambda x: x["name"].lower())
@@ -166,17 +260,17 @@ def _fetch_openrouter_models() -> list:
 
 
 def list_openrouter_models(force=False) -> list:
-    """Text models offered by OpenRouter, cached for an hour. Raises when the
-    list cannot be fetched and nothing is cached."""
+    """Decision models offered by OpenRouter, cached for an hour. Raises when
+    the list cannot be fetched and nothing is cached."""
     with _models_lock:
         fresh = time.time() - _models_cache["at"] < _MODELS_TTL
         if _models_cache["models"] and fresh and not force:
             return _models_cache["models"]
         try:
-            models = _fetch_openrouter_models()
+            models = _fetch_decision_models()
         except Exception:
             if _models_cache["models"]:
-                logger.warning("OpenRouter model list refresh failed; using the cached list", exc_info=True)
+                logger.warning("OpenRouter decision model list refresh failed; using the cached list", exc_info=True)
                 return _models_cache["models"]
             raise
         _models_cache.update(at=time.time(), models=models)

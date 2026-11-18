@@ -196,7 +196,7 @@ def save_settings():
 
 @api_settings_bp.route('/api/settings/decision_models', methods=['GET'])
 def list_decision_models():
-    """OpenRouter text models for the decision model picker (Agent Behavior).
+    """OpenRouter decision models (Decisions API) for the decision model picker (Agent Behavior).
     ?refresh=1 bypasses the one-hour cache."""
     from agent.decision_model import list_openrouter_models
 

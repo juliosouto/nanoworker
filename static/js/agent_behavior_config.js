@@ -179,13 +179,15 @@ function setupDecisionModel() {
 
 function formatModelPrice(m) {
     if (m.free) return /\(free\)/i.test(m.name) ? '' : 'free';
-    if (m.prompt_price == null || m.completion_price == null) return '';
+    if (m.prompt_price == null) return '';
+    // Decision models charge for input only.
+    if (!m.completion_price) return `$${m.prompt_price} per 1M input`;
     return `$${m.prompt_price}/$${m.completion_price} per 1M`;
 }
 
 function loadDecisionModels(refresh) {
     const status = document.getElementById('decisionModelStatus');
-    if (status) status.textContent = 'Loading the OpenRouter model list...';
+    if (status) status.textContent = 'Loading the OpenRouter decision models...';
     fetch('/api/settings/decision_models' + (refresh ? '?refresh=1' : ''))
         .then(res => res.ok ? res.json() : Promise.reject(new Error('list failed')))
         .then(data => {
@@ -196,7 +198,7 @@ function loadDecisionModels(refresh) {
         })
         .catch(err => {
             console.error(err);
-            if (status) status.textContent = 'Could not load the OpenRouter model list. Try Refresh.';
+            if (status) status.textContent = 'Could not load the OpenRouter decision models. Try Refresh.';
             const select = document.getElementById('decisionModelSelect');
             const selected = document.getElementById('decisionModelParams')?.dataset.selected || '';
             if (select) {
@@ -227,9 +229,13 @@ function renderDecisionModels() {
     });
     select.value = selected;
     if (status) {
-        status.textContent = selected
-            ? `Selected: ${selected} · ${decisionModels.length} models available`
-            : `${decisionModels.length} models available. Choose one: without a model every message goes to the full agent.`;
+        const known = decisionModels.some(m => m.id === selected);
+        status.textContent = !selected
+            ? `${decisionModels.length} decision models available. Choose one: without a model every message goes to the full agent.`
+            : known
+                ? `Selected: ${selected} · ${decisionModels.length} decision models available`
+                : `${selected} is not an OpenRouter decision model: messages go to the full agent until you choose one from the list.`;
+        status.style.color = selected && !known ? '#f59e0b' : '';
     }
 }
 

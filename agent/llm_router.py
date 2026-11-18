@@ -286,18 +286,12 @@ def _route_llm_call(
         except (KeyError, IndexError, TypeError):
             image_input = None
 
-    # A model that is not registered in llm_config (e.g. the decision model
-    # picked from OpenRouter's list) uses the key its caller passes.
-    if not api_key and config_kwargs.get("fallback_api_key"):
-        api_key = config_kwargs["fallback_api_key"]
-
     from agent.llm_usage import set_call_info
 
     set_call_info(provider=provider, model=model_name, session_id=session_id,
                   message_in_id=message_in_id, api_key=api_key)
 
     local_kwargs = config_kwargs.copy()
-    local_kwargs.pop("fallback_api_key", None)
     # Voice API channel: the reply is plain text, with no JSON contract.
     plain_text_reply = bool(local_kwargs.pop("plain_text_reply", False))
     # The worker's thinking level; internal calls (planner, evaluator...) have
