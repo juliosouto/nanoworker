@@ -33,11 +33,14 @@ def _enable(database, model="openrouter/acme/router-mini"):
 # Decisions API request / parse_route / decide_route
 # --------------------------------------------------------------------------
 
-def _answer(choice, probabilities=None, type_="choice"):
+def _answer(choice, probabilities=None, type_="choice", needs_info=None):
     ans = {"type": type_, "choice": choice}
     if probabilities is not None:
         ans["probabilities"] = probabilities
-    return {"id": "d1", "model": "acme/router-mini", "answers": {"route": ans},
+    answers = {"route": ans}
+    if needs_info is not None:
+        answers["needs_external_info"] = {"type": "noul", "noul": needs_info}
+    return {"id": "d1", "model": "acme/router-mini", "answers": answers,
             "usage": {"input_tokens": 120, "output_tokens": 0, "cost": 0.0000024}}
 
 
@@ -50,13 +53,48 @@ def test_build_decision_request():
     question = req["questions"]["route"]
     assert question["type"] == "choice"
     assert set(question["criteria"]) == {"agent", "direct"}
+    assert req["questions"]["needs_external_info"]["type"] == "noul"
+
+
+def test_build_decision_request_with_tool_descriptions():
+    req = dm.build_decision_request("m", "oi", tool_names={"web_search": "Search the web."})
+    assert req["state"]["agent_tools"] == {"web_search": "Search the web."}
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Pesquise o preço do dólar", True),
+    ("qual a cotação do euro?", True),
+    ("Quem ganhou o jogo ontem?", True),
+    ("Quais as notícias de hoje", True),
+    ("me manda o arquivo", True),
+    ("veja https://exemplo.com", True),
+    ("search the latest news", True),
+    ("Bom dia! Tudo bem?", False),
+    ("obrigado!", False),
+    ("traduza: good morning", False),
+    ("Quem é o CEO da Nvidia?", False),  # left to the decision model
+])
+def test_asks_for_agent(message, expected):
+    assert dm.asks_for_agent(message) is expected
+
+
+def test_decide_route_keywords_skip_the_call(db):
+    _enable(db)
+    db.set_config("OPENROUTER_API_KEY", "sk")
+    with patch("agent.decision_model.call_decisions_api") as call:
+        assert dm.decide_route("pesquise isso pra mim", MagicMock(), "s", "m") == "agent"
+    call.assert_not_called()
 
 
 @pytest.mark.parametrize("response,expected", [
     (_answer("direct"), "direct"),
+    (_answer("direct", {"direct": 0.9}, needs_info=0.1), "direct"),
+    (_answer("direct", {"direct": 0.9}, needs_info=0.35), "agent"),  # likely needs a search
+    (_answer("direct", {"direct": 0.7, "agent": 0.3}), "agent"),  # below 0.75
     (_answer("AGENT"), "agent"),
     (_answer("direct", {"direct": 0.9, "agent": 0.1}), "direct"),
     (_answer("direct", {"direct": 0.55, "agent": 0.45}), "agent"),  # not clear enough
+    (_answer("agent", needs_info=0.0), "agent"),
     (_answer("maybe"), None),
     (_answer("direct", type_="noul"), None),
     ({"answers": {}}, None),
@@ -313,3 +351,62 @@ def test_direct_loop_makes_one_call(db, raw, expected):
     assert out == expected
     call.assert_called_once()  # no reflection round, even with "not satisfied"
     flow.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# Direct reply that needs tools is handed to the full agent
+# --------------------------------------------------------------------------
+
+def test_direct_rule_names_the_marker():
+    from agent.message_processor import DIRECT_REPLY_RULE, NEEDS_AGENT_MARKER, _needs_agent
+    assert NEEDS_AGENT_MARKER in DIRECT_REPLY_RULE
+    assert _needs_agent("[[NEEDS_AGENT]]") and _needs_agent(' [[NEEDS_AGENT]]\n')
+    assert not _needs_agent("Bom dia!") and not _needs_agent(None)
+
+
+def _run_process_message(db, decide, loop_results):
+    from agent import message_processor as mp
+
+    conn = db.get_db()
+    conn.execute("INSERT INTO sessions (id, agent_id, channel_id) VALUES ('s-web', 'agent-1', 'web:test')")
+    conn.execute("INSERT INTO messages_in (id, session_id, content) VALUES ('m-d', 's-web', '@Quen bom dia')")
+    conn.commit()
+    conn.close()
+    worker = {"worker_name": "Quen", "worker_model": "m", "tools_enabled": 1}
+    search = MagicMock(__name__="web_search", __doc__="Search the web.")
+    with patch.object(mp.time, "sleep"), \
+         patch.object(mp, "resolve_worker_from_content", return_value=worker), \
+         patch.object(mp, "_resolve_models", return_value=["m"]), \
+         patch.object(mp, "_check_is_admin", return_value=True), \
+         patch.object(mp, "_decide_direct_reply", return_value=decide), \
+         patch.object(mp, "build_system_prompt", return_value="P"), \
+         patch.object(mp, "get_permitted_tools", return_value=[search]), \
+         patch("agent.lc.tools_lc.filter_tools_by_relevance", side_effect=lambda t, *a, **k: t), \
+         patch.object(mp, "build_config_kwargs", side_effect=lambda **kw: dict(kw)) as bck, \
+         patch.object(mp, "execute_autonomous_loop", side_effect=loop_results) as loop:
+        _, reply = mp.process_message("m-d", "s-web", "@Quen bom dia")
+    return reply, bck, loop
+
+
+def test_direct_reply_needing_tools_runs_the_agent(db):
+    reply, bck, loop = _run_process_message(db, True, ["[[NEEDS_AGENT]]", "Cotação: R$ 5,10"])
+    assert reply == "Cotação: R$ 5,10"
+    assert loop.call_count == 2
+    first, second = loop.call_args_list
+    assert first.kwargs["direct"] is True and second.kwargs["direct"] is False
+    first_cfg, second_cfg = (c.kwargs for c in bck.call_args_list)
+    assert first_cfg["tools"] is None and "[[NEEDS_AGENT]]" in first_cfg["system_prompt"]
+    assert [t.__name__ for t in second_cfg["tools"]] == ["web_search"]
+    assert "[[NEEDS_AGENT]]" not in second_cfg["system_prompt"]
+
+
+def test_direct_reply_answered_runs_once(db):
+    reply, bck, loop = _run_process_message(db, True, ["Bom dia! Como posso ajudar?"])
+    assert reply == "Bom dia! Como posso ajudar?"
+    assert loop.call_count == 1
+
+
+def test_agent_route_runs_once_without_the_rule(db):
+    reply, bck, loop = _run_process_message(db, False, ["ok"])
+    assert loop.call_count == 1 and loop.call_args.kwargs["direct"] is False
+    assert "[[NEEDS_AGENT]]" not in bck.call_args.kwargs["system_prompt"]

@@ -199,6 +199,23 @@ EARLIER_MESSAGES_HEADER = (
 )
 CURRENT_MESSAGE_END = "=== END OF CURRENT MESSAGE ==="
 
+# Direct replies (decision model) have no tools. When the request does need
+# them the model answers only this marker and the full agent runs instead.
+NEEDS_AGENT_MARKER = "[[NEEDS_AGENT]]"
+DIRECT_REPLY_RULE = (
+    "# No tools in this reply\n"
+    "You have no tools right now: you cannot search the internet, check facts, open links, read "
+    "files or chats, or take any action. If a correct answer needs any of that (current or "
+    "recent information, prices, news, weather, specific facts about people, companies, products, "
+    "events, dates or numbers you are not certain of, or an action), do not guess and do not "
+    f"answer: reply with exactly {NEEDS_AGENT_MARKER} and nothing else. Otherwise answer normally."
+)
+
+
+def _needs_agent(response) -> bool:
+    """True when a direct reply asked to be handed to the full agent."""
+    return NEEDS_AGENT_MARKER in str(response or "")
+
 
 def mark_current_message(content: str, sender_label=None) -> str:
     """Wrap the message being answered between explicit start/end lines."""
@@ -525,7 +542,13 @@ def _decide_direct_reply(worker, is_voice, sender_id, message, history, cursor, 
         tools = get_permitted_tools(
             is_admin=_check_is_admin(sender_id), is_group=is_wa_group, is_direct=is_wa_private,
         ) or []
-        tool_names = [getattr(t, '__name__', '') for t in tools if getattr(t, '__name__', '')]
+        # name -> what it does, so the decision model sees e.g. that a web
+        # search tool exists for factual or current questions.
+        from agent.lc.tools_lc import first_line_description
+        tool_names = {
+            t.__name__: first_line_description(t)[:120]
+            for t in tools if getattr(t, '__name__', '')
+        }
         last_reply = ""
         for turn in reversed(history or []):
             if getattr(turn, "role", None) == "model":
@@ -804,92 +827,104 @@ def process_message(message_in_id, session_id, content, on_complete=None):
         models_to_try = _resolve_models(worker)
 
     try:
-        tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
-        if direct_reply:
-            tools_enabled = False  # the decision model chose a direct reply
-        is_admin = _check_is_admin(current_sender_id)
-        include_tool_rules = tools_enabled
+        # A direct reply (decision model) that turns out to need tools answers
+        # NEEDS_AGENT_MARKER; the message then runs again with the full agent.
+        for _attempt in range(2):
+            attempt_history = list(history)
+            tools_enabled = bool(worker.get('tools_enabled', 1)) if worker else True
+            if direct_reply:
+                tools_enabled = False  # the decision model chose a direct reply
+            is_admin = _check_is_admin(current_sender_id)
+            include_tool_rules = tools_enabled
 
-        # Build system prompt
-        # Fase 1: decide whether the first model enforces the JSON contract
-        # natively (structured output) so the builder can omit the prose block.
-        from agent.lc import outputs as lc_outputs
-        _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
-        native_structured = lc_outputs.schema_enforced_by_api(
-            _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
-        )
-        if is_voice:
-            # Voice: current date/time/location plus the worker's own
-            # instructions. No standard/channel rules, JSON contract or memory.
-            instructions = ((worker or {}).get('worker_instructions') or '').strip()
-            system_prompt = _voice_context()
-            if instructions:
-                system_prompt = f"{system_prompt}\n\n{instructions}"
-        else:
-            system_prompt = build_system_prompt(
-                cursor=cursor,
-                worker=worker,
-                channel_id=channel_id,
-                include_tool_rules=include_tool_rules,
-                has_image=bool(current_image_base64 or extra_parts),
-                worker_name=worker_name,
-                native_structured=native_structured,
-                models_to_try=models_to_try,
+            # Build system prompt
+            # Fase 1: decide whether the first model enforces the JSON contract
+            # natively (structured output) so the builder can omit the prose block.
+            from agent.lc import outputs as lc_outputs
+            _provider0 = lc_outputs.resolve_provider_for_model(models_to_try[0]) if models_to_try else None
+            native_structured = lc_outputs.schema_enforced_by_api(
+                _provider0, models_to_try[0] if models_to_try else "", has_tools=tools_enabled
             )
-        if separate_context:
-            context = context_for_system_prompt(history, rag_block)
-            if context:
-                system_prompt = f"{system_prompt}\n\n{context}"
-
-        # Build config kwargs
-        tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
-        if tools and not session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX):
-            # Picking another chat is only for the voice agent channel.
-            from tools.chat_history import VOICE_AGENT_ONLY_TOOLS
-            tools = [t for t in tools if getattr(t, '__name__', '') not in VOICE_AGENT_ONLY_TOOLS]
-        if tools:
-            # TOOL_RELEVANCE_FILTER: keep the tools most similar to the plain
-            # user message (local embeddings); fail-open to the full set.
-            from agent.lc.tools_lc import filter_tools_by_relevance
-
-            tools = filter_tools_by_relevance(
-                tools, _tool_query(history, rag_query),
-                always_keep=(
-                    _is_always_kept_tool if (is_wa_group or is_wa_private)
-                    else _is_chat_tool if session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX)
-                    else None
-                ),
-            )
-        thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
-        show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
-
-        config_kwargs = build_config_kwargs(
-            system_prompt=system_prompt,
-            tools=tools,
-            thinking_enabled=thinking_enabled,
-            show_tools_results=show_tools_results,
-            temperature=worker.get('temperature') if worker else None,
-            thinking_level=worker.get('thinking_level') if worker else None,
-            quantizations=worker.get('quantizations') if worker else None,
-        )
-        if is_voice:
-            config_kwargs["plain_text_reply"] = True
-
-        # Live status (one reply edited at each step) when the channel supports it.
-        from agent import status as agent_status
-        status_reporter = getattr(on_complete, "report_status", None)
-        status_token = agent_status.set_status_reporter(status_reporter) if status_reporter else None
-        try:
-            agent_status.report_status(agent_status.THINKING)
+            if is_voice:
+                # Voice: current date/time/location plus the worker's own
+                # instructions. No standard/channel rules, JSON contract or memory.
+                instructions = ((worker or {}).get('worker_instructions') or '').strip()
+                system_prompt = _voice_context()
+                if instructions:
+                    system_prompt = f"{system_prompt}\n\n{instructions}"
+            else:
+                system_prompt = build_system_prompt(
+                    cursor=cursor,
+                    worker=worker,
+                    channel_id=channel_id,
+                    include_tool_rules=include_tool_rules,
+                    has_image=bool(current_image_base64 or extra_parts),
+                    worker_name=worker_name,
+                    native_structured=native_structured,
+                    models_to_try=models_to_try,
+                )
+            if direct_reply:
+                # No tools in this reply: hand back to the agent instead of guessing.
+                system_prompt = f"{system_prompt}\n\n{DIRECT_REPLY_RULE}"
             if separate_context:
-                history = []  # already in the system prompt
-            from agent.llm_usage import usage_worker
+                context = context_for_system_prompt(history, rag_block)
+                if context:
+                    system_prompt = f"{system_prompt}\n\n{context}"
 
-            with usage_worker(worker_name):
-                mock_response = execute_autonomous_loop(history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name, direct=direct_reply)
-        finally:
-            if status_token is not None:
-                agent_status.reset_status_reporter(status_token)
+            # Build config kwargs
+            tools = get_permitted_tools(is_admin=is_admin, is_group=is_wa_group, is_direct=is_wa_private) if tools_enabled else None
+            if tools and not session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX):
+                # Picking another chat is only for the voice agent channel.
+                from tools.chat_history import VOICE_AGENT_ONLY_TOOLS
+                tools = [t for t in tools if getattr(t, '__name__', '') not in VOICE_AGENT_ONLY_TOOLS]
+            if tools:
+                # TOOL_RELEVANCE_FILTER: keep the tools most similar to the plain
+                # user message (local embeddings); fail-open to the full set.
+                from agent.lc.tools_lc import filter_tools_by_relevance
+
+                tools = filter_tools_by_relevance(
+                    tools, _tool_query(history, rag_query),
+                    always_keep=(
+                        _is_always_kept_tool if (is_wa_group or is_wa_private)
+                        else _is_chat_tool if session_channel.startswith(VOICE_AGENT_CHANNEL_PREFIX)
+                        else None
+                    ),
+                )
+            thinking_enabled = bool(worker.get('thinking_enabled', 0)) if worker else False
+            show_tools_results = bool(worker.get('show_tools_results', 1)) if worker else True
+
+            config_kwargs = build_config_kwargs(
+                system_prompt=system_prompt,
+                tools=tools,
+                thinking_enabled=thinking_enabled,
+                show_tools_results=show_tools_results,
+                temperature=worker.get('temperature') if worker else None,
+                thinking_level=worker.get('thinking_level') if worker else None,
+                quantizations=worker.get('quantizations') if worker else None,
+            )
+            if is_voice:
+                config_kwargs["plain_text_reply"] = True
+
+            # Live status (one reply edited at each step) when the channel supports it.
+            from agent import status as agent_status
+            status_reporter = getattr(on_complete, "report_status", None)
+            status_token = agent_status.set_status_reporter(status_reporter) if status_reporter else None
+            try:
+                agent_status.report_status(agent_status.THINKING)
+                if separate_context:
+                    attempt_history = []  # already in the system prompt
+                from agent.llm_usage import usage_worker
+
+                with usage_worker(worker_name):
+                    mock_response = execute_autonomous_loop(attempt_history, config_kwargs, send_content, models_to_try, cursor, session_id, message_in_id, is_ide=False, on_complete=on_complete, show_plan_in_chat=show_tools_results, worker_name=worker_name, direct=direct_reply)
+            finally:
+                if status_token is not None:
+                    agent_status.reset_status_reporter(status_token)
+            if direct_reply and _needs_agent(mock_response):
+                logger.info(f"Direct reply for {message_in_id} needs tools; running the full agent")
+                direct_reply = False
+                continue
+            break
 
     except StopRequestedError:
         mock_response = "🛑 Processamento interrompido pelo usuário (/stop)."

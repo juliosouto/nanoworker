@@ -12,15 +12,27 @@ calibrated probabilities through OpenRouter's Decisions API
 (POST /api/alpha/decisions). Here one ``choice`` question with the options
 "agent" and "direct" is asked over the message.
 
-Fail-open: when the feature is off, no model is chosen, the call fails, the
-answer is not a valid choice or "direct" is not clearly more likely
-(DIRECT_MIN_PROBABILITY), the message goes to the agent (the old behavior).
+A direct reply has no tools, so the guard leans hard towards the agent:
+
+1. a message that plainly asks for a search, fresh data, a link or an action
+   (_AGENT_KEYWORDS) goes to the agent without asking the model;
+2. the model sees each tool's description and strict criteria;
+3. a second ``noul`` question asks whether the answer needs outside
+   information; at NEEDS_INFO_MAX_PROBABILITY or above the agent runs;
+4. "direct" needs DIRECT_MIN_PROBABILITY;
+5. the direct reply itself may answer NEEDS_AGENT_MARKER (message_processor),
+   which reruns the message with the full agent.
+
+Fail-open: when the feature is off, no model is chosen, the call fails or the
+answer is not a valid choice, the message goes to the agent (the old behavior).
 
 The model list on the settings page comes from OpenRouter's
 /api/v1/models?output_modalities=decisions, cached for an hour.
 """
 
 import json
+import re
+import unicodedata
 import logging
 import threading
 import time
@@ -33,7 +45,25 @@ ROUTE_AGENT = "agent"
 ROUTE_DIRECT = "direct"
 
 # "direct" needs at least this probability (when the model reports one).
-DIRECT_MIN_PROBABILITY = 0.6
+DIRECT_MIN_PROBABILITY = 0.75
+# Second question: probability that answering needs information from outside
+# the conversation (web, fresh data, facts to check). At or above this, the
+# agent runs even when the route answer is "direct".
+NEEDS_INFO_MAX_PROBABILITY = 0.3
+
+# Words that ask for a search or fresh data: such messages go to the agent
+# without asking the decision model (pt and en, lower-case, accents removed).
+_AGENT_KEYWORDS = re.compile(
+    r"\b("
+    r"pesquis\w*|procur\w*|busc\w*|googl\w*|internet|online|site|link|url|"
+    r"noticia\w*|news|hoje|agora|atual\w*|ultim\w*|recente\w*|ontem|amanha|esta semana|"
+    r"cotacao|preco\w*|valor de|quanto custa|clima|previsao|tempo em|placar|resultado\w*|"
+    r"search\w*|look up|latest|current\w*|today|price\w*|weather|forecast|"
+    r"envi\w*|mand\w*|agend\w*|lembr\w*|salv\w*|baix\w*|abr\w* o|"
+    r"https?://|www\."
+    r")"
+)
+
 
 OPENROUTER_PREFIX = "openrouter/"
 _DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
@@ -43,26 +73,38 @@ _models_cache = {"at": 0.0, "models": []}
 _models_lock = threading.Lock()
 
 QUESTION_ID = "route"
+NEEDS_INFO_ID = "needs_external_info"
 ROUTE_INSTRUCTIONS = (
     "An AI assistant received `message` from a user. Decide how the assistant should answer it. "
     "`previous_reply` is the assistant's last reply in the chat, `attached_images` the number of "
-    "images sent with the message and `agent_tools` the tools the full agent can use. "
-    "When in doubt, choose agent."
+    "images sent with the message and `agent_tools` the tools the full agent can use (name: what "
+    "it does). The direct reply has NO tools: it cannot search the internet, check facts, read "
+    "files or chats, or act. A wrong direct reply makes the assistant invent an answer, which is "
+    "much worse than using the agent. Choose direct only when it is certain that no tool would "
+    "make the answer better; when in doubt, choose agent."
 )
 ROUTE_CRITERIA = {
     ROUTE_AGENT: (
-        "The answer needs tools or several steps: searching the web or fresh data (news, prices, "
-        "weather, sports, anything that changes), reading or writing files, browsing, sending "
-        "messages or files, reading other chats, scheduling, reminders, calendar, e-mail, running "
-        "commands, generating images or audio, saving memories, or any action in the world."
+        "Any tool in `agent_tools` could help, or the answer depends on facts about the world: "
+        "searching the internet; news, prices, quotes, weather, sports, laws, schedules or anything "
+        "that changes over time; questions about specific people, companies, products, places, "
+        "events, dates or numbers; anything recent; checking whether something is true; reading "
+        "links, files or other chats; sending, scheduling, reminding, saving, downloading or any "
+        "other action; tasks with several steps."
     ),
     ROUTE_DIRECT: (
-        "The assistant can answer right away from its own knowledge, its instructions and memory, "
-        "the conversation and any attached image: greetings, small talk, thanks, opinions, "
-        "explanations, advice, writing, rewriting, summarizing or translating text given in the "
-        "message or the conversation, describing an attached image."
+        "Pure conversation that only needs the messages shown: greetings, thanks, small talk, "
+        "reactions; rewriting, translating, summarizing or correcting text given in the message or "
+        "the conversation; describing an attached image; general, timeless explanations or advice "
+        "that need no specific or current facts."
     ),
 }
+NEEDS_INFO_INSTRUCTIONS = (
+    "Does a correct answer to `message` need information that is not in `message`, "
+    "`previous_reply` or the attached images: internet search, current or recent data, or "
+    "specific facts (people, companies, products, prices, dates, numbers, events) the assistant "
+    "should check instead of recalling from memory?"
+)
 
 
 def decision_settings():
@@ -102,12 +144,22 @@ def _api_model_id(model: str) -> str:
     return model[len(OPENROUTER_PREFIX):] if model.lower().startswith(OPENROUTER_PREFIX) else model
 
 
+def asks_for_agent(message) -> bool:
+    """True when the message plainly asks for a search, fresh data, a link or
+    an action (see _AGENT_KEYWORDS): it goes to the agent with no decision call."""
+    text = unicodedata.normalize("NFKD", str(message or "").lower())
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return bool(_AGENT_KEYWORDS.search(text))
+
+
 def build_decision_request(model, message, tool_names=(), last_reply="", images=0) -> dict:
+    """tool_names: the agent's tools, as names or as {name: description}."""
     state = {"message": message, "attached_images": int(images or 0)}
     if last_reply:
         state["previous_reply"] = last_reply[-600:]
     if tool_names:
-        state["agent_tools"] = list(tool_names)
+        state["agent_tools"] = (dict(tool_names) if isinstance(tool_names, dict)
+                                else list(tool_names))
     return {
         "model": _api_model_id(model),
         "state": state,
@@ -116,15 +168,31 @@ def build_decision_request(model, message, tool_names=(), last_reply="", images=
                 "type": "choice",
                 "instructions": ROUTE_INSTRUCTIONS,
                 "criteria": ROUTE_CRITERIA,
-            }
+            },
+            NEEDS_INFO_ID: {
+                "type": "noul",
+                "instructions": NEEDS_INFO_INSTRUCTIONS,
+            },
         },
     }
 
 
+def _needs_info_probability(response):
+    """P(yes) of the needs-external-info question, or None when absent."""
+    answer = (response.get("answers") or {}).get(NEEDS_INFO_ID)
+    if not isinstance(answer, dict) or answer.get("type") != "noul":
+        return None
+    try:
+        return float(answer.get("noul"))
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_route(response):
     """'agent' or 'direct' from a Decisions API response, or None when the
-    answer is missing or not a valid choice. 'direct' with a probability
-    below DIRECT_MIN_PROBABILITY counts as 'agent'."""
+    route answer is missing or not a valid choice. 'direct' becomes 'agent'
+    when its probability is below DIRECT_MIN_PROBABILITY or the message
+    likely needs outside information (NEEDS_INFO_MAX_PROBABILITY)."""
     if not isinstance(response, dict):
         return None
     answer = (response.get("answers") or {}).get(QUESTION_ID)
@@ -133,13 +201,18 @@ def parse_route(response):
     choice = str(answer.get("choice", "")).strip().lower()
     if choice not in (ROUTE_AGENT, ROUTE_DIRECT):
         return None
+    if choice == ROUTE_AGENT:
+        return choice
     probabilities = answer.get("probabilities")
-    if choice == ROUTE_DIRECT and isinstance(probabilities, dict):
+    if isinstance(probabilities, dict):
         try:
             if float(probabilities.get(ROUTE_DIRECT, 1.0)) < DIRECT_MIN_PROBABILITY:
                 return ROUTE_AGENT
         except (TypeError, ValueError):
             pass
+    needs_info = _needs_info_probability(response)
+    if needs_info is not None and needs_info >= NEEDS_INFO_MAX_PROBABILITY:
+        return ROUTE_AGENT
     return choice
 
 
@@ -193,6 +266,10 @@ def decide_route(message, cursor, session_id, message_in_id, tool_names=(), last
     enabled, model = decision_settings()
     if not enabled or not model or not (message or "").strip():
         return ROUTE_AGENT
+    if asks_for_agent(message):
+        logger.info("Decision skipped for message %s: it asks for a search, fresh data or an "
+                    "action; using the agent", message_in_id)
+        return ROUTE_AGENT
 
     api_key = openrouter_api_key()
     if not api_key:
@@ -215,8 +292,9 @@ def decide_route(message, cursor, session_id, message_in_id, tool_names=(), last
                        model, json.dumps(response)[:300])
         return ROUTE_AGENT
     answer = (response.get("answers") or {}).get(QUESTION_ID) or {}
-    logger.info("Decision model %s routed message %s to %s (probabilities %s) in %dms",
-                model, message_in_id, route, answer.get("probabilities"), latency_ms)
+    logger.info("Decision model %s routed message %s to %s (route probabilities %s, "
+                "needs outside info %s) in %dms", model, message_in_id, route,
+                answer.get("probabilities"), _needs_info_probability(response), latency_ms)
     return route
 
 
