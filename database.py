@@ -824,6 +824,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Sender device inferred by Baileys from the message id (android/ios/web/
+    # desktop/unknown). NULL for rows recorded before this column existed.
+    try:
+        cursor.execute("ALTER TABLE message_history ADD COLUMN sender_device TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     # Vector index over the message history (sqlite-vec):
     #   id         -> message_history.id (FK semantics)
     #   channel_id -> partition key: KNN is scoped per chat (privacy)
@@ -1179,7 +1186,7 @@ def insert_message_history(message_id=None, channel_id=None, remote_jid=None,
                            is_group=0, sender_id=None, sender_id_alt=None,
                            sender_name=None, from_me=0, is_bot=0, content='',
                            msg_timestamp=None, was_processed=0,
-                           worker_mentioned=0):
+                           worker_mentioned=0, sender_device=None):
     """
     Grava uma mensagem de TEXTO na linha do tempo do canal.
 
@@ -1213,8 +1220,8 @@ def insert_message_history(message_id=None, channel_id=None, remote_jid=None,
                 (message_id, channel_id, remote_jid, is_group, sender_id,
                  sender_id_alt, sender_name, from_me, is_bot, content,
                  msg_timestamp, msg_date, msg_hour, msg_minute, msg_second,
-                 was_processed, worker_mentioned)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 was_processed, worker_mentioned, sender_device)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             message_id, channel_id, remote_jid,
             1 if is_group else 0,
@@ -1226,6 +1233,7 @@ def insert_message_history(message_id=None, channel_id=None, remote_jid=None,
             dt.hour, dt.minute, dt.second,
             1 if was_processed else 0,
             1 if worker_mentioned else 0,
+            sender_device,
         ))
         if cursor.rowcount == 0:
             return None  # duplicate message_id -> ignored
@@ -1515,7 +1523,8 @@ MESSAGE_LIST_MODES = ('all', 'duplicates', 'similar')
 _MESSAGE_COLUMNS = (
     'h.id, h.message_id, h.channel_id, h.remote_jid, h.is_group, h.sender_name, '
     'h.sender_id, h.from_me, h.is_bot, h.content, h.msg_timestamp, h.msg_date, '
-    'h.msg_hour, h.msg_minute, h.msg_second, h.was_processed, h.created_at'
+    'h.msg_hour, h.msg_minute, h.msg_second, h.was_processed, h.created_at, '
+    'h.sender_device'
 )
 
 

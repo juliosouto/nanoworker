@@ -45,6 +45,14 @@
         return msg.created_at || '';
     }
 
+    const DEVICE_LABELS = {
+        android: 'Android',
+        ios: 'iPhone',
+        web: 'WhatsApp Web',
+        desktop: 'Desktop',
+        unknown: 'Unknown device',
+    };
+
     function senderLabel(msg) {
         if (msg.is_bot) return 'Bot';
         if (msg.from_me) return 'Owner';
@@ -66,6 +74,9 @@
         const score = msg.similarity !== undefined && msg.similarity !== null
             ? `<span class="msg-badge score">similarity ${Number(msg.similarity).toFixed(3)} &rarr; #${escapeHtml(msg.best_match_id)}</span>`
             : '';
+        const device = msg.sender_device && !msg.is_bot
+            ? `<span class="msg-badge device" title="Sender device (inferred from the message id)">${escapeHtml(DEVICE_LABELS[msg.sender_device] || msg.sender_device)}</span>`
+            : '';
         return `
             <div class="msg-row" data-id="${msg.id}">
                 <input type="checkbox" class="msg-check" data-id="${msg.id}" ${checked} aria-label="Select message ${msg.id}">
@@ -76,7 +87,7 @@
                 </div>
                 <div>
                     <div class="msg-content">${escapeHtml(msg.content)}</div>
-                    <div class="msg-badges">${vector}${score}</div>
+                    <div class="msg-badges">${device}${vector}${score}</div>
                 </div>
                 <div class="msg-del">
                     <button type="button" class="msg-btn danger msg-delete-one" data-id="${msg.id}">Delete</button>

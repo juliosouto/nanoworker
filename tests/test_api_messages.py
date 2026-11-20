@@ -90,6 +90,17 @@ def test_list_all_newest_first_with_vector_flag(client, seeded):
     assert sorted(body["channels"]) == sorted([CHANNEL_A, CHANNEL_B])
 
 
+def test_sender_device_is_stored_and_listed(client, seeded):
+    row_id = insert_message_history(
+        message_id="dev1", channel_id=CHANNEL_A, remote_jid=CHANNEL_A,
+        sender_id="bob", content="enviado do iPhone",
+        msg_timestamp=1_700_000_010, sender_device="ios",
+    )
+    devices = {m["id"]: m["sender_device"] for m in client.get("/api/messages").get_json()["messages"]}
+    assert devices[row_id] == "ios"
+    assert devices[seeded["dup_1"]] is None
+
+
 def test_filter_by_channel_and_keyword(client, seeded):
     body = client.get(f"/api/messages?channel_id={CHANNEL_B}").get_json()
     assert body["total"] == 3

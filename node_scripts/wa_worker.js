@@ -1,4 +1,4 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadMediaMessage, fetchLatestWaWebVersion, getDevice } = require('@whiskeysockets/baileys');
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
@@ -557,6 +557,9 @@ async function forwardInbound(msg, msgContent, flow, mentionedJids, nativeMentio
             remote_jid: remoteJid,
             content: text,
             message_id: msg.key.id,
+            // Sender's device, inferred by Baileys from the message id format
+            // ('android' | 'ios' | 'web' | 'desktop' | 'unknown'). Heuristic.
+            sender_device: msg.key.id ? getDevice(msg.key.id) : null,
             // Original WhatsApp epoch (falls back to now) so the backend
             // can store real date/hour/minute/second metadata.
             msg_timestamp: msgTimestamp || Math.floor(Date.now() / 1000),

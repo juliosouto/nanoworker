@@ -422,6 +422,7 @@ def _handle_inbound(data):
                 from_me=1 if data.get('from_me') else 0,
                 content=content,
                 msg_timestamp=data.get('msg_timestamp'),
+                sender_device=data.get('sender_device'),
             )
         except Exception as history_err:
             logging.error(f"Failed to record inbound message in message_history: {history_err}")
